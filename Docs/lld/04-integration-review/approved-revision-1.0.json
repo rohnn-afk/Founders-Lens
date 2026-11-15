@@ -1,0 +1,204 @@
+{
+  "formatVersion": 1,
+  "revisionId": "FL-P2D-1.0-approved",
+  "approvalId": "A07",
+  "status": "Approved documentation only",
+  "approver": "Project owner",
+  "approvalEvidence": "Explicit instruction in this conversation to record formal Phase 2D sign-off and identify the exact approved revision.",
+  "approvalDate": null,
+  "baseGitCommit": "a075cd3e8233c0a7b623d8819d685cb3f1b65cb2",
+  "approvedRevisionGitCommit": null,
+  "snapshotKind": "Uncommitted working-tree content snapshot; base Git commit is provenance only.",
+  "scope": "All canonical Docs files plus root README, including sign-off and static validation evidence. Runtime/deployment approval excluded; A08/O01/V01 gates preserved.",
+  "hashAlgorithm": "SHA-256 over raw file bytes",
+  "aggregateAlgorithm": "SHA-256 over UTF-8 JSON.stringify(files); lexical path ordering and entry keys path, sha256, bytes.",
+  "aggregateSha256": "f41b1a556c8c82b717d87ee7f82fdbddef351484697fde9430f23aa563a56307",
+  "excludedPaths": [
+    {
+      "path": "Docs/lld/04-integration-review/approved-revision-1.0.json",
+      "reason": "Self-hashing would be circular. Preserve this manifest verbatim; future approvals create a new revision manifest."
+    }
+  ],
+  "files": [
+    {
+      "path": "Docs/README.md",
+      "sha256": "d4b478b94cab40583c98633692bd5f107ef6843aca8fe8c51c8f7b472f63c36d",
+      "bytes": 5387
+    },
+    {
+      "path": "Docs/architecture/HLD.md",
+      "sha256": "6b3379ea9cac421145f6624e9a14a1f65e77074f93fa23be486184dd9e4e55d1",
+      "bytes": 64744
+    },
+    {
+      "path": "Docs/architecture/adr/002-express-revision.md",
+      "sha256": "9d536b8b0741de5c37ad22b6ef68532af403e71088b737ab936c575c0167128b",
+      "bytes": 2035
+    },
+    {
+      "path": "Docs/architecture/adr/013-express-typescript-api.md",
+      "sha256": "a4b09240ba7251545d17d6ca228293f2ee25452dc794d80bbb1ec47eb7274770",
+      "bytes": 5721
+    },
+    {
+      "path": "Docs/lld/01-database/README.md",
+      "sha256": "916b7bbbfefd27e147bef952527d96b9efacee38f3f096e114c402099f501b76",
+      "bytes": 906
+    },
+    {
+      "path": "Docs/lld/01-database/constraints/guards.sql",
+      "sha256": "f520941067f734cdb23a027a6ecec7502a07585e21cb3014a09a4f12b0fd9df1",
+      "bytes": 9287
+    },
+    {
+      "path": "Docs/lld/01-database/logical-design.md",
+      "sha256": "2f5a4d52f00d6e0fbfbca920ae553216f222d138c74c42e140edf4b8658d7443",
+      "bytes": 21652
+    },
+    {
+      "path": "Docs/lld/01-database/physical-design.md",
+      "sha256": "cf3a5e49abaf3fbcee0f625c1fc054111bf84b39b881542efbce294d35b6bed8",
+      "bytes": 32995
+    },
+    {
+      "path": "Docs/lld/01-database/schema/schema.prisma",
+      "sha256": "85f0d410fa2620ac7923c0a556acae9febf5e97bb55c9dcb588901cdaa3ec6fc",
+      "bytes": 21480
+    },
+    {
+      "path": "Docs/lld/01-database/validation/integration-test-plan.md",
+      "sha256": "c6e2df1100e46790413274f40d1240da0a65a45b1053e41cba1ad3a8a859fc16",
+      "bytes": 6207
+    },
+    {
+      "path": "Docs/lld/02-api-security/api-contracts.md",
+      "sha256": "53846218cfa34c18731be7cb3ae6850e82b4651e64eb8f6388de1bb6dacfe947",
+      "bytes": 38329
+    },
+    {
+      "path": "Docs/lld/02-api-security/architecture-and-security.md",
+      "sha256": "c2f52de79ad5dbe40ebc0291aadc9ea7f38f4b3254770fd98d251fc902fa5e48",
+      "bytes": 40669
+    },
+    {
+      "path": "Docs/lld/02-api-security/openapi.yaml",
+      "sha256": "4c1dbbd13a7017cae8a4d716d91b97b5bf9af2ea4578e1c2d90acdad5546eed5",
+      "bytes": 122408
+    },
+    {
+      "path": "Docs/lld/02-api-security/review-checklist.md",
+      "sha256": "ade29b0d30a5152ab547c01747a5d5456dfa60c6b10bb1a8bcd1fc6a1fe4017d",
+      "bytes": 1608
+    },
+    {
+      "path": "Docs/lld/02-api-security/route-inventory.json",
+      "sha256": "3c98d6ec6b29b62465ae43c779c5736d1556036211f210e0c7ecd8ff61b0524f",
+      "bytes": 10825
+    },
+    {
+      "path": "Docs/lld/02-api-security/streaming-handoff.md",
+      "sha256": "e786a4074ce96ef4f24eb0e2fc9790366510257d6fdce225ca3f0742c4d92b29",
+      "bytes": 2216
+    },
+    {
+      "path": "Docs/lld/02-api-security/testing.md",
+      "sha256": "347655a35f5a86b6233515d8199d4137448d8b2132d6bb0dbd909f8aa87e8f3b",
+      "bytes": 6268
+    },
+    {
+      "path": "Docs/lld/03-streaming-reliability/README.md",
+      "sha256": "fc03e7ed2d84aab849364dd3b93f92fbe940ff8247699c87929f124d401b9c58",
+      "bytes": 2314
+    },
+    {
+      "path": "Docs/lld/03-streaming-reliability/contract-delta.md",
+      "sha256": "0bddd43bf274b67390d37181407352569f0f360c670efe9fbf8c6d789e4e50b7",
+      "bytes": 6127
+    },
+    {
+      "path": "Docs/lld/03-streaming-reliability/fundamentals-and-decisions.md",
+      "sha256": "d0a0886ff1609fb038d7fbc4987caaa26df0177960d549aa9e019edeeabb4d64",
+      "bytes": 5472
+    },
+    {
+      "path": "Docs/lld/03-streaming-reliability/idempotency-and-concurrency.md",
+      "sha256": "606e67d288fff8aca861156dcb7bec03c8b9f14b45c41500c6510b8158770a4c",
+      "bytes": 12265
+    },
+    {
+      "path": "Docs/lld/03-streaming-reliability/streaming-contract.md",
+      "sha256": "4d41e8a20f7e64b95effbd9a1242d309d6facd807e4bd42b59855b5d28bef508",
+      "bytes": 12626
+    },
+    {
+      "path": "Docs/lld/03-streaming-reliability/testing.md",
+      "sha256": "d8bbd886c320ff036a95b9bbd6c6f910d8d9891dd2a03330e0968fcb7d47aca4",
+      "bytes": 7734
+    },
+    {
+      "path": "Docs/lld/04-integration-review/cleanup-manifest.md",
+      "sha256": "e3f9338f2857d5425348fbe313dd2dd327a43a7bb4681cac5672c00a9d65e0c7",
+      "bytes": 14444
+    },
+    {
+      "path": "Docs/lld/04-integration-review/consistency-matrix.md",
+      "sha256": "cac7b28b5faec898bcbb129a2f38f044c861f34a44fa2ab6c6ec70ee4f67ba54",
+      "bytes": 22307
+    },
+    {
+      "path": "Docs/lld/04-integration-review/decision-log.md",
+      "sha256": "31c5c3d874c6cc054ab6ab7ad015b5c359a78ee8bd3a0771ba1ed05e3c9daee5",
+      "bytes": 6050
+    },
+    {
+      "path": "Docs/lld/04-integration-review/discrepancy-register.md",
+      "sha256": "f954e3398f4fae519928e4bb53c5884cf9980b909ea0074ec8b7b3e2025246b1",
+      "bytes": 14895
+    },
+    {
+      "path": "Docs/lld/04-integration-review/integration-review.md",
+      "sha256": "f17b6ff085a0b8bc0925281005233890911881a5902f6eab86f30d4972a857c1",
+      "bytes": 4820
+    },
+    {
+      "path": "Docs/lld/04-integration-review/phase-3-handoff.md",
+      "sha256": "eb8f94c975ef7891986e4ebb0c40aa5d7616f541797484e004f928898cc249a8",
+      "bytes": 1832
+    },
+    {
+      "path": "Docs/lld/04-integration-review/state-machines.md",
+      "sha256": "77f468e301a589be83852e298f3123967f8dd3ee59084b2d433e681e096d722a",
+      "bytes": 26025
+    },
+    {
+      "path": "Docs/lld/04-integration-review/test-acceptance-matrix.md",
+      "sha256": "9591ec1876d9a48b79469a406ca8f4dab0593c96d5d80791624b6642ed82e367",
+      "bytes": 10303
+    },
+    {
+      "path": "Docs/lld/04-integration-review/traceability.md",
+      "sha256": "ba304afe1fdee04d65ee43e187a4f00028f6d005c1976aef0636a7ab15341f95",
+      "bytes": 12671
+    },
+    {
+      "path": "Docs/lld/04-integration-review/validation-report.md",
+      "sha256": "b0913f16b8a0dbf34195b5246749128c7f217fc00cf3957415e3c57c873d1a27",
+      "bytes": 8795
+    },
+    {
+      "path": "Docs/requirements/PRD.md",
+      "sha256": "295b6ffd78be320081c1266e513efe033a94a22a55433d3fe83ed7d7f184f59f",
+      "bytes": 34077
+    },
+    {
+      "path": "Docs/requirements/SRS.md",
+      "sha256": "498b6edf5b1d734309eb66920192a0b479ddce3695682cc80f80f0be93b2c06b",
+      "bytes": 65528
+    },
+    {
+      "path": "README.md",
+      "sha256": "dd54fd13f43fea90f7a2e8588ef7ba79f03a6910cfcd5d0c6b5f5c8bcc0679b2",
+      "bytes": 1739
+    }
+  ]
+}

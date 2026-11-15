@@ -1,0 +1,56 @@
+﻿# Credentials and local environment (commit sanitized examples only)
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.template
+.envrc
+.npmrc
+.aws/
+.ssh/
+.clerk/
+.secrets/
+secrets/
+credentials.json
+*-credentials.json
+service-account*.json
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+
+# Dependencies and generated output; keep dependency lockfiles tracked
+node_modules/
+.next/
+out/
+dist/
+build/
+.turbo/
+.cache/
+*.tsbuildinfo
+coverage/
+.nyc_output/
+
+# Runtime/private artifacts; do not ignore schema.prisma or SQL migrations/guards
+logs/
+*.log
+/local-data/
+/private-data/
+/backups/
+/dumps/
+/tmp/
+*.dump
+*.sql.gz
+*.sqlite
+*.sqlite3
+*.db
+*.tfstate
+*.tfstate.*
+*.tfplan
+
+# Machine-specific files
+.DS_Store
+Thumbs.db
+.idea/
+*.local.code-workspace

@@ -1,0 +1,2 @@
+﻿# Preserve the exact README bytes covered by the A07 approval manifest.
+/README.md -text

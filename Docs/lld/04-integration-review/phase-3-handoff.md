@@ -1,0 +1,9 @@
+# Phase 3 readiness assessment
+
+**Status:** Approved Phase 2D documentation — A07, FL-P2D-1.0-approved; Phase 3 has not started.
+
+Phase 2D technical mechanisms are now specified, including approved active-retention/30-day purge target and separate backup-retention proposals, recoverable deletion/purge, verified Clerk inbox/tombstones/recreation, memory context epochs and typed immutable snapshots. See [final review](integration-review.md), [approval register](decision-log.md) and [validation evidence](validation-report.md).
+
+The five product decisions P2D-P01–P05 are explicitly approved and A07 documentation approval is recorded against the [exact content manifest](approved-revision-1.0.json); A02 historical provenance and A08/O01 deployment settings remain tracked separately. Do not require already executed production behavior to sign off a design, and do not treat design approval as evidence of implementation. Before implementation/release acceptance, execute V01 database/SDK/privilege/storage/recovery gates and verify O01 provider/hosting settings. No package bootstrap, migration execution or controller implementation belongs to this task.
+
+Future Phase 3 orchestration must use authorized idea-scoped selected transcript and ACTIVE memory; respect Idea.contextEpoch at build/dispatch/finalization, proactiveResearch at new-job admission, evidence provenance and private data minimization. Workers may propose memory only; output validation, lease/deadline/quota and cancellation rules remain mandatory. Define six-strategy selection, bounded context, corrections, allowed cards, grounding and SRS FR-013–021/034–040 evaluation fixtures when separately authorized. Do not introduce historical branches, hidden paid retries, automatic approvals, chain-of-thought exposure or postapproval model rewrites.

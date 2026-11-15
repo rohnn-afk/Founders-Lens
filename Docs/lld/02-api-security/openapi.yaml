@@ -1,0 +1,4201 @@
+openapi: 3.1.0
+info:
+  title: Founder's Lens API
+  version: 0.2.0-draft
+  description: Phase 2D final closure proposal. Human contracts govern; five core product decisions approved; deployment settings and implementation validation remain pending.
+x-pdf-export-limits:
+  description: Engineering defaults under approved P2D-P05; runtime validation pending.
+  canonicalContentMaxBytes: 1048576
+  pdfMaxBytes: 10485760
+  renderDeadlineSeconds: 60
+  maxActiveJobsPerAccount: 2
+  downloadGrantTtlSeconds: 300
+servers:
+- url: https://api.example.invalid
+  description: Illustrative hostname only; replace before deployment
+security:
+- ClerkSession: []
+tags:
+- name: Identity
+- name: Ideas
+- name: Conversation
+- name: Memory
+- name: Experiments
+- name: Research
+- name: Documents
+paths:
+  /api/v1/me:
+    get:
+      tags:
+        - Identity
+      summary: Read own account
+      operationId: getMe
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserAccount"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+  /api/v1/me/preferences:
+    patch:
+      tags:
+        - Identity
+      summary: Update founder preferences
+      operationId: patchMePreferences
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserAccount"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "428":
+          $ref: "#/components/responses/428"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PreferencesPatch"
+      parameters:
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+            pattern: "^\"v[1-9][0-9]*\"$"
+  /api/v1/me/data-operations:
+    post:
+      tags:
+        - Identity
+      summary: Request personal data export or deletion
+      operationId: postMeDataOperations
+      responses:
+        "202":
+          description: Accepted for asynchronous processing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataOperation"
+          headers:
+            Location:
+              description: Relative URL of durable status resource
+              schema:
+                type: string
+                format: uri-reference
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: "Strict conditional deletion/export request. Deletion requires confirmed=true, policyVersion, verified fresh auth (proposed 5min); 409 POLICY_NOT_ACTIVE for unconfigured/inactive policy; core p2d-privacy-v2 approved. Idempotency-Key original 202 replay; domain deletion scope unique beyond ledger TTL."
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          description: Opaque client-generated stable operation key; same key and different payload is 409
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DataOperationCreate"
+  /api/v1/me/data-operations/{operationId}:
+    get:
+      tags:
+        - Identity
+      summary: Read own data-operation status
+      operationId: getMeDataOperationsOperationId
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataOperation"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: "Deletion progress only may be read by a matching verified subject when local account is blocked; no content/download. COMPLETED deletion means live purge with disclosed backup residual. EXPORT download minted only for active owner and AVAILABLE archive. Matching verified subject may read minimal deletion progress/replay only while local account blocked; no content, provisioning or download exception. Provider-revoked sessions may no longer authenticate."
+      parameters:
+        - in: path
+          name: operationId
+          required: true
+          schema:
+            type: string
+            format: uuid
+  /api/v1/ideas:
+    get:
+      tags:
+        - Ideas
+      summary: List my ideas
+      operationId: getIdeas
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdeaList"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+        - in: query
+          name: cursor
+          required: false
+          schema:
+            type: string
+    post:
+      tags:
+        - Ideas
+      summary: Create idea
+      operationId: postIdeas
+      responses:
+        "201":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Idea"
+          headers:
+            ETag:
+              description: Strong entity-version ETag
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          description: Opaque client-generated stable operation key; same key and different payload is 409
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdeaCreate"
+  /api/v1/ideas/{ideaId}:
+    get:
+      tags:
+        - Ideas
+      summary: Read idea
+      operationId: getIdeasIdeaId
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Idea"
+          headers:
+            ETag:
+              description: Strong entity-version ETag
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: ideaId
+          required: true
+          schema:
+            &schema
+            type: string
+            format: uuid
+    patch:
+      tags:
+        - Ideas
+      summary: Update idea
+      operationId: patchIdeasIdeaId
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Idea"
+          headers:
+            ETag:
+              description: Strong entity-version ETag
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "428":
+          $ref: "#/components/responses/428"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: ideaId
+          required: true
+          schema:
+            *schema
+        - in: header
+          name: If-Match
+          required: true
+          description: Strong entity-version ETag previously received; stale is 412
+          schema:
+            type: string
+            pattern: "^\"v[0-9]+\"$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdeaPatch"
+    delete:
+      tags:
+        - Ideas
+      summary: Request idea deletion
+      operationId: deleteIdeasIdeaId
+      responses:
+        "202":
+          description: Accepted for asynchronous processing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataOperation"
+          headers:
+            Location:
+              description: Relative URL of durable status resource
+              schema:
+                type: string
+                format: uri-reference
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: "Lifecycle-idempotent owner deletion, returns same retained DataOperation on retry. Fresh auth and displayed policy acknowledgment required. Normal reads/writes blocked at DELETION_REQUESTED; Redis outage does not prevent durable gate."
+      parameters:
+        - in: path
+          name: ideaId
+          required: true
+          schema:
+            *schema
+        - in: header
+          name: X-Privacy-Policy-Version
+          required: true
+          schema:
+            type: string
+            maxLength: 60
+            examples:
+              - p2d-privacy-v2
+          description: "Acknowledges displayed policy after approval; missing 400, inactive policy 409. Fresh-auth check also required."
+  /api/v1/ideas/{ideaId}/conversations:
+    get:
+      tags:
+        - Conversation
+      summary: List idea conversations
+      operationId: getIdeasIdeaIdConversations
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationList"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: ideaId
+          required: true
+          schema:
+            &schema
+            type: string
+            format: uuid
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+        - in: query
+          name: cursor
+          required: false
+          schema:
+            type: string
+    post:
+      tags:
+        - Conversation
+      summary: Create conversation
+      operationId: postIdeasIdeaIdConversations
+      responses:
+        "201":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conversation"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: ideaId
+          required: true
+          schema:
+            *schema
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConversationCreate"
+  /api/v1/conversations/{conversationId}:
+    get:
+      tags:
+        - Conversation
+      summary: Read conversation
+      operationId: getConversationsConversationId
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conversation"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: conversationId
+          required: true
+          schema:
+            &schema
+            type: string
+            format: uuid
+    patch:
+      tags:
+        - Conversation
+      summary: Change conversation preferences
+      operationId: patchConversationsConversationId
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conversation"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "428":
+          $ref: "#/components/responses/428"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: conversationId
+          required: true
+          schema:
+            *schema
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+            pattern: "^\"v[1-9][0-9]*\"$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConversationPatch"
+  /api/v1/conversations/{conversationId}/messages:
+    get:
+      tags:
+        - Conversation
+      summary: Read ordered transcript
+      operationId: getConversationsConversationIdMessages
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageList"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: conversationId
+          required: true
+          schema:
+            &schema
+            type: string
+            format: uuid
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+        - in: query
+          name: cursor
+          required: false
+          schema:
+            type: string
+    post:
+      tags:
+        - Conversation
+      summary: Submit founder message and initiate generation
+      operationId: postConversationsConversationIdMessages
+      responses:
+        "202":
+          description: Accepted for asynchronous processing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageSubmission"
+          headers:
+            Location:
+              description: Relative URL of durable status resource
+              schema:
+                type: string
+                format: uri-reference
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: conversationId
+          required: true
+          schema:
+            *schema
+        - in: header
+          name: Idempotency-Key
+          required: true
+          description: Opaque client-generated stable operation key; same key and different payload is 409
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessageCreate"
+  /api/v1/generations/{generationId}:
+    get:
+      tags:
+        - Conversation
+      summary: Read durable generation status
+      operationId: getGenerationsGenerationId
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Generation"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: generationId
+          required: true
+          schema:
+            type: string
+            format: uuid
+  /api/v1/generations/{generationId}/events:
+    get:
+      tags:
+        - Conversation
+      summary: Stream generation with fetch-based SSE
+      operationId: getGenerationsGenerationIdEvents
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: "UTF-8 SSE events: generation.status, response.delta, generation.completed, generation.failed, generation.cancelled, stream.error. JSON includes schemaVersion=1, generationId, emittedAt. delta text/chunkIndex is ephemeral and monotonic only per feed. No durable IDs/replay. Full payload contract in Phase 2C section 2.2."
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: "no-store, no-transform"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "406":
+          $ref: "#/components/responses/406"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: "Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses. Requires Accept text/event-stream. No id or retry fields. Subscribe then read durable state. Disconnect does not cancel. Grammar: Docs/lld/03-streaming-reliability/streaming-contract.md section 2.2. Heartbeat comments every proposed 15s; terminal notifications best effort; fetch canonical result."
+      parameters:
+        - in: path
+          name: generationId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: Last-Event-ID
+          required: false
+          description: "Unsupported in v1: any supplied value returns 400; no token replay."
+          schema:
+            type: string
+  /api/v1/generations/{generationId}/cancel:
+    post:
+      tags:
+        - Conversation
+      summary: Request cancellation
+      operationId: postGenerationsGenerationIdCancel
+      responses:
+        "200":
+          description: Already terminal; current terminal generation. Same-key replay returns original response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Generation"
+        "202":
+          description: Cancellation recorded; status CANCEL_REQUESTED. Same-key replay returns original response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Generation"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: generationId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+  /api/v1/conversations/{conversationId}/regenerations:
+    post:
+      tags:
+        - Conversation
+      summary: Regenerate latest eligible assistant turn
+      operationId: postConversationsConversationIdRegenerations
+      responses:
+        "202":
+          description: Accepted for asynchronous processing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Generation"
+          headers:
+            Location:
+              description: Relative URL of durable status resource
+              schema:
+                type: string
+                format: uri-reference
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: conversationId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: Idempotency-Key
+          required: true
+          description: Opaque client-generated stable operation key; same key and different payload is 409
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegenerationCreate"
+  /api/v1/ideas/{ideaId}/memory:
+    get:
+      tags:
+        - Memory
+      summary: List approved memory
+      operationId: getIdeasIdeaIdMemory
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemoryList"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: ideaId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+        - in: query
+          name: cursor
+          required: false
+          schema:
+            type: string
+  /api/v1/ideas/{ideaId}/memory-proposals:
+    get:
+      tags:
+        - Memory
+      summary: Review pending proposals
+      operationId: getIdeasIdeaIdMemoryProposals
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProposalList"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: ideaId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+        - in: query
+          name: cursor
+          required: false
+          schema:
+            type: string
+  /api/v1/memory-proposals/{proposalId}:
+    patch:
+      tags:
+        - Memory
+      summary: Edit pending proposal
+      operationId: patchMemoryProposalsProposalId
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemoryProposal"
+          headers:
+            ETag:
+              description: Strong entity-version ETag
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "428":
+          $ref: "#/components/responses/428"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: proposalId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: If-Match
+          required: true
+          description: Strong entity-version ETag previously received; stale is 412
+          schema:
+            type: string
+            pattern: "^\"v[0-9]+\"$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProposalPatch"
+  /api/v1/memory-proposals/{proposalId}/accept:
+    post:
+      tags:
+        - Memory
+      summary: Accept proposal
+      operationId: postMemoryProposalsProposalIdAccept
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfirmedMemory"
+          headers:
+            ETag:
+              description: Strong entity-version ETag
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "428":
+          $ref: "#/components/responses/428"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: proposalId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: Idempotency-Key
+          required: true
+          description: Opaque client-generated stable operation key; same key and different payload is 409
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+        - in: header
+          name: If-Match
+          required: true
+          description: Strong entity-version ETag previously received; stale is 412
+          schema:
+            type: string
+            pattern: "^\"v[0-9]+\"$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProposalDecision"
+  /api/v1/memory-proposals/{proposalId}/dismiss:
+    post:
+      tags:
+        - Memory
+      summary: Dismiss proposal
+      operationId: postMemoryProposalsProposalIdDismiss
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemoryProposal"
+          headers:
+            ETag:
+              description: Strong entity-version ETag
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "428":
+          $ref: "#/components/responses/428"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: proposalId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: Idempotency-Key
+          required: true
+          description: Opaque client-generated stable operation key; same key and different payload is 409
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+        - in: header
+          name: If-Match
+          required: true
+          description: Strong entity-version ETag previously received; stale is 412
+          schema:
+            type: string
+            pattern: "^\"v[0-9]+\"$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProposalDismiss"
+  /api/v1/memory/{memoryId}:
+    patch:
+      tags:
+        - Memory
+      summary: Edit approved memory
+      operationId: patchMemoryMemoryId
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfirmedMemory"
+          headers:
+            ETag:
+              description: Strong entity-version ETag
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "428":
+          $ref: "#/components/responses/428"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: memoryId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: If-Match
+          required: true
+          description: Strong entity-version ETag previously received; stale is 412
+          schema:
+            type: string
+            pattern: "^\"v[0-9]+\"$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MemoryPatch"
+  /api/v1/memory/{memoryId}/revisions:
+    get:
+      tags:
+        - Memory
+      summary: Read memory history
+      operationId: getMemoryMemoryIdRevisions
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemoryRevisionList"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: memoryId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+        - in: query
+          name: cursor
+          required: false
+          schema:
+            type: string
+  /api/v1/ideas/{ideaId}/assumptions:
+    get:
+      tags:
+        - Experiments
+      summary: List assumptions
+      operationId: getIdeasIdeaIdAssumptions
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssumptionList"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: ideaId
+          required: true
+          schema:
+            &schema
+            type: string
+            format: uuid
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+        - in: query
+          name: cursor
+          required: false
+          schema:
+            type: string
+    post:
+      tags:
+        - Experiments
+      summary: Create founder assumption
+      operationId: postIdeasIdeaIdAssumptions
+      responses:
+        "201":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Assumption"
+          headers:
+            ETag:
+              description: Strong entity-version ETag
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: ideaId
+          required: true
+          schema:
+            *schema
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssumptionCreate"
+  /api/v1/assumptions/{assumptionId}:
+    patch:
+      tags:
+        - Experiments
+      summary: Update assumption
+      operationId: patchAssumptionsAssumptionId
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Assumption"
+          headers:
+            ETag:
+              description: Strong entity-version ETag
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "428":
+          $ref: "#/components/responses/428"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: assumptionId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: If-Match
+          required: true
+          description: Strong entity-version ETag previously received; stale is 412
+          schema:
+            type: string
+            pattern: "^\"v[0-9]+\"$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssumptionPatch"
+  /api/v1/ideas/{ideaId}/experiments:
+    get:
+      tags:
+        - Experiments
+      summary: List experiments
+      operationId: getIdeasIdeaIdExperiments
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExperimentList"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: ideaId
+          required: true
+          schema:
+            &schema
+            type: string
+            format: uuid
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+        - in: query
+          name: cursor
+          required: false
+          schema:
+            type: string
+    post:
+      tags:
+        - Experiments
+      summary: Plan experiment
+      operationId: postIdeasIdeaIdExperiments
+      responses:
+        "201":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Experiment"
+          headers:
+            ETag:
+              description: Strong entity-version ETag
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: ideaId
+          required: true
+          schema:
+            *schema
+        - in: header
+          name: Idempotency-Key
+          required: true
+          description: Opaque client-generated stable operation key; same key and different payload is 409
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExperimentCreate"
+  /api/v1/experiments/{experimentId}:
+    patch:
+      tags:
+        - Experiments
+      summary: Update experiment
+      operationId: patchExperimentsExperimentId
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Experiment"
+          headers:
+            ETag:
+              description: Strong entity-version ETag
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "428":
+          $ref: "#/components/responses/428"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: experimentId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: If-Match
+          required: true
+          description: Strong entity-version ETag previously received; stale is 412
+          schema:
+            type: string
+            pattern: "^\"v[0-9]+\"$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExperimentPatch"
+  /api/v1/experiments/{experimentId}/learnings:
+    post:
+      tags:
+        - Experiments
+      summary: Record founder learning
+      operationId: postExperimentsExperimentIdLearnings
+      responses:
+        "201":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Learning"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: experimentId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: Idempotency-Key
+          required: true
+          description: Opaque client-generated stable operation key; same key and different payload is 409
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LearningCreate"
+  /api/v1/ideas/{ideaId}/learnings:
+    get:
+      tags:
+        - Experiments
+      summary: List learnings
+      operationId: getIdeasIdeaIdLearnings
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LearningList"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: ideaId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+        - in: query
+          name: cursor
+          required: false
+          schema:
+            type: string
+  /api/v1/ideas/{ideaId}/evidence:
+    get:
+      tags:
+        - Research
+      summary: List idea evidence
+      operationId: getIdeasIdeaIdEvidence
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvidenceList"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: ideaId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+        - in: query
+          name: cursor
+          required: false
+          schema:
+            type: string
+  /api/v1/ideas/{ideaId}/research-jobs:
+    get:
+      tags:
+        - Research
+      summary: List research jobs
+      operationId: getIdeasIdeaIdResearchJobs
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchJobList"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: ideaId
+          required: true
+          schema:
+            &schema
+            type: string
+            format: uuid
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+        - in: query
+          name: cursor
+          required: false
+          schema:
+            type: string
+    post:
+      tags:
+        - Research
+      summary: Request targeted research
+      operationId: postIdeasIdeaIdResearchJobs
+      responses:
+        "202":
+          description: Accepted for asynchronous processing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchJob"
+          headers:
+            Location:
+              description: Relative URL of durable status resource
+              schema:
+                type: string
+                format: uri-reference
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: ideaId
+          required: true
+          schema:
+            *schema
+        - in: header
+          name: Idempotency-Key
+          required: true
+          description: Opaque client-generated stable operation key; same key and different payload is 409
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResearchRequest"
+  /api/v1/research-jobs/{researchJobId}:
+    get:
+      tags:
+        - Research
+      summary: Read research job status
+      operationId: getResearchJobsResearchJobId
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchJob"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: researchJobId
+          required: true
+          schema:
+            type: string
+            format: uuid
+  /api/v1/assumptions/{assumptionId}/evidence-links:
+    post:
+      tags:
+        - Research
+      summary: Link evidence to assumption
+      operationId: postAssumptionsAssumptionIdEvidenceLinks
+      responses:
+        "201":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvidenceLink"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: assumptionId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvidenceLinkCreate"
+  /api/v1/assumptions/{assumptionId}/evidence-links/{evidenceId}:
+    delete:
+      tags:
+        - Research
+      summary: Remove evidence link
+      operationId: deleteAssumptionsAssumptionIdEvidenceLinksEvidenceId
+      responses:
+        "204":
+          description: No content
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: assumptionId
+          required: true
+          schema:
+            &schema
+            type: string
+            format: uuid
+        - in: path
+          name: evidenceId
+          required: true
+          schema:
+            *schema
+  /api/v1/ideas/{ideaId}/snapshots:
+    get:
+      tags:
+        - Documents
+      summary: List snapshot versions
+      operationId: getIdeasIdeaIdSnapshots
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SnapshotList"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: ideaId
+          required: true
+          schema:
+            &schema
+            type: string
+            format: uuid
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+        - in: query
+          name: cursor
+          required: false
+          schema:
+            type: string
+    post:
+      tags:
+        - Documents
+      summary: Create editable snapshot draft
+      operationId: postIdeasIdeaIdSnapshots
+      responses:
+        "201":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentSnapshot"
+          headers:
+            ETag:
+              description: Strong entity-version ETag
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: ideaId
+          required: true
+          schema:
+            *schema
+        - in: header
+          name: Idempotency-Key
+          required: true
+          description: Opaque client-generated stable operation key; same key and different payload is 409
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SnapshotCreate"
+  /api/v1/snapshots/{snapshotId}:
+    get:
+      tags:
+        - Documents
+      summary: Read snapshot
+      operationId: getSnapshotsSnapshotId
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentSnapshot"
+          headers:
+            ETag:
+              description: Strong entity-version ETag
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: snapshotId
+          required: true
+          schema:
+            &schema
+            type: string
+            format: uuid
+    patch:
+      tags:
+        - Documents
+      summary: Update draft
+      operationId: patchSnapshotsSnapshotId
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentSnapshot"
+          headers:
+            ETag:
+              description: Strong entity-version ETag
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "428":
+          $ref: "#/components/responses/428"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: snapshotId
+          required: true
+          schema:
+            *schema
+        - in: header
+          name: If-Match
+          required: true
+          description: Strong entity-version ETag previously received; stale is 412
+          schema:
+            type: string
+            pattern: "^\"v[0-9]+\"$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SnapshotPatch"
+  /api/v1/snapshots/{snapshotId}/approve:
+    post:
+      tags:
+        - Documents
+      summary: Approve frozen snapshot
+      operationId: postSnapshotsSnapshotIdApprove
+      responses:
+        "201":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentSnapshot"
+          headers:
+            ETag:
+              description: Strong entity-version ETag
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "428":
+          $ref: "#/components/responses/428"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: snapshotId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: Idempotency-Key
+          required: true
+          description: Opaque client-generated stable operation key; same key and different payload is 409
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+        - in: header
+          name: If-Match
+          required: true
+          description: Strong entity-version ETag previously received; stale is 412
+          schema:
+            type: string
+            pattern: "^\"v[0-9]+\"$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SnapshotApprove"
+  /api/v1/snapshots/{snapshotId}/exports:
+    post:
+      tags:
+        - Documents
+      summary: Request PDF export
+      operationId: postSnapshotsSnapshotIdExports
+      responses:
+        "202":
+          description: Accepted for asynchronous processing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportJob"
+          headers:
+            Location:
+              description: Relative URL of durable status resource
+              schema:
+                type: string
+                format: uri-reference
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: snapshotId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: Idempotency-Key
+          required: true
+          description: Opaque client-generated stable operation key; same key and different payload is 409
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExportCreate"
+  /api/v1/exports/{exportId}:
+    get:
+      tags:
+        - Documents
+      summary: Read export job status
+      operationId: getExportsExportId
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportJob"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      parameters:
+        - in: path
+          name: exportId
+          required: true
+          schema:
+            type: string
+            format: uuid
+  /api/v1/exports/{exportId}/download-grant:
+    post:
+      tags:
+        - Documents
+      summary: Get short-lived authorized PDF URL
+      operationId: postExportsExportIdDownloadGrant
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DownloadGrant"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "409":
+          $ref: "#/components/responses/409"
+        "412":
+          $ref: "#/components/responses/412"
+        "413":
+          $ref: "#/components/responses/413"
+        "415":
+          $ref: "#/components/responses/415"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: Active owner + approved hash + completed AVAILABLE artifact only. Expired/purged object 409 ARTIFACT_UNAVAILABLE; storage uncertainty 503. Fresh short-lived URL never ledger-replayed or logged.
+      parameters:
+        - in: path
+          name: exportId
+          required: true
+          schema:
+            type: string
+            format: uuid
+  /health/live:
+    get:
+      security:
+        []
+      tags:
+        - Operations
+      summary: Process health
+      operationId: healthLive
+      responses:
+        "200":
+          description: Healthy
+        "503":
+          description: Unavailable
+  /health/ready:
+    get:
+      security:
+        []
+      tags:
+        - Operations
+      summary: Minimal readiness status; restrict at ingress
+      operationId: healthReady
+      responses:
+        "200":
+          description: Healthy
+        "503":
+          description: Unavailable
+  /webhooks/clerk:
+    post:
+      security:
+        []
+      tags:
+        - Identity
+      summary: Signed Clerk webhook; raw body signature and replay verification
+      operationId: clerkWebhook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "204":
+          description: Processed or safely deduplicated
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "409":
+          $ref: "#/components/responses/409"
+        "503":
+          $ref: "#/components/responses/503"
+      parameters:
+        - in: header
+          name: svix-id
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - in: header
+          name: svix-timestamp
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - in: header
+          name: svix-signature
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      description: "Raw bytes verified by pinned Clerk Express verifyWebhook before JSON use. svix-id dedupe is durable; same event ID/different body 409. Allowlisted user.created/user.updated/user.deleted; no webhook provisioning/reactivation. user.deleted gates/tombstones in same acceptance transaction. 204 after inbox+outbox commit, 503 rollback/transient DB. Security design section 16 governs."
+components:
+  securitySchemes:
+    ClerkSession:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Verified Clerk session token, never a user-controlled internal owner ID
+  schemas:
+    Error:
+      type: object
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            requestId:
+              type: string
+            retryable:
+              type: boolean
+            details:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                properties:
+                  path:
+                    type: string
+                  reason:
+                    type: string
+                required:
+                - path
+                - reason
+          required:
+          - code
+          - message
+          - requestId
+          - retryable
+      required:
+      - error
+    Pagination:
+      type: object
+      additionalProperties: false
+      properties:
+        nextCursor:
+          type:
+          - string
+          - 'null'
+        hasMore:
+          type: boolean
+      required:
+      - nextCursor
+      - hasMore
+    UserAccount:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+            - ACTIVE
+            - DISABLED
+            - DELETION_REQUESTED
+            - PURGING
+            - DELETED
+        preferences:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+        preferencesVersion:
+          type: integer
+          minimum: 1
+      required:
+        - id
+        - status
+        - preferences
+        - createdAt
+        - preferencesVersion
+    Idea:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          maxLength: 200
+        summary:
+          type:
+            - string
+            - "null"
+        status:
+          type: string
+          enum:
+            - ACTIVE
+            - ARCHIVED
+            - DELETION_REQUESTED
+            - PURGING
+            - DELETED
+        version:
+          type: integer
+          minimum: 1
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - title
+        - status
+        - version
+        - createdAt
+        - updatedAt
+    Conversation:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        ideaId:
+          type: string
+          format: uuid
+        title:
+          type:
+            - string
+            - "null"
+          maxLength: 200
+        status:
+          type: string
+          enum:
+            - ACTIVE
+            - ARCHIVED
+        proactiveResearch:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          minimum: 1
+      required:
+        - id
+        - ideaId
+        - status
+        - proactiveResearch
+        - version
+    Message:
+      type: object
+      additionalProperties: false
+      properties:
+        id: {"type":"string","format":"uuid"}
+        conversationId: {"type":"string","format":"uuid"}
+        sequence:
+          type: integer
+          minimum: 1
+        role:
+          type: string
+          enum:
+          - USER
+          - ASSISTANT
+        content:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      required:
+      - id
+      - conversationId
+      - sequence
+      - role
+      - content
+      - createdAt
+    Generation:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          &id
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+            - PENDING
+            - RUNNING
+            - CANCEL_REQUESTED
+            - COMPLETED
+            - FAILED
+            - CANCELLED
+        triggerMessageId:
+          *id
+        selected:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        conversationId:
+          &conversationId
+          type: string
+          format: uuid
+        outputMessageId:
+          *conversationId
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+        error:
+          type: object
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+            retryable:
+              type: boolean
+          required:
+            - code
+            - retryable
+      required:
+        - id
+        - status
+        - triggerMessageId
+        - selected
+        - conversationId
+        - createdAt
+    MessageSubmission:
+      type: object
+      additionalProperties: false
+      properties:
+        messageId:
+          &messageId
+          type: string
+          format: uuid
+        generationId:
+          *messageId
+        status:
+          type: string
+          const: PENDING
+        statusUrl:
+          type: string
+          format: uri-reference
+        eventsUrl:
+          type: string
+          format: uri-reference
+      required:
+        - messageId
+        - generationId
+        - status
+        - statusUrl
+        - eventsUrl
+    MemoryProposal:
+      type: object
+      additionalProperties: false
+      properties:
+        id: {"type":"string","format":"uuid"}
+        ideaId: {"type":"string","format":"uuid"}
+        kind:
+          type: string
+          enum:
+          - FACT
+          - HYPOTHESIS
+          - DECISION
+          - LEARNING
+          - CORRECTION
+        proposedText:
+          type: string
+        status:
+          type: string
+          enum:
+          - PROPOSED
+          - ACCEPTED
+          - EDITED_AND_ACCEPTED
+          - DISMISSED
+          - INVALIDATED
+        version:
+          type: integer
+          minimum: 1
+      required:
+      - id
+      - ideaId
+      - kind
+      - status
+    ConfirmedMemory:
+      type: object
+      additionalProperties: false
+      properties:
+        id: {"type":"string","format":"uuid"}
+        ideaId: {"type":"string","format":"uuid"}
+        kind:
+          type: string
+          enum:
+          - FACT
+          - HYPOTHESIS
+          - DECISION
+          - LEARNING
+        text:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - REMOVED
+      required:
+      - id
+      - ideaId
+      - kind
+      - text
+      - version
+      - status
+    MemoryRevision:
+      type: object
+      additionalProperties: false
+      properties:
+        id: {"type":"string","format":"uuid"}
+        memoryId: {"type":"string","format":"uuid"}
+        version:
+          type: integer
+          minimum: 1
+        text:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      required:
+      - id
+      - memoryId
+      - version
+      - text
+    Assumption:
+      type: object
+      additionalProperties: false
+      properties:
+        id: {"type":"string","format":"uuid"}
+        ideaId: {"type":"string","format":"uuid"}
+        statement:
+          type: string
+        status:
+          type: string
+          enum:
+          - PROPOSED
+          - ACTIVE
+          - REVISED
+          - ARCHIVED
+          - DISMISSED
+        version:
+          type: integer
+          minimum: 1
+      required:
+      - id
+      - ideaId
+      - statement
+      - status
+      - version
+    Experiment:
+      type: object
+      additionalProperties: false
+      properties:
+        id: {"type":"string","format":"uuid"}
+        ideaId: {"type":"string","format":"uuid"}
+        assumptionId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        title:
+          type: string
+          maxLength: 200
+        status:
+          type: string
+          enum:
+          - SUGGESTED
+          - PLANNED
+          - IN_PROGRESS
+          - COMPLETED
+          - CANCELLED
+        version:
+          type: integer
+          minimum: 1
+      required:
+      - id
+      - ideaId
+      - title
+      - status
+      - version
+    Learning:
+      type: object
+      additionalProperties: false
+      properties:
+        id: {"type":"string","format":"uuid"}
+        ideaId: {"type":"string","format":"uuid"}
+        experimentId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        reflection:
+          type: string
+      required:
+      - id
+      - ideaId
+      - reflection
+    ResearchJob:
+      type: object
+      additionalProperties: false
+      properties:
+        id: {"type":"string","format":"uuid"}
+        ideaId: {"type":"string","format":"uuid"}
+        status:
+          type: string
+          enum:
+          - QUEUED
+          - RUNNING
+          - SUCCEEDED
+          - INSUFFICIENT_EVIDENCE
+          - FAILED
+          - LIMIT_REACHED
+          - CANCELLED
+        createdAt:
+          type: string
+          format: date-time
+      required:
+      - id
+      - ideaId
+      - status
+    Evidence:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        ideaId:
+          type: string
+          format: uuid
+        finding:
+          type: string
+        origin:
+          type: string
+          enum:
+            - EXTERNAL_SOURCE
+            - USER_REPORT
+            - MODEL_INFERENCE
+        trust:
+          type: string
+          enum:
+            - UNASSESSED
+            - SOURCE_CHECKED
+            - CONTESTED
+            - STALE
+            - OUT_OF_SCOPE
+            - UNVERIFIABLE
+        sourceUrl:
+          type:
+            - string
+            - "null"
+          format: uri
+        retrievedAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        geography:
+          type:
+            - string
+            - "null"
+        sourceTitle:
+          type:
+            - string
+            - "null"
+        sourcePublisher:
+          type:
+            - string
+            - "null"
+        sourceObservedAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        periodStart:
+          type:
+            - string
+            - "null"
+          format: date
+        periodEnd:
+          type:
+            - string
+            - "null"
+          format: date
+        limitations:
+          type:
+            - string
+            - "null"
+      required:
+        - id
+        - ideaId
+        - finding
+        - origin
+        - trust
+        - sourceUrl
+        - retrievedAt
+        - geography
+        - sourceTitle
+        - sourcePublisher
+        - sourceObservedAt
+        - periodStart
+        - periodEnd
+        - limitations
+    EvidenceLink:
+      type: object
+      additionalProperties: false
+      properties:
+        assumptionId: {"type":"string","format":"uuid"}
+        evidenceId: {"type":"string","format":"uuid"}
+        relationship:
+          type: string
+          enum:
+          - SUPPORTS
+          - CHALLENGES
+          - INCONCLUSIVE
+      required:
+      - assumptionId
+      - evidenceId
+      - relationship
+    DocumentSnapshot:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        ideaId:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          enum:
+            - DRAFT
+            - REVIEWING
+            - APPROVED
+        content:
+          $ref: "#/components/schemas/SnapshotContent"
+        contentHash:
+          type:
+            - string
+            - "null"
+        draftRevision:
+          type: integer
+          minimum: 1
+        schemaVersion:
+          type: integer
+          const: 1
+      required:
+        - id
+        - ideaId
+        - version
+        - status
+        - content
+        - draftRevision
+        - schemaVersion
+      description: version is immutable document number; If-Match uses draftRevision. APPROVED content/hash/schemaVersion never mutate except authorized privacy DELETE.
+    ExportJob:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        snapshotId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+            - QUEUED
+            - RUNNING
+            - COMPLETED
+            - FAILED
+            - CANCELLED
+        createdAt:
+          type: string
+          format: date-time
+        artifactState:
+          type:
+            - string
+            - "null"
+          enum:
+            - AVAILABLE
+            - EXPIRED
+            - PURGED
+            - null
+        artifactExpiresAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+      required:
+        - id
+        - snapshotId
+        - status
+        - artifactState
+    DataOperation:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum:
+            - EXPORT
+            - DELETE_IDEA
+            - DELETE_ACCOUNT
+        status:
+          type: string
+          enum:
+            - REQUESTED
+            - RUNNING
+            - WAITING_RETRY
+            - REQUIRES_ATTENTION
+            - COMPLETED
+            - FAILED
+        deletionState:
+          type:
+            - string
+            - "null"
+          enum:
+            - ACTIVE
+            - DELETION_REQUESTED
+            - PURGING
+            - DELETED
+            - null
+        policyVersion:
+          type: string
+        requestedAt:
+          type: string
+          format: date-time
+        livePurgedAt:
+          &livePurgedAt
+          type:
+            - string
+            - "null"
+          format: date-time
+        completedAt:
+          *livePurgedAt
+        backupResidualUntil:
+          *livePurgedAt
+        errorCode:
+          type:
+            - string
+            - "null"
+        artifactState:
+          type:
+            - string
+            - "null"
+          enum:
+            - AVAILABLE
+            - EXPIRED
+            - PURGED
+            - null
+        artifactExpiresAt:
+          *livePurgedAt
+        download:
+          type: object
+          additionalProperties: false
+          properties:
+            url:
+              type: string
+              format: uri
+            expiresAt:
+              type: string
+              format: date-time
+          required:
+            - url
+            - expiresAt
+        capturedAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        activePurgeTargetAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+          readOnly: true
+          description: "For deletion under approved p2d-privacy-v2, derived requestedAt + 30 days; not a lease deadline or backup expiry. Null for export."
+      required:
+        - id
+        - kind
+        - status
+        - deletionState
+        - policyVersion
+        - requestedAt
+      description: Deletion progress only may be read by a matching verified subject when local account is blocked; no content/download. COMPLETED deletion means live purge with disclosed backup residual. EXPORT download minted only for active owner and AVAILABLE archive.
+    DownloadGrant:
+      type: object
+      additionalProperties: false
+      properties:
+        url:
+          type: string
+          format: uri
+        expiresAt:
+          type: string
+          format: date-time
+      required:
+      - url
+      - expiresAt
+    PreferencesPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        language:
+          type: string
+          enum:
+          - en
+          - hinglish
+        researchEnabled:
+          type: boolean
+    DataOperationCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum:
+            - EXPORT
+            - DELETE_ACCOUNT
+            - DELETE_IDEA
+        ideaId:
+          type: string
+          format: uuid
+        confirmed:
+          type: boolean
+          const: true
+        policyVersion:
+          type: string
+          maxLength: 60
+          examples:
+            - p2d-privacy-v2
+      required:
+        - kind
+      allOf:
+        - if:
+            properties:
+              kind:
+                const: DELETE_IDEA
+            required:
+              - kind
+          then:
+            required:
+              - ideaId
+              - confirmed
+              - policyVersion
+        - if:
+            properties:
+              kind:
+                const: DELETE_ACCOUNT
+            required:
+              - kind
+          then:
+            required:
+              - confirmed
+              - policyVersion
+            not:
+              required:
+                - ideaId
+        - if:
+            properties:
+              kind:
+                const: EXPORT
+            required:
+              - kind
+          then:
+            not:
+              required:
+                - confirmed
+    IdeaCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        summary:
+          type: string
+          maxLength: 5000
+      required:
+      - title
+    IdeaPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        summary:
+          type:
+          - string
+          - 'null'
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - ARCHIVED
+    ConversationCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        proactiveResearch:
+          type: boolean
+    ConversationPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        proactiveResearch:
+          type: boolean
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - ARCHIVED
+    MessageCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        clientSubmissionId: {"type":"string","format":"uuid"}
+        content:
+          type: string
+          minLength: 1
+          maxLength: 10000
+      required:
+      - clientSubmissionId
+      - content
+    RegenerationCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        triggerMessageId: {"type":"string","format":"uuid"}
+      required:
+      - triggerMessageId
+    ProposalPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        proposedText:
+          type: string
+          minLength: 1
+          maxLength: 5000
+      required:
+      - proposedText
+    ProposalDecision:
+      type: object
+      additionalProperties: false
+      properties:
+        approvedText:
+          type: string
+          minLength: 1
+          maxLength: 5000
+    ProposalDismiss:
+      type: object
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          maxLength: 500
+    MemoryPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        text:
+          type: string
+          minLength: 1
+          maxLength: 5000
+        status:
+          type: string
+          const: REMOVED
+      oneOf:
+        - required:
+            - text
+          not:
+            required:
+              - status
+        - required:
+            - status
+          not:
+            required:
+              - text
+      description: "Owner-approved memory/context policy P2D-P04: exactly text edit or status REMOVED. Versioned removal appends tombstone revision, advances idea contextEpoch, and excludes saved memory from future authorized dispatch. No restore via this command."
+    AssumptionCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        statement:
+          type: string
+          minLength: 1
+          maxLength: 5000
+      required:
+      - statement
+    AssumptionPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        statement:
+          type: string
+          maxLength: 5000
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - REVISED
+          - ARCHIVED
+          - DISMISSED
+    ExperimentCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        assumptionId: {"type":"string","format":"uuid"}
+        method:
+          type: string
+          maxLength: 5000
+        successCriteria:
+          type: string
+          maxLength: 2000
+      required:
+      - title
+      - method
+    ExperimentPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        method:
+          type: string
+          maxLength: 5000
+        status:
+          type: string
+          enum:
+          - PLANNED
+          - IN_PROGRESS
+          - COMPLETED
+          - CANCELLED
+    LearningCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        reflection:
+          type: string
+          minLength: 1
+          maxLength: 10000
+        evidenceIds:
+          type: array
+          maxItems: 20
+          items: {"type":"string","format":"uuid"}
+      required:
+      - reflection
+    ResearchRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        question:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        geography:
+          type: string
+          maxLength: 200
+      required:
+      - question
+    EvidenceLinkCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        evidenceId: {"type":"string","format":"uuid"}
+        relationship:
+          type: string
+          enum:
+          - SUPPORTS
+          - CHALLENGES
+          - INCONCLUSIVE
+      required:
+      - evidenceId
+      - relationship
+    SnapshotCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        content:
+          $ref: "#/components/schemas/SnapshotContent"
+      required:
+        - content
+    SnapshotPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        content:
+          $ref: "#/components/schemas/SnapshotContent"
+      required:
+        - content
+    SnapshotApprove:
+      type: object
+      additionalProperties: false
+      properties:
+        confirmed:
+          type: boolean
+          const: true
+      required:
+      - confirmed
+    ExportCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        format:
+          type: string
+          const: pdf
+      required:
+      - format
+    IdeaList:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Idea'
+        page:
+          $ref: '#/components/schemas/Pagination'
+      required:
+      - items
+      - page
+    ConversationList:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Conversation'
+        page:
+          $ref: '#/components/schemas/Pagination'
+      required:
+      - items
+      - page
+    MessageList:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Message'
+        page:
+          $ref: '#/components/schemas/Pagination'
+      required:
+      - items
+      - page
+    MemoryList:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConfirmedMemory'
+        page:
+          $ref: '#/components/schemas/Pagination'
+      required:
+      - items
+      - page
+    ProposalList:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MemoryProposal'
+        page:
+          $ref: '#/components/schemas/Pagination'
+      required:
+      - items
+      - page
+    MemoryRevisionList:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MemoryRevision'
+        page:
+          $ref: '#/components/schemas/Pagination'
+      required:
+      - items
+      - page
+    AssumptionList:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Assumption'
+        page:
+          $ref: '#/components/schemas/Pagination'
+      required:
+      - items
+      - page
+    ExperimentList:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Experiment'
+        page:
+          $ref: '#/components/schemas/Pagination'
+      required:
+      - items
+      - page
+    LearningList:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Learning'
+        page:
+          $ref: '#/components/schemas/Pagination'
+      required:
+      - items
+      - page
+    EvidenceList:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Evidence'
+        page:
+          $ref: '#/components/schemas/Pagination'
+      required:
+      - items
+      - page
+    ResearchJobList:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResearchJob'
+        page:
+          $ref: '#/components/schemas/Pagination'
+      required:
+      - items
+      - page
+    SnapshotList:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DocumentSnapshot'
+        page:
+          $ref: '#/components/schemas/Pagination'
+      required:
+      - items
+      - page
+    SnapshotContent:
+      type: object
+      additionalProperties: false
+      description: "Version-1 typed content under owner-approved immutable/versioned snapshot policy P2D-P05; presentation is a technical default. Source metadata is server-projected/validated against same-idea evidence, never trusted client assertions. Approval freezes embedded citations. Global body cap applies."
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        documentDate:
+          type: string
+          format: date
+        sections:
+          type: array
+          minItems: 1
+          maxItems: 30
+          items:
+            type: object
+            additionalProperties: false
+            properties:
+              id:
+                type: string
+                maxLength: 64
+              heading:
+                type: string
+                maxLength: 200
+              text:
+                type: string
+                maxLength: 10000
+              knowledgeClass:
+                type: string
+                enum:
+                  - CONFIRMED_MEMORY
+                  - ASSUMPTION
+                  - EXTERNAL_EVIDENCE
+                  - USER_OBSERVATION
+                  - INTERPRETATION
+                  - UNKNOWN
+              sourceEvidenceIds:
+                type: array
+                maxItems: 50
+                uniqueItems: true
+                items:
+                  type: string
+                  format: uuid
+              missingInformation:
+                type: array
+                maxItems: 20
+                items:
+                  type: string
+                  maxLength: 500
+              sourceReferences:
+                type: array
+                maxItems: 50
+                items:
+                  $ref: "#/components/schemas/SourceReference"
+            required:
+              - id
+              - heading
+              - text
+              - knowledgeClass
+              - sourceEvidenceIds
+              - missingInformation
+              - sourceReferences
+            allOf:
+              - if:
+                  properties:
+                    knowledgeClass:
+                      const: EXTERNAL_EVIDENCE
+                  required:
+                    - knowledgeClass
+                then:
+                  properties:
+                    sourceEvidenceIds:
+                      minItems: 1
+                    sourceReferences:
+                      minItems: 1
+      required:
+        - title
+        - documentDate
+        - sections
+    SourceReference:
+      type: object
+      additionalProperties: false
+      properties:
+        evidenceId:
+          type: string
+          format: uuid
+        sourceUrl:
+          type:
+            - string
+            - "null"
+          format: uri
+        sourceTitle:
+          type:
+            - string
+            - "null"
+        sourcePublisher:
+          type:
+            - string
+            - "null"
+        retrievedAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        sourceObservedAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        geography:
+          type:
+            - string
+            - "null"
+        periodStart:
+          type:
+            - string
+            - "null"
+          format: date
+        periodEnd:
+          type:
+            - string
+            - "null"
+          format: date
+        trust:
+          type: string
+          enum:
+            - UNASSESSED
+            - SOURCE_CHECKED
+            - CONTESTED
+            - STALE
+            - OUT_OF_SCOPE
+            - UNVERIFIABLE
+        limitations:
+          type:
+            - string
+            - "null"
+      required:
+        - evidenceId
+        - sourceUrl
+        - sourceTitle
+        - sourcePublisher
+        - retrievedAt
+        - sourceObservedAt
+        - geography
+        - periodStart
+        - periodEnd
+        - trust
+        - limitations
+  responses:
+    "400":
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    "401":
+      description: Unauthenticated
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    "403":
+      description: Action forbidden for accessible resource or inactive local account
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    "404":
+      description: Not found or not owned
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    "406":
+      description: Accept must allow text/event-stream
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    "409":
+      description: Business state or idempotency conflict
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    "412":
+      description: Stale entity version
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    "413":
+      description: Payload too large
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    "415":
+      description: Unsupported content type
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    "428":
+      description: Required If-Match missing
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    "429":
+      description: Rate or quota limited
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+      headers:
+        Retry-After:
+          description: Optional bounded delay in seconds when retry time is known; never promises quota reset.
+          schema:
+            type: integer
+            minimum: 1
+    "500":
+      description: Unexpected error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    "503":
+      description: Dependency unavailable
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+      headers:
+        Retry-After:
+          description: Optional bounded delay in seconds when retry time is known; never promises quota reset.
+          schema:
+            type: integer
+            minimum: 1

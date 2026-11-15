@@ -1,0 +1,645 @@
+// Founder's Lens — database LLD v0.1
+// Target: Prisma ORM 6.x + PostgreSQL 15+; pin exact Prisma versions in package.json.
+// Run Prisma Migrate generated DDL first, then the reviewed SQL guard migration.
+// Some invariants require guards.sql and transactional service logic.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider     = "postgresql"
+  url          = env("DATABASE_URL")
+  relationMode = "foreignKeys"
+}
+
+enum AccountStatus {
+  ACTIVE
+  DISABLED
+  DELETION_REQUESTED
+  PURGING
+  DELETED
+}
+enum IdeaStatus {
+  ACTIVE
+  ARCHIVED
+  DELETION_REQUESTED
+  PURGING
+  DELETED
+}
+enum ConversationStatus {
+  ACTIVE
+  ARCHIVED
+}
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+enum GenerationStatus {
+  PENDING
+  RUNNING
+  CANCEL_REQUESTED
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+enum ThinkingStrategy {
+  EXPLORE
+  CHALLENGE
+  INFORM
+  COMPARE
+  ACT
+  REFLECT
+}
+enum ProposalStatus {
+  PROPOSED
+  ACCEPTED
+  EDITED_AND_ACCEPTED
+  DISMISSED
+  INVALIDATED
+}
+enum ProposalKind {
+  FACT
+  HYPOTHESIS
+  DECISION
+  LEARNING
+  CORRECTION
+}
+enum MemoryKind {
+  FACT
+  HYPOTHESIS
+  DECISION
+  LEARNING
+}
+enum MemoryStatus {
+  ACTIVE
+  REMOVED
+}
+enum AssumptionStatus {
+  PROPOSED
+  ACTIVE
+  REVISED
+  ARCHIVED
+  DISMISSED
+}
+enum ExperimentStatus {
+  SUGGESTED
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+enum ResearchStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  INSUFFICIENT_EVIDENCE
+  FAILED
+  LIMIT_REACHED
+  CANCELLED
+}
+enum EvidenceOrigin {
+  EXTERNAL_SOURCE
+  USER_REPORT
+  MODEL_INFERENCE
+}
+enum EvidenceTrust {
+  UNASSESSED
+  SOURCE_CHECKED
+  CONTESTED
+  STALE
+  OUT_OF_SCOPE
+  UNVERIFIABLE
+}
+enum EvidenceRelation {
+  SUPPORTS
+  CHALLENGES
+  INCONCLUSIVE
+}
+enum SnapshotStatus {
+  DRAFT
+  REVIEWING
+  APPROVED
+}
+enum ExportStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+enum OutboxStatus {
+  PENDING
+  CLAIMED
+  PUBLISHED
+  FAILED
+}
+enum DataOperationKind {
+  EXPORT
+  DELETE_IDEA
+  DELETE_ACCOUNT
+}
+enum DataOperationStatus {
+  REQUESTED
+  RUNNING
+  WAITING_RETRY
+  REQUIRES_ATTENTION
+  COMPLETED
+  FAILED
+}
+
+enum DeletionState {
+  ACTIVE
+  DELETION_REQUESTED
+  PURGING
+  DELETED
+}
+
+enum WebhookInboxStatus {
+  RECEIVED
+  PROCESSING
+  APPLIED
+  IGNORED
+  FAILED
+}
+
+enum ArtifactState {
+  AVAILABLE
+  EXPIRED
+  PURGED
+}
+
+model UserAccount {
+  id            String @id @default(uuid()) @db.Uuid
+  clerkSubject  String @unique @db.VarChar(255)
+  clerkInstanceId String @db.VarChar(100)
+  subjectKey String @unique @db.Char(64)
+  subjectKeyVersion Int @default(1)
+  providerObjectUpdatedAt DateTime? @db.Timestamptz(3)
+  providerEventAt DateTime? @db.Timestamptz(3)
+  status        AccountStatus @default(ACTIVE)
+  preferencesVersion Int @default(1)
+  idempotencyRecords IdempotencyRecord[]
+  preferences   Json @default("{}")
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @db.Timestamptz(3)
+  ideas         Idea[]
+  usage         UsageLedger[]
+  operations    DataOperation[]
+  auditEvents   AuditEvent[]
+}
+
+model Idea {
+  id          String @id @default(uuid()) @db.Uuid
+  contextEpoch Int @default(0)
+  ownerId     String @db.Uuid
+  owner       UserAccount @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  title       String @db.VarChar(200)
+  summary     String? @db.Text
+  status      IdeaStatus @default(ACTIVE)
+  version     Int @default(1)
+  deletedAt   DateTime? @db.Timestamptz(3)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+  conversations Conversation[]
+  proposals   MemoryProposal[]
+  memories    ConfirmedMemory[]
+  assumptions Assumption[]
+  experiments Experiment[]
+  learnings   Learning[]
+  researchJobs ResearchJob[]
+  evidence    EvidenceRecord[]
+  snapshots   DocumentSnapshot[]
+  @@index([ownerId, updatedAt(sort: Desc)])
+}
+
+model Conversation {
+  id                String @id @default(uuid()) @db.Uuid
+  ideaId            String @db.Uuid
+  idea              Idea @relation(fields: [ideaId], references: [id], onDelete: Restrict)
+  title             String? @db.VarChar(200)
+  status            ConversationStatus @default(ACTIVE)
+  metadataVersion   Int @default(1)
+  proactiveResearch Boolean @default(true)
+  nextSequence      Int @default(1)
+  createdAt         DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime @updatedAt @db.Timestamptz(3)
+  messages          Message[]
+  attempts          GenerationAttempt[]
+  @@unique([id, ideaId])
+  @@index([ideaId, updatedAt(sort: Desc)])
+}
+
+model Message {
+  id                   String @id @default(uuid()) @db.Uuid
+  ideaId               String @db.Uuid
+  conversationId       String @db.Uuid
+  conversation         Conversation @relation(fields: [conversationId, ideaId], references: [id, ideaId], onDelete: Restrict)
+  sequence             Int
+  role                 MessageRole
+  content              Json
+  contentSchemaVersion Int @default(1)
+  clientSubmissionKey  String? @db.VarChar(128)
+  submissionSha256     String? @db.Char(64) // required on USER; enforced in SQL
+  generationAttemptId  String? @unique @db.Uuid
+  generationAttempt    GenerationAttempt? @relation("AttemptResponse", fields: [generationAttemptId, conversationId], references: [id, conversationId], onDelete: Restrict)
+  triggeringAttempts   GenerationAttempt[] @relation("TriggerMessage")
+  originProposals      MemoryProposal[]
+  triggeredResearch    ResearchJob[]
+  createdAt            DateTime @default(now()) @db.Timestamptz(3)
+  @@unique([generationAttemptId, conversationId])
+  @@unique([conversationId, sequence])
+  @@unique([id, conversationId])
+  @@unique([id, ideaId])
+  @@unique([conversationId, clientSubmissionKey])
+  @@index([ideaId, createdAt])
+}
+
+model GenerationAttempt {
+  id                   String @id @default(uuid()) @db.Uuid
+  conversationId       String @db.Uuid
+  conversation         Conversation @relation(fields: [conversationId], references: [id], onDelete: Restrict)
+  triggerMessageId     String @db.Uuid
+  triggerMessage       Message @relation("TriggerMessage", fields: [triggerMessageId, conversationId], references: [id, conversationId], onDelete: Restrict)
+  contextEpoch         Int?
+  dispatchAuthorizedAt DateTime? @db.Timestamptz(3)
+  attemptNumber        Int
+  regenerationKey      String? @db.VarChar(128) // only for explicit regeneration
+  status               GenerationStatus @default(PENDING)
+  strategy             ThinkingStrategy?
+  selectedAt           DateTime? @db.Timestamptz(3)
+  outputMessage        Message? @relation("AttemptResponse")
+  provider             String? @db.VarChar(80)
+  model                String? @db.VarChar(100)
+  errorCode            String? @db.VarChar(100)
+  startedAt            DateTime? @db.Timestamptz(3)
+  completedAt          DateTime? @db.Timestamptz(3)
+  createdAt            DateTime @default(now()) @db.Timestamptz(3)
+  @@unique([triggerMessageId, attemptNumber])
+  @@unique([conversationId, regenerationKey])
+  @@unique([id, conversationId])
+  @@index([conversationId, createdAt])
+  leaseEpoch     Int @default(0)
+  leaseUntil     DateTime? @db.Timestamptz(3)
+  lastHeartbeatAt DateTime? @db.Timestamptz(3)
+  deadlineAt     DateTime @db.Timestamptz(3)
+  executionAttempts Int @default(0)
+}
+
+model MemoryProposal {
+  id                   String @id @default(uuid()) @db.Uuid
+  ideaId               String @db.Uuid
+  idea                 Idea @relation(fields: [ideaId], references: [id], onDelete: Restrict)
+  sourceMessageId      String? @db.Uuid
+  sourceMessage        Message? @relation(fields: [sourceMessageId, ideaId], references: [id, ideaId], onDelete: Restrict)
+  targetMemoryId       String? @db.Uuid
+  targetMemory         ConfirmedMemory? @relation(fields: [targetMemoryId, ideaId], references: [id, ideaId], onDelete: Restrict)
+  expectedMemoryVersion Int?
+  resultMemoryId       String? @db.Uuid // audited in service; no FK to avoid cycle
+  kind                 ProposalKind
+  candidate            Json
+  provenance           Json @default("{}")
+  version              Int @default(1)
+  status               ProposalStatus @default(PROPOSED)
+  reviewedById         String? @db.Uuid
+  reviewedAt           DateTime? @db.Timestamptz(3)
+  createdAt            DateTime @default(now()) @db.Timestamptz(3)
+  @@index([ideaId, status, createdAt])
+}
+
+model ConfirmedMemory {
+  id             String @id @default(uuid()) @db.Uuid
+  ideaId         String @db.Uuid
+  idea           Idea @relation(fields: [ideaId], references: [id], onDelete: Restrict)
+  kind           MemoryKind
+  currentVersion Int @default(1)
+  currentContent Json
+  status         MemoryStatus @default(ACTIVE)
+  assumptionId   String? @db.Uuid
+  assumption     Assumption? @relation(fields: [assumptionId, ideaId], references: [id, ideaId], onDelete: Restrict)
+  revisions      MemoryRevision[]
+  proposals      MemoryProposal[]
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(3)
+  @@unique([id, ideaId])
+  @@index([ideaId, status])
+}
+
+model MemoryRevision {
+  id          String @id @default(uuid()) @db.Uuid
+  memoryId    String @db.Uuid
+  memory      ConfirmedMemory @relation(fields: [memoryId], references: [id], onDelete: Restrict)
+  version     Int
+  content     Json
+  provenance  Json @default("{}")
+  actorId     String @db.Uuid
+  reason      String? @db.VarChar(300)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  @@unique([memoryId, version])
+}
+
+model Assumption {
+  id          String @id @default(uuid()) @db.Uuid
+  ideaId      String @db.Uuid
+  idea        Idea @relation(fields: [ideaId], references: [id], onDelete: Restrict)
+  statement   String @db.Text
+  status      AssumptionStatus @default(PROPOSED)
+  version     Int @default(1)
+  evidenceStatus String @default("UNTESTED") @db.VarChar(40)
+  memories    ConfirmedMemory[]
+  experiments Experiment[]
+  evidenceLinks AssumptionEvidence[]
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+  @@unique([id, ideaId])
+  @@index([ideaId, status])
+}
+
+model Experiment {
+  id          String @id @default(uuid()) @db.Uuid
+  ideaId      String @db.Uuid
+  idea        Idea @relation(fields: [ideaId], references: [id], onDelete: Restrict)
+  assumptionId String? @db.Uuid
+  assumption   Assumption? @relation(fields: [assumptionId, ideaId], references: [id, ideaId], onDelete: Restrict)
+  hypothesis  String @db.Text
+  plan        Json
+  successCriteria Json
+  status      ExperimentStatus @default(SUGGESTED)
+  version     Int @default(1)
+  acceptedAt  DateTime? @db.Timestamptz(3)
+  completedAt DateTime? @db.Timestamptz(3)
+  learnings   Learning[]
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+  @@unique([id, ideaId])
+  @@index([ideaId, status])
+}
+
+model Learning {
+  id          String @id @default(uuid()) @db.Uuid
+  ideaId      String @db.Uuid
+  idea        Idea @relation(fields: [ideaId], references: [id], onDelete: Restrict)
+  experimentId String? @db.Uuid
+  experiment   Experiment? @relation(fields: [experimentId, ideaId], references: [id, ideaId], onDelete: Restrict)
+  observation  String? @db.Text
+  interpretation String @db.Text
+  origin       EvidenceOrigin @default(USER_REPORT)
+  approvedById String @db.Uuid
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+  @@index([ideaId, createdAt])
+}
+
+model ResearchJob {
+  id             String @id @default(uuid()) @db.Uuid
+  ideaId         String @db.Uuid
+  idea           Idea @relation(fields: [ideaId], references: [id], onDelete: Restrict)
+  triggerMessageId String? @db.Uuid
+  triggerMessage   Message? @relation(fields: [triggerMessageId, ideaId], references: [id, ideaId], onDelete: Restrict)
+  query          String @db.Text
+  dedupeKey      String @db.VarChar(128)
+  budget         Json
+  status         ResearchStatus @default(QUEUED)
+  startedAt      DateTime? @db.Timestamptz(3)
+  completedAt    DateTime? @db.Timestamptz(3)
+  errorCode      String? @db.VarChar(80)
+  evidence       EvidenceRecord[]
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  @@unique([ideaId, dedupeKey])
+  @@unique([id, ideaId])
+  @@index([ideaId, status])
+  leaseEpoch     Int @default(0)
+  leaseUntil     DateTime? @db.Timestamptz(3)
+  lastHeartbeatAt DateTime? @db.Timestamptz(3)
+  deadlineAt     DateTime @db.Timestamptz(3)
+  executionAttempts Int @default(0)
+}
+
+model EvidenceRecord {
+  id             String @id @default(uuid()) @db.Uuid
+  ideaId         String @db.Uuid
+  idea           Idea @relation(fields: [ideaId], references: [id], onDelete: Restrict)
+  researchJobId  String? @db.Uuid
+  researchJob    ResearchJob? @relation(fields: [researchJobId, ideaId], references: [id, ideaId], onDelete: Restrict)
+  origin         EvidenceOrigin
+  trust          EvidenceTrust @default(UNASSESSED)
+  finding        String @db.Text
+  sourceTitle    String? @db.VarChar(500)
+  sourceLocator  String? @db.Text
+  sourcePublisher String? @db.VarChar(255)
+  sourceObservedAt DateTime? @db.Timestamptz(3)
+  retrievedAt    DateTime? @db.Timestamptz(3)
+  geography      String? @db.VarChar(200)
+  periodStart    DateTime? @db.Date
+  periodEnd      DateTime? @db.Date
+  limitations    String? @db.Text
+  dedupeFingerprint String? @db.VarChar(128)
+  links          AssumptionEvidence[]
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  @@unique([id, ideaId])
+  @@unique([ideaId, dedupeFingerprint])
+  @@index([ideaId, createdAt(sort: Desc)])
+}
+
+model AssumptionEvidence {
+  ideaId       String @db.Uuid
+  assumptionId String @db.Uuid
+  evidenceId   String @db.Uuid
+  assumption   Assumption @relation(fields: [assumptionId, ideaId], references: [id, ideaId], onDelete: Cascade)
+  evidence     EvidenceRecord @relation(fields: [evidenceId, ideaId], references: [id, ideaId], onDelete: Cascade)
+  relationship EvidenceRelation
+  note         String? @db.Text
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+  @@id([assumptionId, evidenceId])
+  @@index([evidenceId])
+}
+
+model DocumentSnapshot {
+  id             String @id @default(uuid()) @db.Uuid
+  ideaId         String @db.Uuid
+  idea           Idea @relation(fields: [ideaId], references: [id], onDelete: Restrict)
+  version        Int
+  status         SnapshotStatus @default(DRAFT)
+  content        Json
+  schemaVersion  Int @default(1)
+  draftRevision  Int @default(1) // CAS for preview edits
+  contentSha256  String? @db.Char(64)
+  approvedById   String? @db.Uuid
+  approvedAt     DateTime? @db.Timestamptz(3)
+  exports        ExportJob[]
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(3)
+  @@unique([ideaId, version])
+  @@unique([id, ideaId])
+  @@index([ideaId, createdAt(sort: Desc)])
+}
+
+model ExportJob {
+  artifactState ArtifactState?
+  artifactExpiresAt DateTime? @db.Timestamptz(3)
+  id             String @id @default(uuid()) @db.Uuid
+  ideaId         String @db.Uuid
+  snapshotId     String @db.Uuid
+  snapshot       DocumentSnapshot @relation(fields: [snapshotId, ideaId], references: [id, ideaId], onDelete: Restrict)
+  idempotencyKey String @db.VarChar(128)
+  status         ExportStatus @default(QUEUED)
+  objectKey      String? @db.VarChar(600)
+  fileSha256     String? @db.Char(64)
+  errorCode      String? @db.VarChar(80)
+  startedAt      DateTime? @db.Timestamptz(3)
+  completedAt    DateTime? @db.Timestamptz(3)
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  @@unique([snapshotId, idempotencyKey])
+  @@index([snapshotId, createdAt(sort: Desc)])
+  @@index([ideaId, status])
+  leaseEpoch     Int @default(0)
+  leaseUntil     DateTime? @db.Timestamptz(3)
+  lastHeartbeatAt DateTime? @db.Timestamptz(3)
+  deadlineAt     DateTime @db.Timestamptz(3)
+  executionAttempts Int @default(0)
+}
+
+model OutboxEvent {
+  id            String @id @default(uuid()) @db.Uuid
+  kind          String @db.VarChar(100)
+  aggregateType String @db.VarChar(60)
+  aggregateId   String @db.Uuid
+  payload       Json
+  status        OutboxStatus @default(PENDING)
+  lastErrorCode String? @db.VarChar(100)
+  claimEpoch    Int @default(0)
+  dispatchAttempts Int @default(0)
+  nextAttemptAt DateTime @default(now()) @db.Timestamptz(3)
+  leaseUntil    DateTime? @db.Timestamptz(3)
+  publishedAt   DateTime? @db.Timestamptz(3)
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+  @@index([status, nextAttemptAt])
+}
+
+model AuditEvent {
+  id           String @id @default(uuid()) @db.Uuid
+  actorId      String? @db.Uuid
+  actor        UserAccount? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action       String @db.VarChar(100)
+  resourceType String @db.VarChar(80)
+  resourceId   String? @db.Uuid
+  ideaId       String? @db.Uuid
+  metadata     Json @default("{}")
+  occurredAt   DateTime @default(now()) @db.Timestamptz(3)
+  @@index([actorId, occurredAt(sort: Desc)])
+  @@index([ideaId, occurredAt(sort: Desc)])
+}
+
+model UsageLedger {
+  id              String @id @default(uuid()) @db.Uuid
+  accountId       String @db.Uuid
+  account         UserAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  operationType   String @db.VarChar(60)
+  provider        String? @db.VarChar(80)
+  reservationId  String @unique @db.Uuid
+  reservationState String @default("RESERVED") @db.VarChar(20)
+  reservedUnits Decimal @db.Decimal(16, 5)
+  measuredUnits   Decimal @db.Decimal(16, 5)
+  unit            String @db.VarChar(40)
+  reconciliationKey String @db.VarChar(128)
+  occurredAt      DateTime @default(now()) @db.Timestamptz(3)
+  @@unique([accountId, reconciliationKey])
+  @@index([accountId, occurredAt(sort: Desc)])
+}
+
+model DataOperation {
+  fileSha256 String? @db.Char(64)
+  capturedAt DateTime? @db.Timestamptz(3)
+  id           String @id @default(uuid()) @db.Uuid
+  accountId    String? @db.Uuid
+  account      UserAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  ideaId       String? @db.Uuid
+  kind         DataOperationKind
+  status       DataOperationStatus @default(REQUESTED)
+  cleanupCheckpoint Json @default("{}")
+  objectKey    String? @db.VarChar(600)
+  errorCode    String? @db.VarChar(100)
+  requestedAt  DateTime @default(now()) @db.Timestamptz(3)
+  completedAt  DateTime? @db.Timestamptz(3)
+  @@index([accountId, requestedAt(sort: Desc)])
+  leaseEpoch Int @default(0)
+  leaseUntil DateTime? @db.Timestamptz(3)
+  lastHeartbeatAt DateTime? @db.Timestamptz(3)
+  deadlineAt DateTime @db.Timestamptz(3)
+  executionAttempts Int @default(0)
+  clerkInstanceId String @db.VarChar(100)
+  ownerSubjectKey String @db.Char(64)
+  subjectKeyVersion Int @default(1)
+  reverificationKey String? @unique @db.Char(64)
+  deletionScopeKey String? @unique @db.VarChar(200)
+  deletionState DeletionState?
+  policyVersion String @db.VarChar(60)
+  livePurgedAt DateTime? @db.Timestamptz(3)
+  backupResidualUntil DateTime? @db.Timestamptz(3)
+  receiptMirroredAt DateTime? @db.Timestamptz(3)
+  retainUntil DateTime? @db.Timestamptz(3)
+  nextAttemptAt DateTime @default(now()) @db.Timestamptz(3)
+  artifactState ArtifactState?
+  artifactExpiresAt DateTime? @db.Timestamptz(3)
+}
+
+
+// Phase 2D proposed generic replay ledger; no private bodies or bearer credentials.
+model IdempotencyRecord {
+  id String @id @default(uuid()) @db.Uuid
+  accountId String @db.Uuid
+  account UserAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  operationType String @db.VarChar(100)
+  targetScope String @db.VarChar(200)
+  key String @db.VarChar(128)
+  requestFingerprint String @db.Char(64)
+  algorithmVersion Int @default(1)
+  status String @db.VarChar(30)
+  responseStatus Int?
+  responseRef Json?
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  expiresAt DateTime @db.Timestamptz(3)
+  @@unique([accountId, operationType, targetScope, key])
+  @@index([expiresAt])
+}
+
+
+// Operational identity entities are independent of content-bearing account FK cascades.
+model WebhookInbox {
+  id String @id @default(uuid()) @db.Uuid
+  provider String @default("clerk") @db.VarChar(30)
+  clerkInstanceId String @db.VarChar(100)
+  eventId String @db.VarChar(128)
+  eventType String @db.VarChar(100)
+  bodySha256 String @db.Char(64)
+  subjectKey String? @db.Char(64)
+  subjectKeyVersion Int?
+  occurredAt DateTime @db.Timestamptz(3)
+  objectUpdatedAt DateTime? @db.Timestamptz(3)
+  receivedAt DateTime @default(now()) @db.Timestamptz(3)
+  lastReceivedAt DateTime @default(now()) @db.Timestamptz(3)
+  status WebhookInboxStatus @default(RECEIVED)
+  leaseEpoch Int @default(0)
+  leaseUntil DateTime? @db.Timestamptz(3)
+  lastHeartbeatAt DateTime? @db.Timestamptz(3)
+  deadlineAt DateTime @db.Timestamptz(3)
+  executionAttempts Int @default(0)
+  nextAttemptAt DateTime @default(now()) @db.Timestamptz(3)
+  lastErrorCode String? @db.VarChar(100)
+  processedAt DateTime? @db.Timestamptz(3)
+  @@unique([provider, clerkInstanceId, eventId])
+  @@index([status, nextAttemptAt])
+}
+
+model IdentityTombstone {
+  id String @id @default(uuid()) @db.Uuid
+  clerkInstanceId String @db.VarChar(100)
+  subjectKey String @db.Char(64)
+  subjectKeyVersion Int
+  deletionOperationId String? @db.Uuid // no FK; anti-resurrection marker survives receipt/content purge
+  requestedAt DateTime @db.Timestamptz(3)
+  livePurgedAt DateTime? @db.Timestamptz(3)
+  retainUntil DateTime? @db.Timestamptz(3)
+  lastProviderEventAt DateTime? @db.Timestamptz(3)
+  @@unique([clerkInstanceId, subjectKey])
+  @@index([retainUntil])
+}
