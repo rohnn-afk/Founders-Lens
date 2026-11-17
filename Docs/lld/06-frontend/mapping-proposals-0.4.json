@@ -1,0 +1,118 @@
+{
+  "formatVersion": 1,
+  "recordId": "FL-P4-MAPPING-PROPOSALS-0.4",
+  "status": "Pending Owner Approval - proposals only",
+  "isApprovedPackageManifest": false,
+  "approvalDate": null,
+  "approvalTimestamp": null,
+  "signature": null,
+  "approvedCommit": null,
+  "authority": "Owner authorized inspection and precise proposals only; no inferred approval of new schema, legacy-create availability change or FE4D-A08.",
+  "decisions": [
+    {
+      "id": "P4-B01-D01",
+      "blocker": "P4-B01",
+      "status": "Pending Owner Approval",
+      "recommendation": "Keep required hypothesis distinct; store display label in plan.title; proposed V3 explicit hypothesis input and disclosed legacy-create upgrade/error policy. No redundant title column or invented data."
+    },
+    {
+      "id": "P4-B02-D01",
+      "blocker": "P4-B02",
+      "status": "Pending Owner Approval",
+      "recommendation": "One proposed LearningEvidence composite-FK association plus Learning capture marker/unique key; atomic owner-scoped capture and V3 read-back, no legacy backfill or AssumptionEvidence overload."
+    }
+  ],
+  "hashAlgorithm": "SHA-256 over raw bytes; old is actual task input, new is investigation/proposal documentation, not an approved baseline.",
+  "changes": [
+    {
+      "path": "Docs/lld/01-database/physical-design.md",
+      "purpose": "Source-exact evidence and proposed distinct title mapping, LearningEvidence/marker, migration/privacy/concurrency and MAP acceptance.",
+      "old": {
+        "sha256": "51ed52f3418f453ab46da97536eb4f3c6649e221e3bd13f5e659e175683a84ec",
+        "bytes": 41148
+      },
+      "new": {
+        "sha256": "5a1037cc00cf99e537dcecb4b9a57375f34ffd5085719d69693a7ee1c41cfad6",
+        "bytes": 57331
+      }
+    },
+    {
+      "path": "Docs/lld/02-api-security/api-contracts.md",
+      "purpose": "Exact proposed V3 contract changes, legacy compatibility decisions and explicit owner-approval boundary.",
+      "old": {
+        "sha256": "1e3d86a0eab91ef27dd8cce8a4c307f3841552c754a17df60852576725e9a6ad",
+        "bytes": 55647
+      },
+      "new": {
+        "sha256": "97def65023228a81f0d9318548e0161aab0d94c0078c303e5c329f9e9921d5bc",
+        "bytes": 64965
+      }
+    },
+    {
+      "path": "Docs/lld/06-frontend/frontend-integration-review.md",
+      "purpose": "Blocker decisions/status, requirement/test traceability and actual static validation evidence.",
+      "old": {
+        "sha256": "fbba7fdcbf4210553de9ff5d98765989f9b945fe358fac6639703f20b6b136ef",
+        "bytes": 74004
+      },
+      "new": {
+        "sha256": "a75f07290807c22df4d98f024dc97a70032d81e239dad4684a797732df4eb1b8",
+        "bytes": 78574
+      }
+    },
+    {
+      "path": "Docs/README.md",
+      "purpose": "Navigation to pending mapping proposals; no active architecture approval.",
+      "old": {
+        "sha256": "1526d87d01a1042b1d58c3ef7ea44049950accfeaf493a3a0e442c0128f1c741",
+        "bytes": 8613
+      },
+      "new": {
+        "sha256": "cac86c9a5e9a74a7f201a6306d0b0e67fa2cdc0c3f0893e00a5bb744d1c54678",
+        "bytes": 9149
+      }
+    }
+  ],
+  "preservedRecords": [
+    {
+      "path": "Docs/lld/04-integration-review/approved-revision-1.0.json",
+      "sha256": "8ee34a264be0d38ce139fa3ecf1d9b4cd3d7424288091d88208f40cfca0fa94a",
+      "bytes": 7672
+    },
+    {
+      "path": "Docs/lld/05-ai-orchestration/approved-revision-0.3.json",
+      "sha256": "8d332b066b81cd260b672d7decb8d9d037786e2c258d15b7b9ff77add30dec18",
+      "bytes": 8450
+    },
+    {
+      "path": "Docs/lld/06-frontend/controlled-amendments-0.3.json",
+      "sha256": "21331b8333b2a8f2f97cc50b327cf5b20ad905fcd9ab880c0468a9baa2974e43",
+      "bytes": 13398
+    }
+  ],
+  "activeOpenapiVersion": "0.4.0",
+  "activeOperations": 53,
+  "activeFounderOperations": 50,
+  "activePrismaModels": 23,
+  "proposedPrismaModelsIfApproved": 24,
+  "activeContractOrSchemaChanges": [],
+  "migrationsExecuted": [],
+  "acceptanceStatus": "All runtime/model/security/browser/Prisma/PostgreSQL tests unexecuted; MAP-01 through MAP-10 are proposed only.",
+  "staticChecks": {
+    "markdownFiles": 40,
+    "localMarkdownTargets": 274,
+    "localOpenapiReferences": 696,
+    "operationIds": 53,
+    "founderOperationMappings": 50,
+    "SRSFRATPairs": 47,
+    "originalFindings": 23,
+    "originalIntegratedScenarios": 40
+  },
+  "excludedPaths": [
+    {
+      "path": "Docs/lld/06-frontend/mapping-proposals-0.4.json",
+      "reason": "Self-excluded from fingerprint list to avoid circularity; this is a new unapproved proposal change record, not a final Phase4 manifest."
+    }
+  ],
+  "historyRule": "Preserve previous manifests and controlled-amendments0.3 register verbatim. Its then-final member hashes describe the previous stage; this record links subsequent investigation-only documentation edits without replacing history."
+}

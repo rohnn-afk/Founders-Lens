@@ -66,3 +66,27 @@ CT-027: preferences and conversation PATCH missing/stale If-Match returns 428/41
 
 
 Final acceptance: [FSEC-01–16](../04-integration-review/test-acceptance-matrix.md#final-securityprivacy-closure-scenarios) covers durable webhook, recreation, deletion faults, context races, immutable exports, ownership, storage and restore. CT-032 must test 204 only after durable acceptance, 409 for reused event ID with different bytes, 400 invalid signature/instance/envelope and 503 transient persistence failure. Data-operation policy header/conditional body, freshness 403, blocked-account status-only projection and artifact-expiry 409 also require contract fixtures.
+
+
+## Phase 4 controlled contract acceptance additions (not executed)
+
+| ID | Scenario / expected invariant | Verification method / authority |
+|---|---|---|
+| CT-P4-01 | Submission lookup matches original attempt1,foreign/missing404,blocked lifecycle403,concurrent404 inconclusive;no paid work | Two principals/ideas,commit/read barrier,assert provider/outbox/usage unchanged;API§19.1 |
+| CT-P4-02 | Cancel200/202/regenerate202 full Generation;same-key original snapshot vs current GET,terminal races unchanged | Strict DTO fixture plus DB ordering barriers;API§19.2 |
+| CT-P4-03 | Default exact legacy schemas;only explicit2 exposes new read shapes;unknown selector/wrong body/foreign cursor400 | v1 andv2 strict consumers,negative query/body/page cases;API§19.3 |
+| CT-P4-04 | Memory v2 actual version/text/source;null IDs for deleted/foreign/unknown source;quoted If-Match plus target check | Source authorization fixtures,two-tab accept/dismiss/atomic approvedText;API§19.4 |
+| CT-P4-05 | Learning reflection legacy vs observation/interpretation2 roundtrip;no dual aliases;null legacy observation honest | Strict POST/list fixtures,immutable replay row,projection switching409;API§19.5 |
+| CT-P4-06 | Experiment method/criteria read back or explicitnull for unknownJSON;do not infer title/hypothesis | Stored JSON fixtures andreload;P4-B01 remains blocker |
+| CT-P4-07 | Evidence-link read scopes/paginates existing composite relationships;empty200;foreign404/cursor400,no external lookup | Two principals/assumptions,stable same-timestamp pages,delete/create relationship fixtures |
+| CT-P4-08 | Session opaque record expires/clears,never text/token/grant;lookup404 never resends;P4-B02 no silent evidence loss | Browser storage tamper/copy/failure plus API call counts;nonempty unresolved evidenceIds409 |
+
+All tests are planned/unexecuted. Static YAML/ref/header assertions do not execute schemas,Prisma,PostgreSQL,Clerk,browser/security or model behavior. Unexpected P4-B01/B02 mappings are documentation blockers, not tests marked passed.
+
+## Approved mapping acceptance additions (all Not executed)
+
+CT-MAP-01: validate ExperimentCreateV3 explicit title/method/hypothesis and minimal201 receipt; default1 fresh create409 versus historical accepted replay; selector2/unknown400. CT-MAP-02: strict old response1/2 schemas, nullable legacy title only in3, current stored hypothesis and no title-to-hypothesis copy. CT-MAP-03: rename/hypothesis/method isolation under If-Match, atomic version increments and unsupported legacy plan409. CT-MAP-04: learning input1/2/3 distinct-source capture, reflection versus interpretation, null observation and recorded-empty versus legacy-unknown read-back. CT-MAP-05: missing/foreign evidence404 with no partial Learning, duplicate set handling and unchanged fingerprints. CT-MAP-06: same-key receipt3 replay without private mutable fields and Learning3 membership replay after current authorization. CT-MAP-07: no ordinary marker reset or link update/delete; purge can erase under the correct scope/lease. CT-MAP-08: mixed-writer rollout, rollback data preservation, private cache cleanup and legacy-client upgrade guidance. Supplement existing MAP/F4D/DB cases; static agreement is not executed service/security proof.
+
+## P5-AM01 acceptance - Not executed
+
+P5-DEL-01 independent write failure: no202/primary deletion commit. P5-DEL-02 durable intent then primary failure: scope blocked and reconciled, not falsely committed. P5-DEL-03 lost202: same-key original outcome, no new operation. P5-DEL-04 duplicate/delayed mirror: immutable scope and monotonic evidence. P5-DEL-05 older restore: independent coverage before any private read. P5-DEL-06 missing/stale authority: fail closed, no negative-cache bypass. P5-DEL-07 generation/research/PDF race: current context/lease/lifecycle and suppression checks reject late effects. P5-DEL-08 new signup: new empty incarnation, old data suppressed. P5-DEL-09 corrupted digest/version/key: recovery remains closed. P5-DEL-10 partial partitions: no accepted202 without verified intent plus primary commit. P5-DEL-11 concurrent same-key: one winning operation UUID; changed payload409. API/admission, privacy reconciler, workers and restore operator own their respective invariants; verification uses fault-injected store/DB barriers, authorization fixtures and isolated restore drills. All scenarios remain Not executed; static documentation checks are insufficient.

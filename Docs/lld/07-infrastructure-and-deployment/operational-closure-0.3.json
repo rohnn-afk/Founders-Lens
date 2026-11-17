@@ -1,0 +1,79 @@
+{
+  "recordId": "FL-P5-OPERATIONAL-CLOSURE-0.3",
+  "candidateRevision": "FL-P5-0.3-review - NOT YET APPROVED",
+  "isApprovedManifest": false,
+  "approvalEvidence": "Explicit owner operational directions in current conversation; P5-AM01 not approved",
+  "approvalDate": null,
+  "signature": null,
+  "commit": null,
+  "changes": [
+    {
+      "path": "Docs/README.md",
+      "old": {
+        "sha256": "e5c85b76b46af8e21ef8e0c9e9f64fc498a4573c6ca0626517529a888cf921a8",
+        "bytes": 10834
+      },
+      "new": {
+        "sha256": "49fac53360dc4d970f65b5225063dc83e6d984a42af629a79662406e83470d32",
+        "bytes": 11291
+      },
+      "purpose": "Navigation and current approval boundary"
+    },
+    {
+      "path": "Docs/lld/07-infrastructure-and-deployment/hosting-cost-cicd-operations.md",
+      "old": {
+        "sha256": "8b43f8426a9c7446cfe0c7f3c0eef5aa4c66c43d6f4bec8034d5ca90a88cf31a",
+        "bytes": 23620
+      },
+      "new": {
+        "sha256": "3349e03a71a194af9af4f135dbbbb553a5af5cfe38c9fa75ea7a89c70ab11c1f",
+        "bytes": 24573
+      },
+      "purpose": "Operational approvals and pending controlled restoration proposal"
+    },
+    {
+      "path": "Docs/lld/07-infrastructure-and-deployment/infrastructure-fundamentals-deployment-architecture.md",
+      "old": {
+        "sha256": "278aaac01908ab6aef961f715cb56fa597d74c7b20c83fc53c2e81b3d9413da0",
+        "bytes": 24767
+      },
+      "new": {
+        "sha256": "eec7d89606a901331c4b61f03ffd2c63b283eb5de385d03a527c67ab01fdd7f2",
+        "bytes": 25720
+      },
+      "purpose": "Operational approvals and pending controlled restoration proposal"
+    },
+    {
+      "path": "Docs/lld/07-infrastructure-and-deployment/infrastructure-integration-review.md",
+      "old": {
+        "sha256": "42311171a00de227230ccc70f46f7ec0a53666a3988e539bdd41e64c61ffae7d",
+        "bytes": 42901
+      },
+      "new": {
+        "sha256": "bb2be9fe042cdb6e3c1d49d476356c7b8b0716dc184948106468c9fa6abcaaa0",
+        "bytes": 55288
+      },
+      "purpose": "Operational approvals and pending controlled restoration proposal"
+    },
+    {
+      "path": "Docs/lld/07-infrastructure-and-deployment/storage-secrets-backup-recovery.md",
+      "old": {
+        "sha256": "697a3b5e0a4ab5dd7be079e8f972821e5804f1daa04bbef2e4d280118cbe995b",
+        "bytes": 21596
+      },
+      "new": {
+        "sha256": "bcfc818caef74a0fbc08241e3d63c9ee0dc87889665bd92a6b3800d96eb710d5",
+        "bytes": 22549
+      },
+      "purpose": "Operational approvals and pending controlled restoration proposal"
+    }
+  ],
+  "proposedBaselineEditsExecuted": false,
+  "staticChecks": {
+    "markdownTargets": 314,
+    "phase4Files": 23,
+    "historicalManifestAggregates": 3,
+    "failures": []
+  },
+  "excludedSelf": "operational-closure-0.3.json excluded to avoid circular hashes; not an approved manifest"
+}

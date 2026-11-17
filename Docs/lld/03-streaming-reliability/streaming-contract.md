@@ -1,6 +1,6 @@
 # 2. Streaming & generation HTTP contracts
 
-**Status:** In Review — documentation/specification, not executed acceptance.
+**Status:** Approved — Documentation Only (historical A07; declared Phase 3 final-fetch amendment P3D-A09, FL-P3-0.3-approved); not executed acceptance.
 
 ## 2.1 Resources and route semantics
 
@@ -11,8 +11,8 @@ All paths below are prefixed `/api/v1`. All founder paths require valid Clerk **
 | `POST /conversations/{id}/messages` | `Idempotency-Key`, `clientSubmissionId`, validated user content; account/idea active, quota allowed, no active generation | 202 `{messageId, generationId, status:"PENDING", statusUrl, eventsUrl}`; `Location` points to generation | 401/404/409/413/415/429/503; same request replay returns same logical IDs |
 | `GET /generations/{id}` | Read auth + owner check each time | 200 `{id, conversationId, triggerMessageId, status, selected, outputMessageId?, error?:{code,retryable}, createdAt, startedAt?, finishedAt?}` | 401/404/503 |
 | `GET /generations/{id}/events` | `Accept: text/event-stream`; no `Last-Event-ID`; Bearer token | 200 `text/event-stream` only after auth; at most one attached subscriber per client tab recommended | 400 unsupported cursor; 401/404/406/429/503 before headers; after headers emit sanitized `stream.error` and close when possible |
-| `POST /generations/{id}/cancel` | `Idempotency-Key`, authenticated current owner; no body | 202 `{id,status:"CANCEL_REQUESTED"}` when in-flight; terminal generation returns 200 current status | 401/404/409 for invalid transition; 503 if state cannot be safely persisted |
-| `POST /conversations/{id}/regenerations` | `Idempotency-Key`; latest eligible user turn, no active generation, quota | 202 `{generationId, status:"PENDING", triggerMessageId}` | 401/404/409/429/503 |
+| `POST /generations/{id}/cancel` | `Idempotency-Key`, authenticated current owner; no body | 202 full `Generation` with status CANCEL_REQUESTED when in-flight; terminal generation returns200 full `Generation` | 401/404/409 for invalid transition; 503 if state cannot be safely persisted |
+| `POST /conversations/{id}/regenerations` | `Idempotency-Key`; latest eligible user turn, no active generation, quota | 202 full `Generation` status PENDING; request RegenerationCreate requires triggerMessageId | 401/404/409/429/503 |
 | `GET /conversations/{id}/messages` | authenticated, cursor stable | 200 canonical messages and selected completed responses only | 401/404/400 |
 
 **Phase 2D draft OpenAPI corrections applied; approval and validation gates remain:** add concrete 202 body, SSE event frame doc, cancellation responses, `Last-Event-ID` 400, 406, 428 when applicable, 503/429 + `Retry-After` where appropriate; see `contract-delta.md`. Do not claim draft OpenAPI already includes these.
@@ -144,3 +144,13 @@ Cancel returns the full Generation projection (required id, conversationId, trig
 ## Final Phase 2D privacy/context integration
 
 Account/idea write admission is ACTIVE-only; DELETION_REQUESTED/PURGING gates and purges immediately revoke new authorization without relying on Redis cancellation delivery. Check account and idea lifecycle in each sensitive final transaction. Generation finalization additionally matches Idea.contextEpoch to the saved dispatch epoch (API §13); changed memory yields FAILED CONTEXT_CHANGED only under current lease and status RUNNING, never a late completed message. Cancellation-first still wins; a cancelled/requested attempt must follow its canonical cancellation path. No change to browser-disconnect continuation or no-token-replay decision. Privacy coordinator fences leases; stream close/stream.error never itself authorizes terminal state. [Deletion/restore policy](../04-integration-review/state-machines.md#account-and-idea-deletion-lifecycle) and FSEC tests govern cleanup and residual disclosure.
+
+
+## Phase 3 structured final-fetch amendment (approved principle, unimplemented)
+
+P3-P01 explicitly adds opt-in assistantResponseVersion=2 to the existing authenticated GET transcript route; default1 keeps legacy string-content JSON. Only a committed ASSISTANT format2 row can include versioned assistantContent/optional single card/citation refs; no structured enrichment on USER or invented history. See API §18 and OpenAPI0.3.0. This is a declared post-A07 amendment; original A07 manifest remains historical and unchanged. No new SSE event, replay storage, id/retry field or generation state is introduced. response.delta remains assistant-safe text only, metadata/tool plans/hidden reasoning never stream. generation.completed follows guarded commit; reconnect fetches selected canonical result with opt-in representation if supported. Existing cancellation/context/lease/privacy/finalization and no-store rules unchanged.
+
+
+## Phase 4 controlled contract closure (P4-AM01/02)
+
+P4-AM02 explicitly adopts the unchanged full OpenAPI Generation on cancel200/202 and regenerate202: required id,conversationId,triggerMessageId,status,selected,createdAt; optional outputMessageId,startedAt,finishedAt,error. Earlier compact examples are historical only; no generationId alias replaces Generation.id. Cancel202=CANCEL_REQUESTED, regenerate202=PENDING; same-key replay returns original accepted full snapshot even after terminal, GET returns current. No status, event, terminal guard, logical ordering or browser-disconnect behavior changes. P4-AM01 lookup GET /api/v1/conversations/{conversationId}/submissions/{clientSubmissionId} returns only original-attempt correlation after fresh authorization;404 is inconclusive. It never starts work or resumes/replays missed tokens. New read uses existing session Bearer/no-store/owner/lifecycle limits. [API§19](../02-api-security/api-contracts.md#19-phase-4-controlled-api-amendments--approved-design-not-package-sign-off) owns exact DTOs. Approved principles/amendments do not sign off Phase4 or execute tests; [change register](../06-frontend/controlled-amendments-0.3.json) preserves old/new fingerprints.

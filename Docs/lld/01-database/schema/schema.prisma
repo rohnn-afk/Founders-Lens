@@ -255,7 +255,9 @@ model Message {
   @@index([ideaId, createdAt])
 }
 
+// Phase3 P3-P02 design amendment; migration/validation not executed.
 model GenerationAttempt {
+  orchestrationMetadata Json? // bounded version references/counters only; no prompt/context/reasoning
   id                   String @id @default(uuid()) @db.Uuid
   conversationId       String @db.Uuid
   conversation         Conversation @relation(fields: [conversationId], references: [id], onDelete: Restrict)
@@ -361,8 +363,8 @@ model Experiment {
   idea        Idea @relation(fields: [ideaId], references: [id], onDelete: Restrict)
   assumptionId String? @db.Uuid
   assumption   Assumption? @relation(fields: [assumptionId, ideaId], references: [id, ideaId], onDelete: Restrict)
-  hypothesis  String @db.Text
-  plan        Json
+  hypothesis  String @db.Text // P4-B01: independent required claim; never derived from title
+  plan        Json // P4-B01: display title is plan.title; method is plan.method
   successCriteria Json
   status      ExperimentStatus @default(SUGGESTED)
   version     Int @default(1)
@@ -385,7 +387,12 @@ model Learning {
   interpretation String @db.Text
   origin       EvidenceOrigin @default(USER_REPORT)
   approvedById String @db.Uuid
+  // Approved P4-B02 design artifact, not an executed migration.
+  // false preserves unknown legacy linkage; all current create use cases explicitly insert true.
+  evidenceLinksRecorded Boolean @default(false)
+  evidenceLinks LearningEvidence[]
   createdAt    DateTime @default(now()) @db.Timestamptz(3)
+  @@unique([id, ideaId])
   @@index([ideaId, createdAt])
 }
 
@@ -434,6 +441,7 @@ model EvidenceRecord {
   limitations    String? @db.Text
   dedupeFingerprint String? @db.VarChar(128)
   links          AssumptionEvidence[]
+  learningLinks  LearningEvidence[]
   createdAt      DateTime @default(now()) @db.Timestamptz(3)
   @@unique([id, ideaId])
   @@unique([ideaId, dedupeFingerprint])
@@ -451,6 +459,19 @@ model AssumptionEvidence {
   createdAt    DateTime @default(now()) @db.Timestamptz(3)
   @@id([assumptionId, evidenceId])
   @@index([evidenceId])
+}
+
+// P4-B02: one new association; same idea enforced by both composite FKs.
+// Ordinary changes are forbidden by guards/service policy; privacy purge deletes links first.
+model LearningEvidence {
+  ideaId     String @db.Uuid
+  learningId String @db.Uuid
+  evidenceId String @db.Uuid
+  learning Learning @relation(fields: [learningId, ideaId], references: [id, ideaId], onDelete: Restrict, onUpdate: Restrict)
+  evidence EvidenceRecord @relation(fields: [evidenceId, ideaId], references: [id, ideaId], onDelete: Restrict, onUpdate: Restrict)
+  @@id([learningId, evidenceId])
+  @@index([ideaId, learningId])
+  @@index([evidenceId, ideaId])
 }
 
 model DocumentSnapshot {

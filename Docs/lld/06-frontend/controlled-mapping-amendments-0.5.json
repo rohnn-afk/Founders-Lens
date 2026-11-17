@@ -1,0 +1,342 @@
+{
+  "formatVersion": 1,
+  "recordId": "FL-P4-CONTROLLED-MAPPING-AMENDMENTS-0.5",
+  "proposedPhase4Revision": "FL-P4-0.5-review",
+  "packageApprovalStatus": "NOT YET APPROVED - FE4D-A08 not granted",
+  "isApprovedPackageManifest": false,
+  "approvalEvidence": "Owner explicitly approves P4-B01 and P4-B02 in the current conversation for controlled documentation/design amendments only.",
+  "approvalDate": null,
+  "approvalTimestamp": null,
+  "signature": null,
+  "approvedCommit": null,
+  "approvedDecisions": [
+    {
+      "id": "P4-B01",
+      "priorDecisionId": "P4-B01-D01",
+      "status": "Approved design; mapping blocker closed",
+      "mapping": "Display title is plan.title; hypothesis remains required separate String. Explicit create3 provides it; fresh legacy1 rejects409 EXPERIMENT_HYPOTHESIS_REQUIRED after original accepted replay. No nullable/incomplete draft or inferred value.",
+      "engineeringRefinement": "Create3 returns minimal operational ExperimentReceiptV3, not private mutable full content; fetch that through authorized list3. Preserves exact original replay in existing responseRef without a new response-history entity."
+    },
+    {
+      "id": "P4-B02",
+      "priorDecisionId": "P4-B02-D01",
+      "status": "Approved design; mapping blocker closed",
+      "mapping": "One LearningEvidence association with pair PK and both same-idea Restrict FKs; Learning composite unique and Boolean capture marker. Atomic create/set/receipt; old unknown distinct from explicit empty; no ordinary reset/update/unlink, authorized purge links before parents."
+    }
+  ],
+  "changedFileCount": 20,
+  "hashAlgorithm": "SHA-256 over raw bytes; old is actual task input; new is final controlled amendment content, not approval of the whole package.",
+  "changes": [
+    {
+      "path": "Docs/lld/01-database/constraints/guards.sql",
+      "purpose": "Design guards for immutable Learning/membership, scoped privacy DELETE, bounded capture, NOT VALID title shape; repair existing malformed dollar-quote delimiters. No SQL execution.",
+      "old": {
+        "sha256": "c5a3b893791d26dd1a4ed9ce55a493ff9feb4c4f200406185968c030405d2236",
+        "bytes": 10402
+      },
+      "new": {
+        "sha256": "d65707ef927fcbd8f37f06dc1c4a2b2c4d440201d3b48934443555805bd77ee1",
+        "bytes": 13200
+      }
+    },
+    {
+      "path": "Docs/lld/01-database/logical-design.md",
+      "purpose": "One new domain association, distinct title/hypothesis and capture lifecycle ownership.",
+      "old": {
+        "sha256": "2f5a4d52f00d6e0fbfbca920ae553216f222d138c74c42e140edf4b8658d7443",
+        "bytes": 21652
+      },
+      "new": {
+        "sha256": "c00f8d5811b2f2c179c26c9e13243b008ddbc856fd3ea292b6134769e74897b9",
+        "bytes": 23338
+      }
+    },
+    {
+      "path": "Docs/lld/01-database/physical-design.md",
+      "purpose": "Authoritative accepted mappings, marker transitions, FK/index/transaction/purge/rollout semantics; historical proposals retained.",
+      "old": {
+        "sha256": "5a1037cc00cf99e537dcecb4b9a57375f34ffd5085719d69693a7ee1c41cfad6",
+        "bytes": 57331
+      },
+      "new": {
+        "sha256": "f0770453797f2dac929fc5b0301beb63341ecf202694e197988eb661ded69d97",
+        "bytes": 67113
+      }
+    },
+    {
+      "path": "Docs/lld/01-database/schema/schema.prisma",
+      "purpose": "24-model design: LearningEvidence pair/same-idea FKs, marker/reverse relations and Learning unique key; required hypothesis retained.",
+      "old": {
+        "sha256": "58902296b1f8ac358cfdfc1c8245ef38f4a53d039e0e6c07ba8dbeeb6affaf5d",
+        "bytes": 21653
+      },
+      "new": {
+        "sha256": "e1b6f64a4317d67028977ff32e15be27fb9408f3163cbb9d94fccb0c8bd153ef",
+        "bytes": 22725
+      }
+    },
+    {
+      "path": "Docs/lld/01-database/validation/integration-test-plan.md",
+      "purpose": "Planned DB-MAP-01 through07 mapping, constraint, migration, replay and privacy scenarios.",
+      "old": {
+        "sha256": "7de2978b119eb382577d9d35afc7a3d3155c1abad588dd74b1f53168a856d509",
+        "bytes": 7192
+      },
+      "new": {
+        "sha256": "e61d83a1e6a0c516e66f1bc461dfb6976844c543978c2fad4bc54289c4a71175",
+        "bytes": 8368
+      }
+    },
+    {
+      "path": "Docs/lld/02-api-security/api-contracts.md",
+      "purpose": "Exact current0.5.0 contract, legacy fresh-create rejection, V3 inputs/views/minimal receipt, atomic evidence capture and compatibility.",
+      "old": {
+        "sha256": "97def65023228a81f0d9318548e0161aab0d94c0078c303e5c329f9e9921d5bc",
+        "bytes": 64965
+      },
+      "new": {
+        "sha256": "ad301308bfa590c8c7def498a2ddc8f773ee9c9003802b03860b3adb9f8ffeae",
+        "bytes": 76263
+      }
+    },
+    {
+      "path": "Docs/lld/02-api-security/architecture-and-security.md",
+      "purpose": "Approved owner/evidence authorization, safe errors, no ordinary association rewrite and scoped purge.",
+      "old": {
+        "sha256": "f6ff5791c3231c5df066458eb957fa7243764504a94fbcb2263a13e43a38afe6",
+        "bytes": 43039
+      },
+      "new": {
+        "sha256": "faeed542b7208f4591626319ee56e9ee12a5d674fd062a9b17fbeb17fd9dd73e",
+        "bytes": 45078
+      }
+    },
+    {
+      "path": "Docs/lld/02-api-security/openapi.yaml",
+      "purpose": "Eight new V3 schemas, three reusable parameters, five existing-operation extensions; legacy schema validation keywords preserved.",
+      "old": {
+        "sha256": "29c0ab25e75a0880543eca8a9a2daea6a5a2cb5053465acc558eccb317a15577",
+        "bytes": 148360
+      },
+      "new": {
+        "sha256": "351d2e2386bdb98975e0a48660920562b4ca6fcaccc172be2c3cb42dacc293fb",
+        "bytes": 154795
+      }
+    },
+    {
+      "path": "Docs/lld/02-api-security/route-inventory.json",
+      "purpose": "Exact V3 input/output negotiation for existing routes; operation count stays50 founder/53 total.",
+      "old": {
+        "sha256": "2d33da0f86c1bb390faafdcf2e62ff07b49d6b7aa19b567f5556e52eb62b5409",
+        "bytes": 12110
+      },
+      "new": {
+        "sha256": "69e0f11518496d907b8a2915e63f8c0c838833b19553fcde12df7cfe7130891f",
+        "bytes": 12696
+      }
+    },
+    {
+      "path": "Docs/lld/02-api-security/testing.md",
+      "purpose": "Eight planned CT-MAP contract, legacy, version, capture, replay, cleanup and rollout scenarios.",
+      "old": {
+        "sha256": "1fc7cbfe331178abd65fa10f5593587802b01400cb6c4db75cd6dd6cb0369615",
+        "bytes": 8321
+      },
+      "new": {
+        "sha256": "0313b089ff2e16d433c1f99025f15d97b1d5a84c1960297662adca97a652b9f1",
+        "bytes": 9539
+      }
+    },
+    {
+      "path": "Docs/lld/03-streaming-reliability/idempotency-and-concurrency.md",
+      "purpose": "Small original Experiment201 receipt, immutable Learning source-set replay and atomic DB boundaries; generation/SSE unchanged.",
+      "old": {
+        "sha256": "c0d323fb4c6cadd005eecad7c6cf21a05b6727a0e766cc99aa20e1c04df2787d",
+        "bytes": 13925
+      },
+      "new": {
+        "sha256": "e33084abbea4256c646b570b547fe854ff1c216ed6c80c9864aeca49e0457ae4",
+        "bytes": 15594
+      }
+    },
+    {
+      "path": "Docs/lld/03-streaming-reliability/testing.md",
+      "purpose": "Three planned STR-MAP receipt/capture/lifecycle recovery scenarios.",
+      "old": {
+        "sha256": "8658e88434aa06bfcf004fa351b2967933ec38560b795db6240c60eb2f7bc1ff",
+        "bytes": 8564
+      },
+      "new": {
+        "sha256": "3edb9a66ef2d9ad1538268cd080829fc7693415a24a47e90f1c8e163af369eca",
+        "bytes": 9172
+      }
+    },
+    {
+      "path": "Docs/lld/04-integration-review/consistency-matrix.md",
+      "purpose": "Current24-model/53-operation design and closed mapping gaps, without runtime claims.",
+      "old": {
+        "sha256": "bcadf9df2bf5ab2996c65c5bcca938362c72f2215490289f79f9632c25999ec6",
+        "bytes": 23300
+      },
+      "new": {
+        "sha256": "b293fc9320a8791838860fc3e8a1927ffe1af88647de277fbf700509cd89dd10",
+        "bytes": 24556
+      }
+    },
+    {
+      "path": "Docs/lld/04-integration-review/state-machines.md",
+      "purpose": "Capture marker permitted states, immutable normal history and authorized ordered privacy erasure.",
+      "old": {
+        "sha256": "77f468e301a589be83852e298f3123967f8dd3ee59084b2d433e681e096d722a",
+        "bytes": 26025
+      },
+      "new": {
+        "sha256": "ba3ea65591e639560e8049ef3bcee3409cdeca291dedc36bbf4f57b099d0bc3d",
+        "bytes": 27299
+      }
+    },
+    {
+      "path": "Docs/lld/04-integration-review/traceability.md",
+      "purpose": "Approved mappings traced to existing FR/AT and MAP/F4D acceptance IDs; tests unexecuted.",
+      "old": {
+        "sha256": "07a092812cb74a3c8fce7ba3fdcf809ddd8c12ef5b898140074436cca19db007",
+        "bytes": 13427
+      },
+      "new": {
+        "sha256": "680546fe1e5e89575e84adfb83b92e9796b79068be1afe8dbe6d12011e1d7026",
+        "bytes": 14228
+      }
+    },
+    {
+      "path": "Docs/lld/06-frontend/frontend-fundamentals-journeys-architecture.md",
+      "purpose": "Approved mapping status, separate experiment claim/label, source capture UX and no package sign-off.",
+      "old": {
+        "sha256": "af4d09441c8d1d3e93531246c8049388fec045446bec5b538637c72714b985e1",
+        "bytes": 34483
+      },
+      "new": {
+        "sha256": "8d9e7841ebf41cec5a72f1004421cbf3a8475345f47f1ef0d52d69266035b021",
+        "bytes": 34624
+      }
+    },
+    {
+      "path": "Docs/lld/06-frontend/frontend-integration-review.md",
+      "purpose": "Exact approval evidence, finding closure, compatibility risk, acceptance traceability, measured static checks and sign-off readiness.",
+      "old": {
+        "sha256": "a75f07290807c22df4d98f024dc97a70032d81e239dad4684a797732df4eb1b8",
+        "bytes": 78574
+      },
+      "new": {
+        "sha256": "34c332e12ff925e98f3b0ce1c0914f4af5fbff6713b1972ac617ff7a3febd1a8",
+        "bytes": 87950
+      }
+    },
+    {
+      "path": "Docs/lld/06-frontend/frontend-state-api-integration.md",
+      "purpose": "Fifty exact UI operation rows updated for V3, conditional receipt/errors, stable existing recovery/privacy rules.",
+      "old": {
+        "sha256": "5c77838601006ac42f42b3b2bd0e10463122aec53b46eed04883299f349fea1b",
+        "bytes": 69967
+      },
+      "new": {
+        "sha256": "a3974f20911dba1aa6b15654668830298691bc9dff1c1af9ec40246a26b894aa",
+        "bytes": 71241
+      }
+    },
+    {
+      "path": "Docs/lld/06-frontend/wireframes-and-design-system.md",
+      "purpose": "Distinct fields, unknown-versus-empty source presentation, explicit founder save and provisional accessibility.",
+      "old": {
+        "sha256": "c6beadc2696837934f50716f84eead72a4bd0d7ba52235e806d852484b0fed03",
+        "bytes": 45171
+      },
+      "new": {
+        "sha256": "05d05049d88de238579a4a46e4fb3cbd9ec0043a175ddde493ef524923782dbc",
+        "bytes": 45337
+      }
+    },
+    {
+      "path": "Docs/README.md",
+      "purpose": "Current approved mapping decisions, candidate0.5 review status, active design counts and audit links.",
+      "old": {
+        "sha256": "cac86c9a5e9a74a7f201a6306d0b0e67fa2cdc0c3f0893e00a5bb744d1c54678",
+        "bytes": 9149
+      },
+      "new": {
+        "sha256": "eb49c12432491761a50aaf2088972baf9e1847dff2973ca39aac9fc6d2f3bc0c",
+        "bytes": 9293
+      }
+    }
+  ],
+  "preservedHistoricalRecords": [
+    {
+      "path": "Docs/lld/04-integration-review/approved-revision-1.0.json",
+      "sha256": "8ee34a264be0d38ce139fa3ecf1d9b4cd3d7424288091d88208f40cfca0fa94a",
+      "bytes": 7672
+    },
+    {
+      "path": "Docs/lld/05-ai-orchestration/approved-revision-0.3.json",
+      "sha256": "8d332b066b81cd260b672d7decb8d9d037786e2c258d15b7b9ff77add30dec18",
+      "bytes": 8450
+    },
+    {
+      "path": "Docs/lld/06-frontend/controlled-amendments-0.3.json",
+      "sha256": "21331b8333b2a8f2f97cc50b327cf5b20ad905fcd9ab880c0468a9baa2974e43",
+      "bytes": 13398
+    },
+    {
+      "path": "Docs/lld/06-frontend/mapping-proposals-0.4.json",
+      "sha256": "b1d0919927f9f8dd884d3af64fd7acf20ba8901d1aed20e97f89b8416373391a",
+      "bytes": 4818
+    }
+  ],
+  "recordChain": "Earlier manifests/registers remain verbatim. Apply their recorded member fingerprints through subsequent old/new records in sequence; do not silently regenerate earlier files or treat their historical members as current.",
+  "activeOpenapiVersion": "0.5.0",
+  "activeOperations": 53,
+  "activeFounderOperations": 50,
+  "negotiatedOperations": 6,
+  "newRoutes": [],
+  "newServices": [],
+  "newDatastores": [],
+  "newEntities": [
+    "LearningEvidence"
+  ],
+  "designModelCount": 24,
+  "migrationsExecuted": [],
+  "legacyCompatibility": {
+    "existingSchemas": "Prior validation keywords unchanged; old1/2 read bodies strict; create3 and read3 explicitly negotiated.",
+    "creationAvailabilityRisk": "Fresh legacy experiment creates do not contain a required hypothesis and reject409 with explicit upgrade guidance; no unconditional legacy201 promise. Accepted historical same-key receipts replay first.",
+    "legacyData": "No fabricated title/source backfill. Old markerfalse remains LEGACY_UNKNOWN/null; true captured empty set is[]. New writer and reader/purge rollout gated; no destructive rollback."
+  },
+  "implementationBoundaries": [
+    "Prisma/SQL are design artifacts, not generated/applied/validated migrations.",
+    "SQL guard delimiter/shape checks are static, not proof of PostgreSQL, concurrency or role correctness.",
+    "All SDK/provider/security/browser/accessibility/AI/runtime tests remain unexecuted.",
+    "AI-D14 accepted HLD editorial clarification remains pending a controlled amendment; HLD unchanged.",
+    "Numeric settings remain provisional; no Phase5 work or package sign-off."
+  ],
+  "staticValidation": {
+    "operations": 53,
+    "founderMappings": 50,
+    "negotiatedOperations": 6,
+    "openapiLocalRefs": 714,
+    "localMarkdownTargets": 284,
+    "markdownFiles": 40,
+    "modelDeclarations": 24,
+    "balancedSQLFunctionDesigns": 5,
+    "FRATPairs": 47,
+    "originalFindings": 23,
+    "integratedAcceptance": 40,
+    "originalFrontendCases": 102,
+    "finalFailures": []
+  },
+  "excludedPaths": [
+    {
+      "path": "Docs/lld/06-frontend/controlled-mapping-amendments-0.5.json",
+      "reason": "New controlled change accounting, not an approved Phase4 manifest; excludes itself to avoid circular hashing."
+    }
+  ],
+  "ordinaryApplicationCodeChanges": [],
+  "dependencyOrDeploymentChanges": [],
+  "deletions": []
+}

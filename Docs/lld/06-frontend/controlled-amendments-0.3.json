@@ -1,0 +1,346 @@
+{
+  "formatVersion": 1,
+  "registerId": "FL-P4-CONTROLLED-AMENDMENTS-0.3",
+  "proposedPackageRevision": "FL-P4-0.3-review",
+  "packageStatus": "In Review - NOT APPROVED",
+  "isApprovedPackageManifest": false,
+  "scope": "Explicit owner approval of seven design/controlled documentation decisions only. No implementation validation or final FE4D-A08 sign-off.",
+  "approvalEvidence": "Current conversation: owner explicitly approved FE4D-A01,FE4D-A02,FE4D-A03,P4-AM01,P4-AM02,P4-AM03,P4-AM04 and requested controlled documentation reconciliation.",
+  "approvalDate": null,
+  "approvalTimestamp": null,
+  "signature": null,
+  "approvedCommit": null,
+  "approvedDecisionIds": [
+    "FE4D-A01",
+    "FE4D-A02",
+    "FE4D-A03",
+    "P4-AM01",
+    "P4-AM02",
+    "P4-AM03",
+    "P4-AM04"
+  ],
+  "hashAlgorithm": "SHA-256 over raw file bytes; each old is pre-task content, each new is final content, not a newly approved package revision.",
+  "changedFileCount": 17,
+  "changes": [
+    {
+      "path": "Docs/lld/01-database/physical-design.md",
+      "purpose": "Existing-column read/write mappings and explicit P4-B01/B02 storage blockers; no DDL.",
+      "old": {
+        "sha256": "22f20d07cb79a54b797d7330d0d253cfa2a7c7ef098a0c992f7f3227452e44db",
+        "bytes": 38157
+      },
+      "new": {
+        "sha256": "51ed52f3418f453ab46da97536eb4f3c6649e221e3bd13f5e659e175683a84ec",
+        "bytes": 41148
+      }
+    },
+    {
+      "path": "Docs/lld/01-database/validation/integration-test-plan.md",
+      "purpose": "Five planned DB-P4 mapping, correlation, scope and legacy-null scenarios.",
+      "old": {
+        "sha256": "c6e2df1100e46790413274f40d1240da0a65a45b1053e41cba1ad3a8a859fc16",
+        "bytes": 6207
+      },
+      "new": {
+        "sha256": "7de2978b119eb382577d9d35afc7a3d3155c1abad588dd74b1f53168a856d509",
+        "bytes": 7192
+      }
+    },
+    {
+      "path": "Docs/lld/02-api-security/api-contracts.md",
+      "purpose": "Canonical API19 exact routes, schemas, compatibility, replay, security and blockers.",
+      "old": {
+        "sha256": "ddc0dde2a1f0ad28bead637a433d6647f1ee6b5da126d04721d8b2855c8e74dc",
+        "bytes": 43102
+      },
+      "new": {
+        "sha256": "1e3d86a0eab91ef27dd8cce8a4c307f3841552c754a17df60852576725e9a6ad",
+        "bytes": 55647
+      }
+    },
+    {
+      "path": "Docs/lld/02-api-security/architecture-and-security.md",
+      "purpose": "Authorization/source redaction/session-identifier trust boundary.",
+      "old": {
+        "sha256": "c2f52de79ad5dbe40ebc0291aadc9ea7f38f4b3254770fd98d251fc902fa5e48",
+        "bytes": 40669
+      },
+      "new": {
+        "sha256": "f6ff5791c3231c5df066458eb957fa7243764504a94fbcb2263a13e43a38afe6",
+        "bytes": 43039
+      }
+    },
+    {
+      "path": "Docs/lld/02-api-security/openapi.yaml",
+      "purpose": "API0.4.0, two GETs, four negotiated operations, ten schemas; old schemas retained.",
+      "old": {
+        "sha256": "2b11b32116406e3f953f105fa7f30a07ed2661813921be6ec81c7fac64d15867",
+        "bytes": 132485
+      },
+      "new": {
+        "sha256": "29c0ab25e75a0880543eca8a9a2daea6a5a2cb5053465acc558eccb317a15577",
+        "bytes": 148360
+      }
+    },
+    {
+      "path": "Docs/lld/02-api-security/route-inventory.json",
+      "purpose": "Fifty founder operations and exact negotiation metadata.",
+      "old": {
+        "sha256": "4d6117e6ed488b8e9e6a935e12c6ee1db8ad12fca1e29131dd96d800629cc726",
+        "bytes": 10941
+      },
+      "new": {
+        "sha256": "2d33da0f86c1bb390faafdcf2e62ff07b49d6b7aa19b567f5556e52eb62b5409",
+        "bytes": 12110
+      }
+    },
+    {
+      "path": "Docs/lld/02-api-security/testing.md",
+      "purpose": "Eight planned CT-P4 contract, compatibility and security scenarios.",
+      "old": {
+        "sha256": "347655a35f5a86b6233515d8199d4137448d8b2132d6bb0dbd909f8aa87e8f3b",
+        "bytes": 6268
+      },
+      "new": {
+        "sha256": "1fc7cbfe331178abd65fa10f5593587802b01400cb6c4db75cd6dd6cb0369615",
+        "bytes": 8321
+      }
+    },
+    {
+      "path": "Docs/lld/03-streaming-reliability/idempotency-and-concurrency.md",
+      "purpose": "Read-only correlation and negotiated immutable Learning replay semantics.",
+      "old": {
+        "sha256": "606e67d288fff8aca861156dcb7bec03c8b9f14b45c41500c6510b8158770a4c",
+        "bytes": 12265
+      },
+      "new": {
+        "sha256": "c0d323fb4c6cadd005eecad7c6cf21a05b6727a0e766cc99aa20e1c04df2787d",
+        "bytes": 13925
+      }
+    },
+    {
+      "path": "Docs/lld/03-streaming-reliability/streaming-contract.md",
+      "purpose": "Full unchanged Generation cancel/regeneration success DTOs, read-only correlation.",
+      "old": {
+        "sha256": "65dd093e86d4efa6e1d0de16d616f506bdd4620ed070c01acddb948bfbf2bf4e",
+        "bytes": 13631
+      },
+      "new": {
+        "sha256": "94d306098c86836f6bb54b5bf479daf113adb92e1bc6f34e4e73b9a41b978589",
+        "bytes": 14906
+      }
+    },
+    {
+      "path": "Docs/lld/03-streaming-reliability/testing.md",
+      "purpose": "Four planned STR-P4 full-response, correlation, lifecycle and projection checks.",
+      "old": {
+        "sha256": "d8bbd886c320ff036a95b9bbd6c6f910d8d9891dd2a03330e0968fcb7d47aca4",
+        "bytes": 7734
+      },
+      "new": {
+        "sha256": "8658e88434aa06bfcf004fa351b2967933ec38560b795db6240c60eb2f7bc1ff",
+        "bytes": 8564
+      }
+    },
+    {
+      "path": "Docs/lld/04-integration-review/consistency-matrix.md",
+      "purpose": "Explicit post-A07/P3 counts and controlled contract mappings.",
+      "old": {
+        "sha256": "cac7b28b5faec898bcbb129a2f38f044c861f34a44fa2ab6c6ec70ee4f67ba54",
+        "bytes": 22307
+      },
+      "new": {
+        "sha256": "bcadf9df2bf5ab2996c65c5bcca938362c72f2215490289f79f9632c25999ec6",
+        "bytes": 23300
+      }
+    },
+    {
+      "path": "Docs/lld/04-integration-review/traceability.md",
+      "purpose": "Existing requirements mapped to amended design and unexecuted tests.",
+      "old": {
+        "sha256": "ba304afe1fdee04d65ee43e187a4f00028f6d005c1976aef0636a7ab15341f95",
+        "bytes": 12671
+      },
+      "new": {
+        "sha256": "07a092812cb74a3c8fce7ba3fdcf809ddd8c12ef5b898140074436cca19db007",
+        "bytes": 13427
+      }
+    },
+    {
+      "path": "Docs/lld/06-frontend/frontend-fundamentals-journeys-architecture.md",
+      "purpose": "Approved navigation/recovery direction, current contract references.",
+      "old": {
+        "sha256": "af105baf1d34f97294f928e88e85d3059e0ffbc9ac2f8d64ec1060862f0eea7b",
+        "bytes": 34259
+      },
+      "new": {
+        "sha256": "af4d09441c8d1d3e93531246c8049388fec045446bec5b538637c72714b985e1",
+        "bytes": 34483
+      }
+    },
+    {
+      "path": "Docs/lld/06-frontend/frontend-integration-review.md",
+      "purpose": "Seven approvals, preserved findings/scenarios, current dispositions, blockers/readiness/static evidence.",
+      "old": {
+        "sha256": "7e0e70c8a4e7775f7a9440499e3badb3553b918f2af2359e3959ee4d2bd3ba03",
+        "bytes": 62218
+      },
+      "new": {
+        "sha256": "fbba7fdcbf4210553de9ff5d98765989f9b945fe358fac6639703f20b6b136ef",
+        "bytes": 74004
+      }
+    },
+    {
+      "path": "Docs/lld/06-frontend/frontend-state-api-integration.md",
+      "purpose": "Fifty operation UI mapping, minimal session recovery, negotiated projections.",
+      "old": {
+        "sha256": "5e199961ef6b42da6626d3f05d4ec04881cacc1d370b24410d8d889d6b1ab73e",
+        "bytes": 68953
+      },
+      "new": {
+        "sha256": "5c77838601006ac42f42b3b2bd0e10463122aec53b46eed04883299f349fea1b",
+        "bytes": 69967
+      }
+    },
+    {
+      "path": "Docs/lld/06-frontend/wireframes-and-design-system.md",
+      "purpose": "Approved light-neutral direction, observation/provenance display and provisional tokens.",
+      "old": {
+        "sha256": "2853f6d482d00ec07b92ec0d08431a1805f19fecdf8195dc3cd32271634dc048",
+        "bytes": 45207
+      },
+      "new": {
+        "sha256": "c6beadc2696837934f50716f84eead72a4bd0d7ba52235e806d852484b0fed03",
+        "bytes": 45171
+      }
+    },
+    {
+      "path": "Docs/README.md",
+      "purpose": "Current navigation, approval boundary and amended operation counts.",
+      "old": {
+        "sha256": "da252b36f5631306dbfbbaeebc154a653a1867a1f6f883a6765bb658a6f7a5c8",
+        "bytes": 8216
+      },
+      "new": {
+        "sha256": "1526d87d01a1042b1d58c3ef7ea44049950accfeaf493a3a0e442c0128f1c741",
+        "bytes": 8613
+      }
+    }
+  ],
+  "preservedHistoricalManifests": [
+    {
+      "path": "Docs/lld/04-integration-review/approved-revision-1.0.json",
+      "revisionId": "FL-P2D-1.0-approved",
+      "sha256": "8ee34a264be0d38ce139fa3ecf1d9b4cd3d7424288091d88208f40cfca0fa94a",
+      "bytes": 7672,
+      "aggregateSha256": "f41b1a556c8c82b717d87ee7f82fdbddef351484697fde9430f23aa563a56307",
+      "approvalFileCount": 36,
+      "preChangeDifferingMembers": [
+        "Docs/README.md",
+        "Docs/lld/01-database/constraints/guards.sql",
+        "Docs/lld/01-database/physical-design.md",
+        "Docs/lld/01-database/schema/schema.prisma",
+        "Docs/lld/02-api-security/api-contracts.md",
+        "Docs/lld/02-api-security/openapi.yaml",
+        "Docs/lld/02-api-security/route-inventory.json",
+        "Docs/lld/03-streaming-reliability/streaming-contract.md"
+      ],
+      "currentDifferingMembers": [
+        "Docs/README.md",
+        "Docs/lld/01-database/constraints/guards.sql",
+        "Docs/lld/01-database/physical-design.md",
+        "Docs/lld/01-database/schema/schema.prisma",
+        "Docs/lld/01-database/validation/integration-test-plan.md",
+        "Docs/lld/02-api-security/api-contracts.md",
+        "Docs/lld/02-api-security/architecture-and-security.md",
+        "Docs/lld/02-api-security/openapi.yaml",
+        "Docs/lld/02-api-security/route-inventory.json",
+        "Docs/lld/02-api-security/testing.md",
+        "Docs/lld/03-streaming-reliability/idempotency-and-concurrency.md",
+        "Docs/lld/03-streaming-reliability/streaming-contract.md",
+        "Docs/lld/03-streaming-reliability/testing.md",
+        "Docs/lld/04-integration-review/consistency-matrix.md",
+        "Docs/lld/04-integration-review/traceability.md"
+      ]
+    },
+    {
+      "path": "Docs/lld/05-ai-orchestration/approved-revision-0.3.json",
+      "revisionId": "FL-P3-0.3-approved",
+      "sha256": "8d332b066b81cd260b672d7decb8d9d037786e2c258d15b7b9ff77add30dec18",
+      "bytes": 8450,
+      "aggregateSha256": "be87e969fc09bb7497a199e487dcf6d45d34fb09e5b6b85546295d7d07c0ba69",
+      "approvalFileCount": 11,
+      "preChangeDifferingMembers": [],
+      "currentDifferingMembers": [
+        "Docs/lld/01-database/physical-design.md",
+        "Docs/lld/02-api-security/api-contracts.md",
+        "Docs/lld/02-api-security/openapi.yaml",
+        "Docs/lld/02-api-security/route-inventory.json",
+        "Docs/lld/03-streaming-reliability/streaming-contract.md"
+      ]
+    }
+  ],
+  "newOperations": [
+    {
+      "method": "GET",
+      "path": "/api/v1/conversations/{conversationId}/submissions/{clientSubmissionId}",
+      "response": "SubmissionCorrelation"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/assumptions/{assumptionId}/evidence-links",
+      "response": "EvidenceLinkList"
+    }
+  ],
+  "negotiatedExistingOperations": [
+    {
+      "method": "GET",
+      "path": "/api/v1/ideas/{ideaId}/memory-proposals"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/ideas/{ideaId}/experiments"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/ideas/{ideaId}/learnings"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/experiments/{experimentId}/learnings"
+    }
+  ],
+  "wireRules": "Default projection1 schemas preserved. Explicit projectionVersion2 selects strict new DTO. Only Learning POST request changes under opt-in2. Cancel/regeneration retain existing full Generation wire schema, statuses and replay; old prose reconciled.",
+  "newServices": [],
+  "newDatastores": [],
+  "newEntities": [],
+  "schemaOrSqlMigrations": [],
+  "deletions": [],
+  "blockers": [
+    {
+      "id": "P4-B01",
+      "severity": "high",
+      "status": "Pending technical/mapping approval",
+      "description": "Experiment.title versus required stored hypothesis/JSON plan has no prior mapping; do not invent or silently migrate it."
+    },
+    {
+      "id": "P4-B02",
+      "severity": "high",
+      "status": "Pending technical/mapping approval",
+      "description": "LearningCreate.evidenceIds has no persisted Learning-Evidence relationship; explicit fail-closed409 until approved mapping, no silent dropping or substitute association."
+    }
+  ],
+  "remainingGates": [
+    "FE4D-A08 complete-package sign-off not granted.",
+    "Exact expiry/design/cost/quality settings remain provisional.",
+    "Clerk/provider/SDK/browser/storage/accessibility/security/database/AI runtime evaluation remains unexecuted.",
+    "AI-D14 accepted HLD editorial clarification still pending controlled amendment."
+  ],
+  "excludedPaths": [
+    {
+      "path": "Docs/lld/06-frontend/controlled-amendments-0.3.json",
+      "reason": "Change register records other files, not itself; self-hashing would be circular. This new audit record is not a Phase4 approved manifest."
+    }
+  ],
+  "recordPurpose": "Machine-derived change accounting; old and new hashes are factual working-tree content fingerprints, with no fabricated approval date or Git revision."
+}

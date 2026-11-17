@@ -48,7 +48,7 @@ ALTER TABLE "MemoryProposal" ADD CONSTRAINT "target_version_consistency"
 -- Design migration fragment: role/entry-point grants are specified in physical-design §13.
 -- This helper is SECURITY INVOKER: custom settings alone never grant purge authority.
 CREATE OR REPLACE FUNCTION fl_privacy_delete_authorized(row_idea uuid) RETURNS boolean
-LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog, public AS $
+LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog, public AS $$
 DECLARE op_id uuid; epoch integer;
 BEGIN
   IF current_user <> 'fl_purge_owner' THEN RETURN false; END IF;
@@ -63,10 +63,10 @@ BEGIN
         OR (d."kind" = 'DELETE_ACCOUNT'::public."DataOperationKind" AND d."accountId" = i."ownerId"))
   );
 EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range THEN RETURN false;
-END $;
+END $$;
 
 CREATE OR REPLACE FUNCTION fl_prevent_immutable_revision_change() RETURNS trigger
-LANGUAGE plpgsql AS $ BEGIN
+LANGUAGE plpgsql AS $$ BEGIN
   IF TG_OP = 'DELETE' AND public.fl_privacy_delete_authorized(
     (SELECT "ideaId" FROM public."ConfirmedMemory" WHERE "id" = OLD."memoryId")
   ) THEN RETURN OLD; END IF;
@@ -137,3 +137,73 @@ ALTER TABLE "DataOperation" ADD CONSTRAINT "completed_deletion_has_receipt"
     OR ("deletionState" = 'DELETED'::"DeletionState" AND "livePurgedAt" IS NOT NULL AND "receiptMirroredAt" IS NOT NULL));
 ALTER TABLE "WebhookInbox" ADD CONSTRAINT "processed_webhook_has_time"
   CHECK ("status" NOT IN ('APPLIED'::"WebhookInboxStatus", 'IGNORED'::"WebhookInboxStatus") OR "processedAt" IS NOT NULL);
+
+
+-- Phase3 approved-principle amendments; design fragments, not an applied migration.
+ALTER TABLE "GenerationAttempt" ADD CONSTRAINT "orchestration_metadata_minimized"
+  CHECK ("orchestrationMetadata" IS NULL OR
+    (jsonb_typeof("orchestrationMetadata") = 'object'
+      AND octet_length("orchestrationMetadata"::text) <= 4096));
+ALTER TABLE "Message" ADD CONSTRAINT "assistant_v2_payload_shape"
+  CHECK ("contentSchemaVersion" <> 2 OR
+    ("role" = 'ASSISTANT'::"MessageRole"
+      AND jsonb_typeof("content") = 'object'
+      AND "content" ? 'text' AND jsonb_typeof("content"->'text') = 'string'
+      AND "content" ? 'assistantContent' AND jsonb_typeof("content"->'assistantContent') = 'object'
+      AND ("content"->'assistantContent') ? 'schemaVersion'
+      AND "content"->'assistantContent'->>'schemaVersion' = '1'));
+-- Full versioned JSON validation/field allowlist, matching strategy, evidence/proposal scope,
+-- claim support, card count/variants and metadata immutability are application-use-case gates.
+-- Version1 historical payloads are unchanged; unknown versions fail closed in reader/validator.
+
+-- P4-B01/B02 approved design fragments only. Generate/review migrations; none executed.
+-- Prisma owns the Learning unique key, marker, LearningEvidence PK/FKs/indexes.
+-- Do not emit duplicate CREATE TABLE / FK DDL from this guard file.
+ALTER TABLE "Experiment" ADD CONSTRAINT "experiment_plan_title_shape"
+  CHECK (NOT ("plan" ? 'title') OR
+    (jsonb_typeof("plan"->'title') = 'string'
+      AND length("plan"->>'title') <= 200)) NOT VALID;
+-- NOT VALID preserves unreviewed legacy rows; new writes still check the constraint.
+-- Validate later only after data-shape review, without fabricating/backfilling titles.
+
+CREATE OR REPLACE FUNCTION fl_learning_history_guard() RETURNS trigger
+LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog, public AS $fl_learning$
+BEGIN
+  IF TG_OP = 'DELETE' AND public.fl_privacy_delete_authorized(OLD."ideaId") THEN
+    RETURN OLD;
+  END IF;
+  RAISE EXCEPTION 'learning history requires scoped privacy purge; ordinary update forbidden';
+END $fl_learning$;
+CREATE TRIGGER fl_learning_history_immutable
+  BEFORE UPDATE OR DELETE ON "Learning"
+  FOR EACH ROW EXECUTE FUNCTION fl_learning_history_guard();
+
+CREATE OR REPLACE FUNCTION fl_learning_evidence_guard() RETURNS trigger
+LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog, public AS $fl_learning_evidence$
+DECLARE captured boolean;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    IF public.fl_privacy_delete_authorized(OLD."ideaId") THEN RETURN OLD; END IF;
+    RAISE EXCEPTION 'learning evidence requires scoped privacy purge';
+  END IF;
+  IF TG_OP = 'UPDATE' THEN
+    RAISE EXCEPTION 'captured learning evidence cannot be rewritten';
+  END IF;
+  SELECT l."evidenceLinksRecorded" INTO captured FROM public."Learning" l
+    WHERE l."id" = NEW."learningId" AND l."ideaId" = NEW."ideaId" FOR UPDATE;
+  IF NOT FOUND OR NOT captured THEN
+    RAISE EXCEPTION 'learning evidence capture marker required';
+  END IF;
+  IF (SELECT count(*) FROM public."LearningEvidence" e WHERE e."learningId" = NEW."learningId") >= 20 THEN
+    RAISE EXCEPTION 'learning evidence capture limit exceeded';
+  END IF;
+  RETURN NEW;
+END $fl_learning_evidence$;
+CREATE TRIGGER fl_learning_evidence_capture_guard
+  BEFORE INSERT OR UPDATE OR DELETE ON "LearningEvidence"
+  FOR EACH ROW EXECUTE FUNCTION fl_learning_evidence_guard();
+-- Service must insert true + the complete distinct set in the original create transaction only.
+-- These guards prove neither founder authorization nor initial-transaction-only INSERT permission.
+-- No late association insertion port/API exists; test the trusted create service and SQL role grants.
+-- Legacy false remains immutable; no automatic false->true backfill or true->false reset.
+-- Purge role/operation/idea locks stay live while deleting LearningEvidence, then its parents.

@@ -2,6 +2,8 @@
 
 **Status:** In Review — documentation/specification, not executed acceptance.
 
+**Current controlled amendment:** P4-B01/B02 are explicitly owner-approved design decisions. Section15 andphysical§18 supersede historical23-model/pending-mapping notes;the current Prisma artifact contains24 models. No database execution orcomplete Phase4 sign-off is implied.
+
 **Document:** FL-LLD-DB-001 · **Version:** 0.2 · **Date:** 2026-11-15 · **Status:** Design proposal for review (not approved physical schema)
 
 **Sources of authority:** `SRS.md` v1.0.0, particularly INV-001–014, DR-001–010 and §8; approved `HLD.md` §5–6, §8–9. Earlier authoring notes report HLD/default approval; formal baseline owner/version evidence is tracked in D01. This document does **not** freeze Prisma models, PostgreSQL column types, or a deployed environment.
@@ -199,3 +201,11 @@ Send-message §7 transaction must include ledger outcome, user message, attempt,
 ## 14. Final closure operational-entity amendment (In Review)
 
 The original 20-entity catalog and earlier 21st request-ledger amendment remain historical modeling steps. Current proposed count: **23**. WebhookInbox owns unique verified provider delivery identity, processing state and retry/lease metadata. IdentityTombstone owns minimal independent subject suppression after UserAccount erasure. These cannot be owned solely by the deleted account or share the user request ledger. Detailed fields are canonical in [physical §12](physical-design.md#12-final-privacy-and-identity-persistence-contract). No extra receipt table is added: DataOperation survives with detached owner FK and minimal deletion scope. Privacy DELETE exception is explicitly scope/role/epoch guarded; ordinary immutable history remains protected. Root lifecycle is ACTIVE -> DELETION_REQUESTED -> PURGING -> DELETED, independent of generation states and DataOperation execution progress. Core retention/deletion/memory/snapshot decisions are approved as P2D-P01–P05; backup and ancillary retention figures remain separately proposed.
+
+## 15. Approved P4-B01/B02 domain amendment
+
+The explicit owner decision adds one association, LearningEvidence, to the prior 23-model design. The current Prisma artifact has 24 models; no migration has run. Experiment display title belongs to plan.title, while its required hypothesis remains a separate claim. An older title/method-only create cannot invent that claim: new admission returns an explicit upgrade/rejection response, preserving accepted historical replay.
+
+LearningEvidence records Learning-to-Evidence membership, distinct from AssumptionEvidence. Composite same-idea foreign keys and the pair primary key protect structure and uniqueness. Learning.evidenceLinksRecorded=false preserves historical unknown linkage; a new atomic capture inserts true with the full distinct set, including an empty set. Persisted marker changes and ordinary membership rewrites are forbidden. Only the existing founder create use case captures links; there is no new link-edit action or automatic learning approval.
+
+API section21 and physical section18 define the accepted contracts and migration boundary. The existing privileged privacy workflow removes links before either parent. Retention, immutable approved snapshots, source verification and hypothesis semantics are unchanged. The owner-approved design closes the two mapping blockers; all runtime tests and final Phase4 sign-off remain separate.

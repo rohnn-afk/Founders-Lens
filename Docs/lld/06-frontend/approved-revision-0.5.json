@@ -1,0 +1,394 @@
+{
+  "formatVersion": 1,
+  "revisionId": "FL-P4-0.5-approved",
+  "packageVersion": "0.5",
+  "approvalId": "FE4D-A08",
+  "status": "Approved — Documentation Only",
+  "approver": "Project owner",
+  "approvalEvidence": {
+    "kind": "Explicit owner instruction in this conversation",
+    "requestTitle": "Founder's Lens — FE4D-A08 Formal Phase 4 Documentation Sign-off",
+    "statement": "FE4D-A08: Approved ? Documentation Only. Target revision: FL-P4-0.5-approved. Scope includes Phase4A?4D and associated controlled API/database design amendments."
+  },
+  "approvalDate": null,
+  "approvalTimestamp": null,
+  "signature": null,
+  "approvedRevisionGitCommit": null,
+  "snapshotKind": "Finalized working-tree raw-byte content snapshot; no Git commit or approval timestamp inferred.",
+  "scope": "Phase4A?4D version0.5 and associated controlled API/database/security/streaming/reliability/privacy-state/traceability/acceptance design amendments.20 technical specification files plus3 historical change/proposal records. Historical proposal inclusion preserves evidence, not approval of rejected alternatives. Index is supporting navigation outside the23-file baseline.",
+  "approvedDecisionIds": [
+    "FE4D-A01",
+    "FE4D-A02",
+    "FE4D-A03",
+    "P4-AM01",
+    "P4-AM02",
+    "P4-AM03",
+    "P4-AM04",
+    "P4-B01",
+    "P4-B02",
+    "FE4D-A08"
+  ],
+  "approvedFileCount": 23,
+  "technicalSpecificationCount": 20,
+  "historicalChangeRecordCount": 3,
+  "hashAlgorithm": "SHA-256 over raw file bytes",
+  "aggregateAlgorithm": "SHA-256 over UTF-8 JSON.stringify(files); lexical path ordering; each entry has keys path,sha256,bytes in that order.",
+  "aggregateSha256": "445ad4f1f427a224cc528bd60b4bad676697ba0f8b2a6f58f473aee1fec28b3b",
+  "files": [
+    {
+      "path": "Docs/lld/01-database/constraints/guards.sql",
+      "sha256": "d65707ef927fcbd8f37f06dc1c4a2b2c4d440201d3b48934443555805bd77ee1",
+      "bytes": 13200
+    },
+    {
+      "path": "Docs/lld/01-database/logical-design.md",
+      "sha256": "c00f8d5811b2f2c179c26c9e13243b008ddbc856fd3ea292b6134769e74897b9",
+      "bytes": 23338
+    },
+    {
+      "path": "Docs/lld/01-database/physical-design.md",
+      "sha256": "1800a993a6b120d59063f2fcc031c077eef38716b300d480a8495ccd826b2602",
+      "bytes": 67313
+    },
+    {
+      "path": "Docs/lld/01-database/schema/schema.prisma",
+      "sha256": "e1b6f64a4317d67028977ff32e15be27fb9408f3163cbb9d94fccb0c8bd153ef",
+      "bytes": 22725
+    },
+    {
+      "path": "Docs/lld/01-database/validation/integration-test-plan.md",
+      "sha256": "e61d83a1e6a0c516e66f1bc461dfb6976844c543978c2fad4bc54289c4a71175",
+      "bytes": 8368
+    },
+    {
+      "path": "Docs/lld/02-api-security/api-contracts.md",
+      "sha256": "de2378f28f6959c30d1502f339d3e0e9e89d273b81717549635c070ee3e6f957",
+      "bytes": 76490
+    },
+    {
+      "path": "Docs/lld/02-api-security/architecture-and-security.md",
+      "sha256": "faeed542b7208f4591626319ee56e9ee12a5d674fd062a9b17fbeb17fd9dd73e",
+      "bytes": 45078
+    },
+    {
+      "path": "Docs/lld/02-api-security/openapi.yaml",
+      "sha256": "bd5fc927d449a9ed6193f4948b38899da4d72a687d97a8a6a1af0ea0bcdd6b9f",
+      "bytes": 154825
+    },
+    {
+      "path": "Docs/lld/02-api-security/route-inventory.json",
+      "sha256": "69e0f11518496d907b8a2915e63f8c0c838833b19553fcde12df7cfe7130891f",
+      "bytes": 12696
+    },
+    {
+      "path": "Docs/lld/02-api-security/testing.md",
+      "sha256": "0313b089ff2e16d433c1f99025f15d97b1d5a84c1960297662adca97a652b9f1",
+      "bytes": 9539
+    },
+    {
+      "path": "Docs/lld/03-streaming-reliability/idempotency-and-concurrency.md",
+      "sha256": "e33084abbea4256c646b570b547fe854ff1c216ed6c80c9864aeca49e0457ae4",
+      "bytes": 15594
+    },
+    {
+      "path": "Docs/lld/03-streaming-reliability/streaming-contract.md",
+      "sha256": "94d306098c86836f6bb54b5bf479daf113adb92e1bc6f34e4e73b9a41b978589",
+      "bytes": 14906
+    },
+    {
+      "path": "Docs/lld/03-streaming-reliability/testing.md",
+      "sha256": "3edb9a66ef2d9ad1538268cd080829fc7693415a24a47e90f1c8e163af369eca",
+      "bytes": 9172
+    },
+    {
+      "path": "Docs/lld/04-integration-review/consistency-matrix.md",
+      "sha256": "b293fc9320a8791838860fc3e8a1927ffe1af88647de277fbf700509cd89dd10",
+      "bytes": 24556
+    },
+    {
+      "path": "Docs/lld/04-integration-review/state-machines.md",
+      "sha256": "ba3ea65591e639560e8049ef3bcee3409cdeca291dedc36bbf4f57b099d0bc3d",
+      "bytes": 27299
+    },
+    {
+      "path": "Docs/lld/04-integration-review/traceability.md",
+      "sha256": "680546fe1e5e89575e84adfb83b92e9796b79068be1afe8dbe6d12011e1d7026",
+      "bytes": 14228
+    },
+    {
+      "path": "Docs/lld/06-frontend/controlled-amendments-0.3.json",
+      "sha256": "21331b8333b2a8f2f97cc50b327cf5b20ad905fcd9ab880c0468a9baa2974e43",
+      "bytes": 13398
+    },
+    {
+      "path": "Docs/lld/06-frontend/controlled-mapping-amendments-0.5.json",
+      "sha256": "1a198caff8f8846ceb238d18458d4a617fcfa11c431f0d71e267d81f4c59b3e3",
+      "bytes": 14401
+    },
+    {
+      "path": "Docs/lld/06-frontend/frontend-fundamentals-journeys-architecture.md",
+      "sha256": "c7ca0dce2de2ca60ce8fc0d2ee3b5064d6cb2a984f36fdba4796ea7e17cff233",
+      "bytes": 34979
+    },
+    {
+      "path": "Docs/lld/06-frontend/frontend-integration-review.md",
+      "sha256": "0cd97e3d4a446aefff395769e75b09cebc55e4f07786c57df567cadadadfd866",
+      "bytes": 94963
+    },
+    {
+      "path": "Docs/lld/06-frontend/frontend-state-api-integration.md",
+      "sha256": "4a5007435383e42b6135daf4ebcc4620cbaad4bc7abfe74b8f8429b9d3ac3df5",
+      "bytes": 71400
+    },
+    {
+      "path": "Docs/lld/06-frontend/mapping-proposals-0.4.json",
+      "sha256": "b1d0919927f9f8dd884d3af64fd7acf20ba8901d1aed20e97f89b8416373391a",
+      "bytes": 4818
+    },
+    {
+      "path": "Docs/lld/06-frontend/wireframes-and-design-system.md",
+      "sha256": "25ca8dbd5efad5bc5257465770e37bc041782d49db7be247bfb5d6cc3ca09963",
+      "bytes": 45579
+    }
+  ],
+  "recordingChanges": [
+    {
+      "path": "Docs/README.md",
+      "purpose": "Navigation/status and link to the exact approved Phase4 baseline; supporting material only.",
+      "old": {
+        "sha256": "eb49c12432491761a50aaf2088972baf9e1847dff2973ca39aac9fc6d2f3bc0c",
+        "bytes": 9293
+      },
+      "new": {
+        "sha256": "39d2abd60431d90da5f7377d4b65b0b7c6f27fcfc9fb2cf9feb477a7dc4a9ba3",
+        "bytes": 9907
+      }
+    },
+    {
+      "path": "Docs/lld/01-database/physical-design.md",
+      "purpose": "Record final FE4D-A08 documentation approval in current mapping section; no database behavior or DDL change.",
+      "old": {
+        "sha256": "f0770453797f2dac929fc5b0301beb63341ecf202694e197988eb661ded69d97",
+        "bytes": 67113
+      },
+      "new": {
+        "sha256": "1800a993a6b120d59063f2fcc031c077eef38716b300d480a8495ccd826b2602",
+        "bytes": 67313
+      }
+    },
+    {
+      "path": "Docs/lld/02-api-security/api-contracts.md",
+      "purpose": "Record final package approval and historical-register disposition; API behavior unchanged.",
+      "old": {
+        "sha256": "ad301308bfa590c8c7def498a2ddc8f773ee9c9003802b03860b3adb9f8ffeae",
+        "bytes": 76263
+      },
+      "new": {
+        "sha256": "de2378f28f6959c30d1502f339d3e0e9e89d273b81717549635c070ee3e6f957",
+        "bytes": 76490
+      }
+    },
+    {
+      "path": "Docs/lld/02-api-security/openapi.yaml",
+      "purpose": "Only info.description updated to reflect FE4D-A08; version0.5.0, paths and schemas unchanged.",
+      "old": {
+        "sha256": "351d2e2386bdb98975e0a48660920562b4ca6fcaccc172be2c3cb42dacc293fb",
+        "bytes": 154795
+      },
+      "new": {
+        "sha256": "bd5fc927d449a9ed6193f4948b38899da4d72a687d97a8a6a1af0ea0bcdd6b9f",
+        "bytes": 154825
+      }
+    },
+    {
+      "path": "Docs/lld/06-frontend/frontend-fundamentals-journeys-architecture.md",
+      "purpose": "Phase4A v0.5 approval status, exact baseline links and historical handoff boundary.",
+      "old": {
+        "sha256": "8d9e7841ebf41cec5a72f1004421cbf3a8475345f47f1ef0d52d69266035b021",
+        "bytes": 34624
+      },
+      "new": {
+        "sha256": "c7ca0dce2de2ca60ce8fc0d2ee3b5064d6cb2a984f36fdba4796ea7e17cff233",
+        "bytes": 34979
+      }
+    },
+    {
+      "path": "Docs/lld/06-frontend/frontend-integration-review.md",
+      "purpose": "FE4D-A08 register, current finding/readiness disposition, formal evidence, static validation and deferred risks; original review history retained.",
+      "old": {
+        "sha256": "34c332e12ff925e98f3b0ce1c0914f4af5fbff6713b1972ac617ff7a3febd1a8",
+        "bytes": 87950
+      },
+      "new": {
+        "sha256": "0cd97e3d4a446aefff395769e75b09cebc55e4f07786c57df567cadadadfd866",
+        "bytes": 94963
+      }
+    },
+    {
+      "path": "Docs/lld/06-frontend/frontend-state-api-integration.md",
+      "purpose": "Phase4C v0.5 approval status and completion statement; recovery/auth/DTO behavior unchanged.",
+      "old": {
+        "sha256": "a3974f20911dba1aa6b15654668830298691bc9dff1c1af9ec40246a26b894aa",
+        "bytes": 71241
+      },
+      "new": {
+        "sha256": "4a5007435383e42b6135daf4ebcc4620cbaad4bc7abfe74b8f8429b9d3ac3df5",
+        "bytes": 71400
+      }
+    },
+    {
+      "path": "Docs/lld/06-frontend/wireframes-and-design-system.md",
+      "purpose": "Phase4B v0.5 approval status; numerical tokens/measured accessibility still provisional.",
+      "old": {
+        "sha256": "05d05049d88de238579a4a46e4fb3cbd9ec0043a175ddde493ef524923782dbc",
+        "bytes": 45337
+      },
+      "new": {
+        "sha256": "25ca8dbd5efad5bc5257465770e37bc041782d49db7be247bfb5d6cc3ca09963",
+        "bytes": 45579
+      }
+    }
+  ],
+  "navigationArtifacts": [
+    {
+      "path": "Docs/README.md",
+      "sha256": "39d2abd60431d90da5f7377d4b65b0b7c6f27fcfc9fb2cf9feb477a7dc4a9ba3",
+      "bytes": 9907,
+      "scope": "Navigation/status only; not a24th approved technical/audit file. Fingerprint is provenance of sign-off recording."
+    }
+  ],
+  "preservedBaselines": [
+    {
+      "path": "Docs/architecture/HLD.md",
+      "sha256": "6b3379ea9cac421145f6624e9a14a1f65e77074f93fa23be486184dd9e4e55d1",
+      "bytes": 64744
+    },
+    {
+      "path": "Docs/architecture/adr/002-express-revision.md",
+      "sha256": "9d536b8b0741de5c37ad22b6ef68532af403e71088b737ab936c575c0167128b",
+      "bytes": 2035
+    },
+    {
+      "path": "Docs/architecture/adr/013-express-typescript-api.md",
+      "sha256": "a4b09240ba7251545d17d6ca228293f2ee25452dc794d80bbb1ec47eb7274770",
+      "bytes": 5721
+    },
+    {
+      "path": "Docs/lld/04-integration-review/approved-revision-1.0.json",
+      "sha256": "8ee34a264be0d38ce139fa3ecf1d9b4cd3d7424288091d88208f40cfca0fa94a",
+      "bytes": 7672
+    },
+    {
+      "path": "Docs/lld/04-integration-review/decision-log.md",
+      "sha256": "31c5c3d874c6cc054ab6ab7ad015b5c359a78ee8bd3a0771ba1ed05e3c9daee5",
+      "bytes": 6050
+    },
+    {
+      "path": "Docs/lld/05-ai-orchestration/ai-integration-evaluation-review.md",
+      "sha256": "682506add62ddd3c3bc3d228a94a0d93bf5bb1eb40a465add03f9839fac8b0d6",
+      "bytes": 67600
+    },
+    {
+      "path": "Docs/lld/05-ai-orchestration/ai-orchestration-architecture.md",
+      "sha256": "b593d079d5154d955fac217f6fda0bb01f7a5583eb98fb1b5fedd9a4caddbf0e",
+      "bytes": 33212
+    },
+    {
+      "path": "Docs/lld/05-ai-orchestration/approved-revision-0.3.json",
+      "sha256": "8d332b066b81cd260b672d7decb8d9d037786e2c258d15b7b9ff77add30dec18",
+      "bytes": 8450
+    },
+    {
+      "path": "Docs/lld/05-ai-orchestration/context-and-prompt-architecture.md",
+      "sha256": "b6bfab30f5656e5650c278a3f647ee9cd6c7ff6d8e72c52637184c20bc55974d",
+      "bytes": 52854
+    },
+    {
+      "path": "Docs/lld/05-ai-orchestration/strategy-research-structured-response.md",
+      "sha256": "65f8bd1dcd2701394c36b9448a7898656ab8d2e8972b533402781abb7e41cc14",
+      "bytes": 42459
+    },
+    {
+      "path": "Docs/requirements/PRD.md",
+      "sha256": "295b6ffd78be320081c1266e513efe033a94a22a55433d3fe83ed7d7f184f59f",
+      "bytes": 34077
+    },
+    {
+      "path": "Docs/requirements/SRS.md",
+      "sha256": "498b6edf5b1d734309eb66920192a0b479ddce3695682cc80f80f0be93b2c06b",
+      "bytes": 65528
+    }
+  ],
+  "preservedHistoricalChangeRecords": [
+    {
+      "path": "Docs/lld/06-frontend/controlled-amendments-0.3.json",
+      "sha256": "21331b8333b2a8f2f97cc50b327cf5b20ad905fcd9ab880c0468a9baa2974e43",
+      "bytes": 13398
+    },
+    {
+      "path": "Docs/lld/06-frontend/mapping-proposals-0.4.json",
+      "sha256": "b1d0919927f9f8dd884d3af64fd7acf20ba8901d1aed20e97f89b8416373391a",
+      "bytes": 4818
+    },
+    {
+      "path": "Docs/lld/06-frontend/controlled-mapping-amendments-0.5.json",
+      "sha256": "1a198caff8f8846ceb238d18458d4a617fcfa11c431f0d71e267d81f4c59b3e3",
+      "bytes": 14401
+    }
+  ],
+  "amendmentChain": "Apply controlled-amendments0.3, mapping-proposals0.4 and controlled-mapping-amendments0.5 in order, then this recordingChanges old/new layer. Historical member hashes describe earlier content, not all current files. Preserve all original manifests/registers verbatim.",
+  "acceptedDocumentationExceptions": [
+    {
+      "id": "AI-D14",
+      "status": "Accepted editorial HLD diagram clarification; pending controlled amendment",
+      "target": "Docs/architecture/HLD.md ?8.1",
+      "authority": "Approved durable PENDING/outbox -> independent generation worker -> guarded commit contract governs; no inline API model invocation/topology change. HLD bytes preserved."
+    },
+    {
+      "id": "P4-B01-LEGACY-CREATE",
+      "status": "Accepted compatibility limitation",
+      "authority": "Fresh legacy experiment create without separate hypothesis returns409 EXPERIMENT_HYPOTHESIS_REQUIRED; explicit upgrade to creation3 required. Historical accepted-response replay preserved. No fabricated hypothesis/incomplete drafts."
+    }
+  ],
+  "staticValidation": {
+    "kind": "Custom structural/source checks; not full OpenAPI schema conformance or runtime proof",
+    "openapiVersion": "0.5.0",
+    "operations": 53,
+    "founderMappings": 50,
+    "negotiatedOperations": 6,
+    "localOpenapiReferences": 714,
+    "markdownFiles": 40,
+    "localMarkdownTargets": 298,
+    "designModels": 24,
+    "requirements": 47,
+    "originalFindings": 23,
+    "integratedScenarios": 40,
+    "historicalRecordsVerified": 5,
+    "gitWhitespace": "git diff --check passes; informational LF/CRLF conversion notices",
+    "ownershipCheckerCorrection": "Initial description-only assertion missed self-scoped /me/data-operations; inspected canonical API-02/global Clerk security and corrected the checker. No contract exception.",
+    "schemaAndPersistence": "Required independent hypothesis/plan.title, negotiated V3 and legacy rejection, same-idea LearningEvidence PK/FKs/marker and privacy/concurrency clauses checked statically; Prisma/SQL/inventory unchanged during sign-off.",
+    "failures": [],
+    "serializationCorrection": "PowerShell stdin Unicode-literal conversion corrected with escaped code points before final freezing/verification."
+  },
+  "pendingGates": [
+    "Runtime/provider/Clerk SDK integration and API compatibility tests unexecuted.",
+    "Prisma validation, generated migration review/execution, PostgreSQL constraints/roles/concurrency, mixed-writer rollout and purge/backup-restore tests pending.",
+    "Security/authorization/isolation, worker recovery, idempotency and privacy runtime tests unexecuted.",
+    "Browser/mobile/keyboard/screen-reader/accessibility and rendered contrast measurements pending; exact visual tokens provisional.",
+    "AI model quality/safety/cost evaluation unexecuted; exact token/retry/cost/quality/TTL settings provisional.",
+    "Hosting/storage/backup retention/cost decisions and infrastructure deployment tests pending.",
+    "AI-D14 controlled HLD editorial amendment pending; legacy experiment clients must upgrade."
+  ],
+  "excludedPaths": [
+    {
+      "path": "Docs/lld/06-frontend/approved-revision-0.5.json",
+      "reason": "Manifest cannot hash itself without circularity. Preserve verbatim; later approved content changes require an explicit controlled revision."
+    }
+  ],
+  "boundaries": [
+    "Documentation approval only; no implementation, dependency installation, migration execution, deployment or Phase5 authorization.",
+    "A07/P3 and all historical decisions/register bytes are preserved; this approval does not rewrite earlier approvals or imply current original member-hash equality.",
+    "Any raw-byte or line-ending difference changes fingerprints; do not silently regenerate the approved manifest.",
+    "Existing unrelated .gitattributes deletion and other pre-existing worktree changes were inspected and preserved."
+  ]
+}

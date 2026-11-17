@@ -1,0 +1,189 @@
+{
+  "formatVersion": 1,
+  "revisionId": "FL-P3-0.3-approved",
+  "packageVersion": "0.3",
+  "approvalId": "P3D-A09",
+  "status": "Approved — Documentation Only",
+  "approver": "Project owner",
+  "approvalEvidence": {
+    "kind": "Explicit owner instruction in this conversation",
+    "requestTitle": "Founder's Lens — Record Formal Phase 3 Documentation Sign-off",
+    "statement": "The project owner explicitly approves the complete LLD Phase 3 documentation package under P3D-A09."
+  },
+  "approvalDate": null,
+  "approvalTimestamp": null,
+  "signature": null,
+  "approvedRevisionGitCommit": null,
+  "snapshotKind": "Finalized working-tree raw-byte content snapshot; no Git commit or approval timestamp inferred.",
+  "scope": "Phase 3A,3B,3C and3D version0.3 plus the seven declared API/database/streaming amendments;11 technical specification files. Administrative approval recording included. Navigation index is separate supporting material.",
+  "approvedFileCount": 11,
+  "hashAlgorithm": "SHA-256 over raw file bytes",
+  "aggregateAlgorithm": "SHA-256 over UTF-8 JSON.stringify(files); lexical path ordering; each entry has keys path,sha256,bytes in that order.",
+  "aggregateSha256": "be87e969fc09bb7497a199e487dcf6d45d34fb09e5b6b85546295d7d07c0ba69",
+  "files": [
+    {
+      "path": "Docs/lld/01-database/constraints/guards.sql",
+      "sha256": "c5a3b893791d26dd1a4ed9ce55a493ff9feb4c4f200406185968c030405d2236",
+      "bytes": 10402
+    },
+    {
+      "path": "Docs/lld/01-database/physical-design.md",
+      "sha256": "22f20d07cb79a54b797d7330d0d253cfa2a7c7ef098a0c992f7f3227452e44db",
+      "bytes": 38157
+    },
+    {
+      "path": "Docs/lld/01-database/schema/schema.prisma",
+      "sha256": "58902296b1f8ac358cfdfc1c8245ef38f4a53d039e0e6c07ba8dbeeb6affaf5d",
+      "bytes": 21653
+    },
+    {
+      "path": "Docs/lld/02-api-security/api-contracts.md",
+      "sha256": "ddc0dde2a1f0ad28bead637a433d6647f1ee6b5da126d04721d8b2855c8e74dc",
+      "bytes": 43102
+    },
+    {
+      "path": "Docs/lld/02-api-security/openapi.yaml",
+      "sha256": "2b11b32116406e3f953f105fa7f30a07ed2661813921be6ec81c7fac64d15867",
+      "bytes": 132485
+    },
+    {
+      "path": "Docs/lld/02-api-security/route-inventory.json",
+      "sha256": "4d6117e6ed488b8e9e6a935e12c6ee1db8ad12fca1e29131dd96d800629cc726",
+      "bytes": 10941
+    },
+    {
+      "path": "Docs/lld/03-streaming-reliability/streaming-contract.md",
+      "sha256": "65dd093e86d4efa6e1d0de16d616f506bdd4620ed070c01acddb948bfbf2bf4e",
+      "bytes": 13631
+    },
+    {
+      "path": "Docs/lld/05-ai-orchestration/ai-integration-evaluation-review.md",
+      "sha256": "682506add62ddd3c3bc3d228a94a0d93bf5bb1eb40a465add03f9839fac8b0d6",
+      "bytes": 67600
+    },
+    {
+      "path": "Docs/lld/05-ai-orchestration/ai-orchestration-architecture.md",
+      "sha256": "b593d079d5154d955fac217f6fda0bb01f7a5583eb98fb1b5fedd9a4caddbf0e",
+      "bytes": 33212
+    },
+    {
+      "path": "Docs/lld/05-ai-orchestration/context-and-prompt-architecture.md",
+      "sha256": "b6bfab30f5656e5650c278a3f647ee9cd6c7ff6d8e72c52637184c20bc55974d",
+      "bytes": 52854
+    },
+    {
+      "path": "Docs/lld/05-ai-orchestration/strategy-research-structured-response.md",
+      "sha256": "65f8bd1dcd2701394c36b9448a7898656ab8d2e8972b533402781abb7e41cc14",
+      "bytes": 42459
+    }
+  ],
+  "reviewedSourceFiles": [
+    {
+      "path": "Docs/lld/01-database/constraints/guards.sql",
+      "sha256": "c5a3b893791d26dd1a4ed9ce55a493ff9feb4c4f200406185968c030405d2236",
+      "bytes": 10402
+    },
+    {
+      "path": "Docs/lld/01-database/physical-design.md",
+      "sha256": "244ca0452c4c27d524d5156d42ca3f9599f868deb3fb498ffe7012664a1cac42",
+      "bytes": 37923
+    },
+    {
+      "path": "Docs/lld/01-database/schema/schema.prisma",
+      "sha256": "58902296b1f8ac358cfdfc1c8245ef38f4a53d039e0e6c07ba8dbeeb6affaf5d",
+      "bytes": 21653
+    },
+    {
+      "path": "Docs/lld/02-api-security/api-contracts.md",
+      "sha256": "20cac1fe0a31eb7f7d52aaf21cd153d73ee64e08adacbc9324370c6adc4ab347",
+      "bytes": 42793
+    },
+    {
+      "path": "Docs/lld/02-api-security/openapi.yaml",
+      "sha256": "b17de819a880c6f7b588f553ba54fe98ab3e63aa38c52133f1b3e64393516162",
+      "bytes": 132471
+    },
+    {
+      "path": "Docs/lld/02-api-security/route-inventory.json",
+      "sha256": "4d6117e6ed488b8e9e6a935e12c6ee1db8ad12fca1e29131dd96d800629cc726",
+      "bytes": 10941
+    },
+    {
+      "path": "Docs/lld/03-streaming-reliability/streaming-contract.md",
+      "sha256": "df9eea2a85debb30a8ae4883271c4020942b96fe1c4e0ebc352a0e2069eb3bdc",
+      "bytes": 13562
+    },
+    {
+      "path": "Docs/lld/05-ai-orchestration/ai-integration-evaluation-review.md",
+      "sha256": "7b86d80a662d4477a0315cef64c8b02545ef70e04c22dffcbc43a6f8b87cfaee",
+      "bytes": 61957
+    },
+    {
+      "path": "Docs/lld/05-ai-orchestration/ai-orchestration-architecture.md",
+      "sha256": "daac4aa85daa3f081a1de53bb117069a2eb7b174a4eec1c77337b4e179bc6521",
+      "bytes": 32833
+    },
+    {
+      "path": "Docs/lld/05-ai-orchestration/context-and-prompt-architecture.md",
+      "sha256": "01d679b9c8216c593bd2ea5276cb97e79df1289eda0126c5d5ff17e344e5aa19",
+      "bytes": 52336
+    },
+    {
+      "path": "Docs/lld/05-ai-orchestration/strategy-research-structured-response.md",
+      "sha256": "8015be8ec607d9a8c962446a157e5040fcb98c96df827b58ab721d97611ea126",
+      "bytes": 41998
+    }
+  ],
+  "recordingChanges": "Approval statuses/evidence, AI-D14 accepted editorial disposition, readiness and validation recording, links and historical planning annotations. OpenAPI info.version normalized from0.3.0-draft to0.3.0 as documentation metadata. No application code, new domain fields or changed behavioral contracts in this sign-off recording.",
+  "navigationArtifacts": [
+    {
+      "path": "Docs/README.md",
+      "sha256": "950938c2c58ff5d4610a34b3575c5610cda9a00488dfd9ce0f45b1c96ceea429",
+      "bytes": 6813,
+      "scope": "Navigation-only status/index update; not a twelfth approved technical specification. Fingerprint is provenance of this recording, not a restriction on future navigation maintenance."
+    }
+  ],
+  "preservedBaselines": [
+    {
+      "path": "Docs/lld/04-integration-review/approved-revision-1.0.json",
+      "sha256": "8ee34a264be0d38ce139fa3ecf1d9b4cd3d7424288091d88208f40cfca0fa94a",
+      "bytes": 7672
+    },
+    {
+      "path": "Docs/architecture/HLD.md",
+      "sha256": "6b3379ea9cac421145f6624e9a14a1f65e77074f93fa23be486184dd9e4e55d1",
+      "bytes": 64744
+    },
+    {
+      "path": "Docs/lld/04-integration-review/decision-log.md",
+      "sha256": "31c5c3d874c6cc054ab6ab7ad015b5c359a78ee8bd3a0771ba1ed05e3c9daee5",
+      "bytes": 6050
+    }
+  ],
+  "excludedPaths": [
+    {
+      "path": "Docs/lld/05-ai-orchestration/approved-revision-0.3.json",
+      "reason": "Manifest cannot hash itself without circularity. Preserve verbatim; future approved content changes require a new versioned manifest."
+    }
+  ],
+  "acceptedDocumentationExceptions": [
+    {
+      "id": "AI-D14",
+      "status": "Accepted editorial HLD diagram clarification; pending controlled amendment",
+      "target": "Docs/architecture/HLD.md §8.1",
+      "authority": "Specific approved durable PENDING/outbox -> independent generation worker -> guarded commit contract governs. No inline API model invocation or topology change accepted. HLD bytes preserved."
+    }
+  ],
+  "pendingGates": [
+    "Numerical token/cost/research/retry caps and quality thresholds remain provisional until calibrated.",
+    "Provider/model/tokenizer features, pricing, data terms and deployment/backup retention require verification/selection.",
+    "Generated migrations, Prisma/PostgreSQL constraints, permissions and concurrency remain unexecuted.",
+    "API compatibility, streaming, worker recovery, context-removal and privacy/security runtime tests remain pending.",
+    "Repeatable datasets, human review and actual model-quality/cost evaluation remain pending execution."
+  ],
+  "boundaries": [
+    "Documentation approval only; implementation, deployment and another phase are not authorized.",
+    "A07 Phase 2D approval manifest and historical decisions are preserved; current declared amendments do not rewrite that historical approval.",
+    "Any raw-byte content or line-ending difference changes the file fingerprint; review it and identify a new approved revision rather than regenerating this manifest."
+  ]
+}

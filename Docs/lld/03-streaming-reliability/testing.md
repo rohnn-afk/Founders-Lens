@@ -86,3 +86,16 @@
 - **Gate 5 — release:** cost and privacy policies, provider terms, audit retention, documented operational runbooks and recovery drills.
 
 **Approval criterion:** No unresolved ownership bypass, duplicate durable side effect, false completion, late-write-after-cancel, indefinite stuck job, or leaked sensitive data. Any waived nonfunctional target must be explicitly recorded in an ADR with operational mitigation.
+
+
+## Phase 4 controlled recovery assertions (not executed)
+
+STR-P4-01: cancel/regenerate accepted full Generation snapshot replays unchanged after completion/cancellation;status GET is current,not replay. STR-P4-02: session opaque record→submission lookup→original generation GET;404 during acceptance race never generates another command/provider call. STR-P4-03: auth/account/idea deletion invalidates recovery reads/stream callbacks regardless of stored IDs; browser disconnect still continues generation and missed fragments remain unreplayed. STR-P4-04: negotiated Learning POST fingerprint binds representation,legacy1 response/algorithm preserved;memory/experiment mutation responses stay legacy. Existing leases/outbox/terminal/context and quota tests remain required; these are planned additions,not runtime results.
+
+## Approved mapping closure recovery acceptance (Not executed)
+
+STR-MAP-01: a same-key ExperimentReceiptV3 retains original acceptance version/status while list3 reflects later authorized edits. STR-MAP-02: Learning and its captured evidence set commit or roll back with the receipt; no automatic retry after an uncertain result using a new key. STR-MAP-03: account/idea deletion invalidates recovery reads and captured-source views without changing the generation/SSE lifecycle. These supplement prior STR-P4 and MAP scenarios; no worker, provider, SDK, browser or database behavior is claimed validated.
+
+## P5-AM01 acceptance - Not executed
+
+P5-DEL-01 independent write failure: no202/primary deletion commit. P5-DEL-02 durable intent then primary failure: scope blocked and reconciled, not falsely committed. P5-DEL-03 lost202: same-key original outcome, no new operation. P5-DEL-04 duplicate/delayed mirror: immutable scope and monotonic evidence. P5-DEL-05 older restore: independent coverage before any private read. P5-DEL-06 missing/stale authority: fail closed, no negative-cache bypass. P5-DEL-07 generation/research/PDF race: current context/lease/lifecycle and suppression checks reject late effects. P5-DEL-08 new signup: new empty incarnation, old data suppressed. P5-DEL-09 corrupted digest/version/key: recovery remains closed. P5-DEL-10 partial partitions: no accepted202 without verified intent plus primary commit. P5-DEL-11 concurrent same-key: one winning operation UUID; changed payload409. API/admission, privacy reconciler, workers and restore operator own their respective invariants; verification uses fault-injected store/DB barriers, authorization fixtures and isolated restore drills. All scenarios remain Not executed; static documentation checks are insufficient.

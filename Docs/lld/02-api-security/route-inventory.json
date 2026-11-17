@@ -125,9 +125,10 @@
     "path": "/api/v1/conversations/{conversationId}/messages",
     "tag": "Conversation",
     "body": null,
-    "response": "MessageList",
+    "response": "MessageList (default/1) or StructuredMessageList (opt-in/2)",
     "idempotency": false,
-    "versionPrecondition": false
+    "versionPrecondition": false,
+    "assistantResponseVersion": "optional query enum1|2; default1"
   },
   {
     "method": "POST",
@@ -188,9 +189,10 @@
     "path": "/api/v1/ideas/{ideaId}/memory-proposals",
     "tag": "Memory",
     "body": null,
-    "response": "ProposalList",
+    "response": "ProposalList (default/1) or ProposalListV2 (opt-in/2)",
     "idempotency": false,
-    "versionPrecondition": false
+    "versionPrecondition": false,
+    "projectionVersion": "optional1|2 default1; only explicit2 selects v2; cursor/fingerprint scoped"
   },
   {
     "method": "PATCH",
@@ -269,45 +271,57 @@
     "path": "/api/v1/ideas/{ideaId}/experiments",
     "tag": "Experiments",
     "body": null,
-    "response": "ExperimentList",
+    "response": "ExperimentList (default/1) or ExperimentListV2 (opt-in/2) or ExperimentListV3 (opt-in/3)",
     "idempotency": false,
-    "versionPrecondition": false
+    "versionPrecondition": false,
+    "projectionVersion": "optional1|2|3 default1; strict selected experiment list schema; cursor scoped"
   },
   {
     "method": "POST",
     "path": "/api/v1/ideas/{ideaId}/experiments",
     "tag": "Experiments",
     "body": "ExperimentCreate",
-    "response": "Experiment",
+    "response": "Experiment (historical accepted1 replay) or ExperimentReceiptV3 (fresh3)",
     "idempotency": true,
-    "versionPrecondition": false
+    "versionPrecondition": false,
+    "projectionVersion": "optional1|3 default1; fresh1 rejects409 missing hypothesis; accepted old replay preserved",
+    "requestSchemasByProjection": {"1": "ExperimentCreate", "3": "ExperimentCreateV3"}
   },
   {
     "method": "PATCH",
     "path": "/api/v1/experiments/{experimentId}",
     "tag": "Experiments",
     "body": "ExperimentPatch",
-    "response": "Experiment",
+    "response": "Experiment (default/1) or ExperimentV3 (opt-in/3)",
     "idempotency": false,
-    "versionPrecondition": true
+    "versionPrecondition": true,
+    "projectionVersion": "optional1|3 default1; existing If-Match required",
+    "requestSchemasByProjection": {"1": "ExperimentPatch", "3": "ExperimentPatchV3"}
   },
   {
     "method": "POST",
     "path": "/api/v1/experiments/{experimentId}/learnings",
     "tag": "Experiments",
     "body": "LearningCreate",
-    "response": "Learning",
+    "response": "Learning (default/1) or LearningV2 (opt-in/2) or LearningV3 (opt-in/3)",
     "idempotency": true,
-    "versionPrecondition": false
+    "versionPrecondition": false,
+    "projectionVersion": "optional1|2|3 default1; all accepted creates atomically capture evidence set",
+    "requestSchemasByProjection": {
+      "1": "LearningCreate",
+      "2": "LearningCreateV2",
+      "3": "LearningCreateV3"
+    }
   },
   {
     "method": "GET",
     "path": "/api/v1/ideas/{ideaId}/learnings",
     "tag": "Experiments",
     "body": null,
-    "response": "LearningList",
+    "response": "LearningList (default/1) or LearningListV2 (opt-in/2) or LearningListV3 (opt-in/3)",
     "idempotency": false,
-    "versionPrecondition": false
+    "versionPrecondition": false,
+    "projectionVersion": "optional1|2|3 default1; evidence IDs only in explicit3; cursor scoped"
   },
   {
     "method": "GET",
@@ -432,6 +446,24 @@
     "tag": "Documents",
     "body": null,
     "response": "DownloadGrant",
+    "idempotency": false,
+    "versionPrecondition": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/conversations/{conversationId}/submissions/{clientSubmissionId}",
+    "tag": "Conversation",
+    "body": null,
+    "response": "SubmissionCorrelation",
+    "idempotency": false,
+    "versionPrecondition": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/assumptions/{assumptionId}/evidence-links",
+    "tag": "Research",
+    "body": null,
+    "response": "EvidenceLinkList",
     "idempotency": false,
     "versionPrecondition": false
   }

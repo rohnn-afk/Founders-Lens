@@ -1,0 +1,257 @@
+{
+  "formatVersion": 1,
+  "revisionId": "FL-P5-0.4-approved",
+  "packageVersion": "0.4",
+  "approvalId": "INF5D-A10",
+  "status": "Approved, Documentation Only",
+  "approver": "Project owner",
+  "approvalEvidence": {
+    "kind": "Explicit owner instruction in this conversation",
+    "requestTitle": "Founder's Lens — Phase 5 Formal Documentation Sign-off",
+    "statement": "Phase5 - Approved, Documentation Only; target FL-P5-0.4-approved; includes Phase5A-D, operational decisions, P5-AM01 and controlled supporting amendments."
+  },
+  "approvalDate": null,
+  "approvalTimestamp": null,
+  "signature": null,
+  "approvedRevisionGitCommit": null,
+  "snapshotKind": "Finalized working-tree raw-byte content snapshot; no timestamp or commit inferred.",
+  "scope": "Four Phase5 specifications, operational/amendment audit records and all supporting technical files declared in those records; index is supporting navigation only.",
+  "approvedFileCount": 18,
+  "technicalSpecificationCount": 16,
+  "historicalAuditRecordCount": 2,
+  "hashAlgorithm": "SHA-256 over raw file bytes",
+  "aggregateAlgorithm": "SHA-256 over UTF-8 JSON.stringify(files); lexical path ordering; entry keys path,sha256,bytes in that order.",
+  "aggregateSha256": "edf61a59a5e3e268854420bd7f3144f8944f2d5ba16a924ce3c74f243a0738e1",
+  "files": [
+    {
+      "path": "Docs/lld/01-database/physical-design.md",
+      "sha256": "a3c469e64a83c1fd90319064874ead62b72defdd62e835ddcc9bb670dadb3e9b",
+      "bytes": 69228
+    },
+    {
+      "path": "Docs/lld/01-database/validation/integration-test-plan.md",
+      "sha256": "0d8c1b09b710f7cc8182fcbfe54246baa751711a671f1e231713aaf579e84256",
+      "bytes": 9559
+    },
+    {
+      "path": "Docs/lld/02-api-security/api-contracts.md",
+      "sha256": "45b0549bdcb4424e50d23ffb3a0715be7090dabcf8fdb859d604db98873705c2",
+      "bytes": 78405
+    },
+    {
+      "path": "Docs/lld/02-api-security/architecture-and-security.md",
+      "sha256": "00aaade50c234a853708b2d942a44d7662464ac5e0b63ccd03c1c5bb75498022",
+      "bytes": 46993
+    },
+    {
+      "path": "Docs/lld/02-api-security/openapi.yaml",
+      "sha256": "32bb7e853a10620fa874281170a42c9b36e4b530c15ee11e65cf92659f8c1d24",
+      "bytes": 155533
+    },
+    {
+      "path": "Docs/lld/02-api-security/testing.md",
+      "sha256": "0325236d1b96e3e2a3e8940d60e409d31563b4fe425822beb2130a103fb1e5c6",
+      "bytes": 10730
+    },
+    {
+      "path": "Docs/lld/03-streaming-reliability/idempotency-and-concurrency.md",
+      "sha256": "14511fb31a09a5fe166933ee8b6692d26faa950747234c2d22d3803ae70e4fb3",
+      "bytes": 17509
+    },
+    {
+      "path": "Docs/lld/03-streaming-reliability/testing.md",
+      "sha256": "a657a7b07cefec3ecf75a2805f24cac3f0e8915367361249d3c25f7f3d735b6f",
+      "bytes": 10363
+    },
+    {
+      "path": "Docs/lld/04-integration-review/decision-log.md",
+      "sha256": "6d34bb81eb407a5c2d92e1223150d08cbe57e7e32de7ac4ae778e47cbffb2ab7",
+      "bytes": 6766
+    },
+    {
+      "path": "Docs/lld/04-integration-review/state-machines.md",
+      "sha256": "1c7006074ce192cac603135180f414e6905861976080f507184fb825a8d210db",
+      "bytes": 35305
+    },
+    {
+      "path": "Docs/lld/04-integration-review/traceability.md",
+      "sha256": "ee9a13d0c184d5f6a3542bff6aa28e1d25463e0904a78509f71e66837796f1ef",
+      "bytes": 14618
+    },
+    {
+      "path": "Docs/lld/06-frontend/frontend-state-api-integration.md",
+      "sha256": "6b8e546998d63d5795cf6f1cacf36948d4696f3cc4a3df7db053e2bfacfaa6a7",
+      "bytes": 73315
+    },
+    {
+      "path": "Docs/lld/07-infrastructure-and-deployment/hosting-cost-cicd-operations.md",
+      "sha256": "35d0226e6f36f953cfc1430724243aef03b989d4e678ac9c08f0104ac1c91446",
+      "bytes": 25768
+    },
+    {
+      "path": "Docs/lld/07-infrastructure-and-deployment/infrastructure-fundamentals-deployment-architecture.md",
+      "sha256": "85b48863c499a5071761b25ca7195c4cc6c0df431ca859429bcb23a3d81495a3",
+      "bytes": 27101
+    },
+    {
+      "path": "Docs/lld/07-infrastructure-and-deployment/infrastructure-integration-review.md",
+      "sha256": "46a72c7ec533de7b986b635bca5bcd0aa2fddefda33c8c6fc9e2609758593c01",
+      "bytes": 60264
+    },
+    {
+      "path": "Docs/lld/07-infrastructure-and-deployment/operational-closure-0.3.json",
+      "sha256": "bef8f8c282bc1bce15cba34b146a5b45edc650b0c51b2f4ef48b9bc343a7b043",
+      "bytes": 2842
+    },
+    {
+      "path": "Docs/lld/07-infrastructure-and-deployment/p5-am01-controlled-amendments-0.4.json",
+      "sha256": "6bd0706cfcb6648bf02b58d13aa9612a8c386c501dcacaba4b3746b59cfbae29",
+      "bytes": 13034
+    },
+    {
+      "path": "Docs/lld/07-infrastructure-and-deployment/storage-secrets-backup-recovery.md",
+      "sha256": "5adb09486364f02582f42d33b0bff0dd7a8562d202f022f1ffe0049b2acf3f52",
+      "bytes": 23946
+    }
+  ],
+  "recordingChanges": [
+    {
+      "path": "Docs/README.md",
+      "reason": "Administrative final owner approval, version/status, historical-stage clarification and deferred-gate recording only",
+      "old": {
+        "sha256": "ee126c243de094c93ccc9ee99536b558280bc6b92a4863307bb02f20ed2f5a3f",
+        "bytes": 11745
+      },
+      "new": {
+        "sha256": "e27cf2eef3b13b7da37b9278d36a8117e4e1aba1d14ec0f74359e5c2001f82f9",
+        "bytes": 12520
+      }
+    },
+    {
+      "path": "Docs/lld/07-infrastructure-and-deployment/hosting-cost-cicd-operations.md",
+      "reason": "Administrative final owner approval, version/status, historical-stage clarification and deferred-gate recording only",
+      "old": {
+        "sha256": "9e667f545debeb2c6cf9a0952b3ddfd1f249a1217c982fe289a16ceb30773bae",
+        "bytes": 25312
+      },
+      "new": {
+        "sha256": "35d0226e6f36f953cfc1430724243aef03b989d4e678ac9c08f0104ac1c91446",
+        "bytes": 25768
+      }
+    },
+    {
+      "path": "Docs/lld/07-infrastructure-and-deployment/infrastructure-fundamentals-deployment-architecture.md",
+      "reason": "Administrative final owner approval, version/status, historical-stage clarification and deferred-gate recording only",
+      "old": {
+        "sha256": "3ae2e680ae93321cb3930edf60e34c4ea67535c33d5aedd692c117b0ea8ed36b",
+        "bytes": 26459
+      },
+      "new": {
+        "sha256": "85b48863c499a5071761b25ca7195c4cc6c0df431ca859429bcb23a3d81495a3",
+        "bytes": 27101
+      }
+    },
+    {
+      "path": "Docs/lld/07-infrastructure-and-deployment/infrastructure-integration-review.md",
+      "reason": "Administrative final owner approval, version/status, historical-stage clarification and deferred-gate recording only",
+      "old": {
+        "sha256": "7e6416b8c6e4667f22dbce62df9a8218d94be3f04cf2bf95dff3a099975ec141",
+        "bytes": 57034
+      },
+      "new": {
+        "sha256": "46a72c7ec533de7b986b635bca5bcd0aa2fddefda33c8c6fc9e2609758593c01",
+        "bytes": 60264
+      }
+    },
+    {
+      "path": "Docs/lld/07-infrastructure-and-deployment/storage-secrets-backup-recovery.md",
+      "reason": "Administrative final owner approval, version/status, historical-stage clarification and deferred-gate recording only",
+      "old": {
+        "sha256": "7581226857b15da6dae7b0133fe9e2276ae44d1bf4c2b6ae1e16c4c2b70ce480",
+        "bytes": 23288
+      },
+      "new": {
+        "sha256": "5adb09486364f02582f42d33b0bff0dd7a8562d202f022f1ffe0049b2acf3f52",
+        "bytes": 23946
+      }
+    }
+  ],
+  "navigationArtifacts": [
+    {
+      "path": "Docs/README.md",
+      "sha256": "e27cf2eef3b13b7da37b9278d36a8117e4e1aba1d14ec0f74359e5c2001f82f9",
+      "bytes": 12520,
+      "scope": "Supporting navigation provenance, outside approved technical/audit count"
+    }
+  ],
+  "preservedBaselines": [
+    {
+      "path": "Docs/lld/04-integration-review/approved-revision-1.0.json",
+      "sha256": "8ee34a264be0d38ce139fa3ecf1d9b4cd3d7424288091d88208f40cfca0fa94a",
+      "bytes": 7672
+    },
+    {
+      "path": "Docs/lld/05-ai-orchestration/approved-revision-0.3.json",
+      "sha256": "8d332b066b81cd260b672d7decb8d9d037786e2c258d15b7b9ff77add30dec18",
+      "bytes": 8450
+    },
+    {
+      "path": "Docs/lld/06-frontend/approved-revision-0.5.json",
+      "sha256": "56adb4b7d40fb1a844726dff51e19b9aa19cc4844d3a3ece78257d892e0e1435",
+      "bytes": 16789
+    }
+  ],
+  "preservedHistoricalRecords": [
+    {
+      "path": "Docs/lld/07-infrastructure-and-deployment/operational-closure-0.3.json",
+      "sha256": "bef8f8c282bc1bce15cba34b146a5b45edc650b0c51b2f4ef48b9bc343a7b043",
+      "bytes": 2842
+    },
+    {
+      "path": "Docs/lld/07-infrastructure-and-deployment/p5-am01-controlled-amendments-0.4.json",
+      "sha256": "6bd0706cfcb6648bf02b58d13aa9612a8c386c501dcacaba4b3746b59cfbae29",
+      "bytes": 13034
+    }
+  ],
+  "amendmentChain": "Historical A07/P3/Phase4 manifests remain verbatim. Apply P5-AM01 controlled record old/new fingerprints to Phase4 technical baseline; operational0.3 precedes AM01. Administrative recordingChanges extends current content without rewriting those records.",
+  "acceptedExceptions": [
+    {
+      "id": "AI-D14",
+      "status": "Accepted pending controlled HLD editorial correction; HLD unchanged"
+    },
+    {
+      "id": "P4-B01 legacy create",
+      "status": "Documented client upgrade requirement preserved"
+    }
+  ],
+  "staticValidation": {
+    "links": 321,
+    "openapiRefs": 714,
+    "uniqueOperations": 53,
+    "founderRoutes": 50,
+    "historicalManifests": 3,
+    "phase4Files": 23,
+    "failures": [],
+    "scope": "Final post-recording custom structural checks, not runtime or full OpenAPI conformance",
+    "gitWhitespace": "git diff --check passes with informational LF/CRLF notices"
+  },
+  "pendingGates": [
+    "PostgreSQL/SQL/migration integration unexecuted",
+    "Independent suppression durability, authoritative enumeration, keys and backup/restore drills unexecuted",
+    "Worker/queue/crash recovery unexecuted",
+    "Clerk/session/provider, security/authorization unexecuted",
+    "Browser/mobile/accessibility and AI evaluations/spending controls unexecuted",
+    "Hosting/cost eligibility and provider selection deferred; numerical recovery/retention targets provisional where not approved"
+  ],
+  "excludedPaths": [
+    {
+      "path": "Docs/lld/07-infrastructure-and-deployment/approved-revision-0.4.json",
+      "reason": "Self-hashing circularity; preserve manifest verbatim; subsequent approved revisions require new versioned manifest."
+    }
+  ],
+  "boundaries": [
+    "Documentation only; no implementation, installation, spending, provisioning, migration, deployment or Phase6 authorization",
+    "Historical record pending labels describe earlier stages; inclusion does not revive rejected alternatives",
+    "Any raw-byte/line-ending change requires explicit controlled accounting, not silent regeneration"
+  ]
+}

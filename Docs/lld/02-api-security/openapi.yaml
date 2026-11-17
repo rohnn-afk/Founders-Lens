@@ -1,8 +1,16 @@
 openapi: 3.1.0
+x-p5-am01-deletion-admission:
+  status: Approved documentation/design amendment only
+  appliesTo: POST /api/v1/me/data-operations deletion kinds only
+  prerequisite: Verified durable independent scope/incarnation-bound intent before primary deletion commit
+  accepted202: Primary lifecycle/DataOperation/idempotency/outbox commit, never intent alone
+  unavailable503: Independent authority failure or uncertain outcome; no acceptance claim or automatic new-key resend
+  recovery: Unresolved suppression blocks private access; authoritative coverage before restore reopening
+  compatibility: Existing DTOs/routes and lifecycle enums retained; stronger availability/freshness dependency; runtime proof pending
 info:
-  title: Founder's Lens API
-  version: 0.2.0-draft
-  description: Phase 2D final closure proposal. Human contracts govern; five core product decisions approved; deployment settings and implementation validation remain pending.
+  title: "Founder's Lens API"
+  version: 0.5.0
+  description: P4-B01/B02 mapping design and Phase4 package explicitly approved under FE4D-A08,FL-P4-0.5-approved;0.5.0. Documentation only;runtime/provider/security/accessibility/model gates pending. Legacy fresh experiment creates reject missing hypothesis;historical accepted replay preserved. Explicit projection3 anddurable LearningEvidence capture are design artifacts,not executed migrations.
 x-pdf-export-limits:
   description: Engineering defaults under approved P2D-P05; runtime validation pending.
   canonicalContentMaxBytes: 1048576
@@ -11,18 +19,19 @@ x-pdf-export-limits:
   maxActiveJobsPerAccount: 2
   downloadGrantTtlSeconds: 300
 servers:
-- url: https://api.example.invalid
-  description: Illustrative hostname only; replace before deployment
+  - url: https://api.example.invalid
+    description: Illustrative hostname only; replace before deployment
 security:
-- ClerkSession: []
+  - ClerkSession:
+      []
 tags:
-- name: Identity
-- name: Ideas
-- name: Conversation
-- name: Memory
-- name: Experiments
-- name: Research
-- name: Documents
+  - name: Identity
+  - name: Ideas
+  - name: Conversation
+  - name: Memory
+  - name: Experiments
+  - name: Research
+  - name: Documents
 paths:
   /api/v1/me:
     get:
@@ -168,7 +177,7 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/DataOperationCreate"
-  /api/v1/me/data-operations/{operationId}:
+  "/api/v1/me/data-operations/{operationId}":
     get:
       tags:
         - Identity
@@ -316,7 +325,7 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/IdeaCreate"
-  /api/v1/ideas/{ideaId}:
+  "/api/v1/ideas/{ideaId}":
     get:
       tags:
         - Ideas
@@ -482,7 +491,7 @@ paths:
             examples:
               - p2d-privacy-v2
           description: "Acknowledges displayed policy after approval; missing 400, inactive policy 409. Fresh-auth check also required."
-  /api/v1/ideas/{ideaId}/conversations:
+  "/api/v1/ideas/{ideaId}/conversations":
     get:
       tags:
         - Conversation
@@ -523,7 +532,7 @@ paths:
           name: ideaId
           required: true
           schema:
-            &schema
+            &schema1
             type: string
             format: uuid
         - in: query
@@ -579,14 +588,14 @@ paths:
           name: ideaId
           required: true
           schema:
-            *schema
+            *schema1
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: "#/components/schemas/ConversationCreate"
-  /api/v1/conversations/{conversationId}:
+  "/api/v1/conversations/{conversationId}":
     get:
       tags:
         - Conversation
@@ -627,7 +636,7 @@ paths:
           name: conversationId
           required: true
           schema:
-            &schema
+            &schema2
             type: string
             format: uuid
     patch:
@@ -672,7 +681,7 @@ paths:
           name: conversationId
           required: true
           schema:
-            *schema
+            *schema2
         - in: header
           name: If-Match
           required: true
@@ -685,7 +694,7 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/ConversationPatch"
-  /api/v1/conversations/{conversationId}/messages:
+  "/api/v1/conversations/{conversationId}/messages":
     get:
       tags:
         - Conversation
@@ -693,11 +702,13 @@ paths:
       operationId: getConversationsConversationIdMessages
       responses:
         "200":
-          description: Successful operation
+          description: "Version1/default: legacy MessageList exactly; explicit assistantResponseVersion=2: StructuredMessageList, including legacy rows without enrichment. anyOf permits shared empty/legacy projections, not a cardinality loophole for cards."
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/MessageList"
+                anyOf:
+                  - $ref: "#/components/schemas/MessageList"
+                  - $ref: "#/components/schemas/StructuredMessageList"
         "400":
           $ref: "#/components/responses/400"
         "401":
@@ -720,13 +731,13 @@ paths:
           $ref: "#/components/responses/500"
         "503":
           $ref: "#/components/responses/503"
-      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses. Structured enrichment is opt-in using assistantResponseVersion=2; default JSON remains compatible with strict legacy Message validators. Authorize each read as before; no-store. Final enrichment only after committed validation.
       parameters:
         - in: path
           name: conversationId
           required: true
           schema:
-            &schema
+            &schema3
             type: string
             format: uuid
         - in: query
@@ -742,6 +753,16 @@ paths:
           required: false
           schema:
             type: string
+        - in: query
+          name: assistantResponseVersion
+          required: false
+          schema:
+            type: integer
+            enum:
+              - 1
+              - 2
+            default: 1
+          description: 1/default returns exact legacy MessageList;2 opts into StructuredMessageList. Unknown value400. Cursor binds representation version; no request or SSE contract change.
     post:
       tags:
         - Conversation
@@ -788,7 +809,7 @@ paths:
           name: conversationId
           required: true
           schema:
-            *schema
+            *schema3
         - in: header
           name: Idempotency-Key
           required: true
@@ -803,7 +824,7 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/MessageCreate"
-  /api/v1/generations/{generationId}:
+  "/api/v1/generations/{generationId}":
     get:
       tags:
         - Conversation
@@ -846,7 +867,7 @@ paths:
           schema:
             type: string
             format: uuid
-  /api/v1/generations/{generationId}/events:
+  "/api/v1/generations/{generationId}/events":
     get:
       tags:
         - Conversation
@@ -903,7 +924,7 @@ paths:
           description: "Unsupported in v1: any supplied value returns 400; no token replay."
           schema:
             type: string
-  /api/v1/generations/{generationId}/cancel:
+  "/api/v1/generations/{generationId}/cancel":
     post:
       tags:
         - Conversation
@@ -944,7 +965,7 @@ paths:
           $ref: "#/components/responses/500"
         "503":
           $ref: "#/components/responses/503"
-      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      description: "Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses. P4-AM02: all200/202 success bodies use the full unchanged Generation schema, including original accepted snapshot on same-key replay; current status via GET. No lifecycle/status-code change."
       parameters:
         - in: path
           name: generationId
@@ -959,7 +980,7 @@ paths:
             type: string
             minLength: 8
             maxLength: 128
-  /api/v1/conversations/{conversationId}/regenerations:
+  "/api/v1/conversations/{conversationId}/regenerations":
     post:
       tags:
         - Conversation
@@ -1000,7 +1021,7 @@ paths:
           $ref: "#/components/responses/500"
         "503":
           $ref: "#/components/responses/503"
-      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      description: "Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses. P4-AM02: all200/202 success bodies use the full unchanged Generation schema, including original accepted snapshot on same-key replay; current status via GET. No lifecycle/status-code change."
       parameters:
         - in: path
           name: conversationId
@@ -1022,7 +1043,7 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/RegenerationCreate"
-  /api/v1/ideas/{ideaId}/memory:
+  "/api/v1/ideas/{ideaId}/memory":
     get:
       tags:
         - Memory
@@ -1078,7 +1099,7 @@ paths:
           required: false
           schema:
             type: string
-  /api/v1/ideas/{ideaId}/memory-proposals:
+  "/api/v1/ideas/{ideaId}/memory-proposals":
     get:
       tags:
         - Memory
@@ -1086,11 +1107,13 @@ paths:
       operationId: getIdeasIdeaIdMemoryProposals
       responses:
         "200":
-          description: Successful operation
+          description: "projectionVersion1/default: exact ProposalList; explicit2: ProposalListV2. Cross-parameter schema selection is enforced by application validation, not anyOf alone."
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ProposalList"
+                anyOf:
+                  - $ref: "#/components/schemas/ProposalList"
+                  - $ref: "#/components/schemas/ProposalListV2"
         "400":
           $ref: "#/components/responses/400"
         "401":
@@ -1113,7 +1136,7 @@ paths:
           $ref: "#/components/responses/500"
         "503":
           $ref: "#/components/responses/503"
-      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      description: "Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses. P4-AM03/04: explicit projectionVersion selects negotiated DTO; default strict legacy unchanged. No-store and current authorization on reads/replay."
       parameters:
         - in: path
           name: ideaId
@@ -1134,7 +1157,17 @@ paths:
           required: false
           schema:
             type: string
-  /api/v1/memory-proposals/{proposalId}:
+        - in: query
+          name: projectionVersion
+          required: false
+          schema:
+            type: integer
+            enum:
+              - 1
+              - 2
+            default: 1
+          description: "1/default retains exact legacy request/response schemas;2 selects this operation's versioned projection. Unknown400. Scope cursor and keyed fingerprint to normalized selection; no effect on assistantResponseVersion."
+  "/api/v1/memory-proposals/{proposalId}":
     patch:
       tags:
         - Memory
@@ -1197,7 +1230,7 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/ProposalPatch"
-  /api/v1/memory-proposals/{proposalId}/accept:
+  "/api/v1/memory-proposals/{proposalId}/accept":
     post:
       tags:
         - Memory
@@ -1268,7 +1301,7 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/ProposalDecision"
-  /api/v1/memory-proposals/{proposalId}/dismiss:
+  "/api/v1/memory-proposals/{proposalId}/dismiss":
     post:
       tags:
         - Memory
@@ -1339,7 +1372,7 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/ProposalDismiss"
-  /api/v1/memory/{memoryId}:
+  "/api/v1/memory/{memoryId}":
     patch:
       tags:
         - Memory
@@ -1402,7 +1435,7 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/MemoryPatch"
-  /api/v1/memory/{memoryId}/revisions:
+  "/api/v1/memory/{memoryId}/revisions":
     get:
       tags:
         - Memory
@@ -1458,7 +1491,7 @@ paths:
           required: false
           schema:
             type: string
-  /api/v1/ideas/{ideaId}/assumptions:
+  "/api/v1/ideas/{ideaId}/assumptions":
     get:
       tags:
         - Experiments
@@ -1499,7 +1532,7 @@ paths:
           name: ideaId
           required: true
           schema:
-            &schema
+            &schema4
             type: string
             format: uuid
         - in: query
@@ -1560,14 +1593,14 @@ paths:
           name: ideaId
           required: true
           schema:
-            *schema
+            *schema4
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: "#/components/schemas/AssumptionCreate"
-  /api/v1/assumptions/{assumptionId}:
+  "/api/v1/assumptions/{assumptionId}":
     patch:
       tags:
         - Experiments
@@ -1630,7 +1663,7 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/AssumptionPatch"
-  /api/v1/ideas/{ideaId}/experiments:
+  "/api/v1/ideas/{ideaId}/experiments":
     get:
       tags:
         - Experiments
@@ -1638,11 +1671,14 @@ paths:
       operationId: getIdeasIdeaIdExperiments
       responses:
         "200":
-          description: Successful operation
+          description: "Default1 ExperimentList;2 ExperimentListV2;3 ExperimentListV3 with distinct stored hypothesis and nullable unknown title. Exact negotiated schema enforced by application; legacy missing title503."
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ExperimentList"
+                anyOf:
+                  - $ref: "#/components/schemas/ExperimentList"
+                  - $ref: "#/components/schemas/ExperimentListV2"
+                  - $ref: "#/components/schemas/ExperimentListV3"
         "400":
           $ref: "#/components/responses/400"
         "401":
@@ -1665,13 +1701,13 @@ paths:
           $ref: "#/components/responses/500"
         "503":
           $ref: "#/components/responses/503"
-      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      description: "Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses. P4-AM03/04: explicit projectionVersion selects negotiated DTO; default strict legacy unchanged. No-store and current authorization on reads/replay."
       parameters:
         - in: path
           name: ideaId
           required: true
           schema:
-            &schema
+            &schema5
             type: string
             format: uuid
         - in: query
@@ -1687,6 +1723,7 @@ paths:
           required: false
           schema:
             type: string
+        - $ref: "#/components/parameters/ExperimentReadProjection"
     post:
       tags:
         - Experiments
@@ -1694,11 +1731,13 @@ paths:
       operationId: postIdeasIdeaIdExperiments
       responses:
         "201":
-          description: Successful operation
+          description: "Original accepted legacy replay retains Experiment body. Fresh projection3 returns ExperimentReceiptV3 operational acceptance; full private fields via authorized list3. Fresh default1 is rejected409 EXPERIMENT_HYPOTHESIS_REQUIRED, not an incomplete draft."
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Experiment"
+                anyOf:
+                  - $ref: "#/components/schemas/Experiment"
+                  - $ref: "#/components/schemas/ExperimentReceiptV3"
           headers:
             ETag:
               description: Strong entity-version ETag
@@ -1732,7 +1771,7 @@ paths:
           name: ideaId
           required: true
           schema:
-            *schema
+            *schema5
         - in: header
           name: Idempotency-Key
           required: true
@@ -1741,13 +1780,16 @@ paths:
             type: string
             minLength: 8
             maxLength: 128
+        - $ref: "#/components/parameters/ExperimentWriteProjection"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ExperimentCreate"
-  /api/v1/experiments/{experimentId}:
+              anyOf:
+                - $ref: "#/components/schemas/ExperimentCreate"
+                - $ref: "#/components/schemas/ExperimentCreateV3"
+  "/api/v1/experiments/{experimentId}":
     patch:
       tags:
         - Experiments
@@ -1755,11 +1797,13 @@ paths:
       operationId: patchExperimentsExperimentId
       responses:
         "200":
-          description: Successful operation
+          description: "Default1 exact Experiment;3 ExperimentV3. Existing If-Match CAS and state guards; title only updates plan.title, never hypothesis. Unsupported legacy plan409 LEGACY_PLAN_REQUIRES_REVIEW."
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Experiment"
+                anyOf:
+                  - $ref: "#/components/schemas/Experiment"
+                  - $ref: "#/components/schemas/ExperimentV3"
           headers:
             ETag:
               description: Strong entity-version ETag
@@ -1804,13 +1848,16 @@ paths:
           schema:
             type: string
             pattern: "^\"v[0-9]+\"$"
+        - $ref: "#/components/parameters/ExperimentWriteProjection"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ExperimentPatch"
-  /api/v1/experiments/{experimentId}/learnings:
+              anyOf:
+                - $ref: "#/components/schemas/ExperimentPatch"
+                - $ref: "#/components/schemas/ExperimentPatchV3"
+  "/api/v1/experiments/{experimentId}/learnings":
     post:
       tags:
         - Experiments
@@ -1818,11 +1865,14 @@ paths:
       operationId: postExperimentsExperimentIdLearnings
       responses:
         "201":
-          description: Successful operation
+          description: "Default1 Learning;2 LearningV2;3 LearningV3. All accepted creates atomically capture the distinct owner-scoped evidence set and marker=true; exact original response replay after authorization."
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Learning"
+                anyOf:
+                  - $ref: "#/components/schemas/Learning"
+                  - $ref: "#/components/schemas/LearningV2"
+                  - $ref: "#/components/schemas/LearningV3"
         "400":
           $ref: "#/components/responses/400"
         "401":
@@ -1845,7 +1895,7 @@ paths:
           $ref: "#/components/responses/500"
         "503":
           $ref: "#/components/responses/503"
-      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      description: "Owner session Bearer,ACTIVE roots and same-idea experiment/evidence authorization.1 requires reflection;2/3 interpretation and optional nullable observation. Wrong selector/body400,foreign/missing evidence404,no partial writes. Learning+distinct links+marker+ledger commit atomically; no AssumptionEvidence mutation. All versions accept evidenceIds after validated schema/writer rollout; no raw text in recovery/ledger."
       parameters:
         - in: path
           name: experimentId
@@ -1861,13 +1911,17 @@ paths:
             type: string
             minLength: 8
             maxLength: 128
+        - $ref: "#/components/parameters/LearningProjection"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/LearningCreate"
-  /api/v1/ideas/{ideaId}/learnings:
+              anyOf:
+                - $ref: "#/components/schemas/LearningCreate"
+                - $ref: "#/components/schemas/LearningCreateV2"
+                - $ref: "#/components/schemas/LearningCreateV3"
+  "/api/v1/ideas/{ideaId}/learnings":
     get:
       tags:
         - Experiments
@@ -1875,11 +1929,14 @@ paths:
       operationId: getIdeasIdeaIdLearnings
       responses:
         "200":
-          description: Successful operation
+          description: "Default1 LearningList;2 LearningListV2;3 LearningListV3. Existing response shapes unchanged.3 distinguishes legacy unknown membership(null) from captured empty array."
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/LearningList"
+                anyOf:
+                  - $ref: "#/components/schemas/LearningList"
+                  - $ref: "#/components/schemas/LearningListV2"
+                  - $ref: "#/components/schemas/LearningListV3"
         "400":
           $ref: "#/components/responses/400"
         "401":
@@ -1902,7 +1959,7 @@ paths:
           $ref: "#/components/responses/500"
         "503":
           $ref: "#/components/responses/503"
-      description: Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses.
+      description: "Requires valid Clerk session and resource-level authorization. Other-owner resource IDs yield privacy-preserving 404. Provider and database failures must not produce partial authorization bypasses. P4-AM03/04: explicit projectionVersion selects negotiated DTO; default strict legacy unchanged. No-store and current authorization on reads/replay."
       parameters:
         - in: path
           name: ideaId
@@ -1923,7 +1980,8 @@ paths:
           required: false
           schema:
             type: string
-  /api/v1/ideas/{ideaId}/evidence:
+        - $ref: "#/components/parameters/LearningProjection"
+  "/api/v1/ideas/{ideaId}/evidence":
     get:
       tags:
         - Research
@@ -1979,7 +2037,7 @@ paths:
           required: false
           schema:
             type: string
-  /api/v1/ideas/{ideaId}/research-jobs:
+  "/api/v1/ideas/{ideaId}/research-jobs":
     get:
       tags:
         - Research
@@ -2020,7 +2078,7 @@ paths:
           name: ideaId
           required: true
           schema:
-            &schema
+            &schema6
             type: string
             format: uuid
         - in: query
@@ -2082,7 +2140,7 @@ paths:
           name: ideaId
           required: true
           schema:
-            *schema
+            *schema6
         - in: header
           name: Idempotency-Key
           required: true
@@ -2097,7 +2155,7 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/ResearchRequest"
-  /api/v1/research-jobs/{researchJobId}:
+  "/api/v1/research-jobs/{researchJobId}":
     get:
       tags:
         - Research
@@ -2140,7 +2198,7 @@ paths:
           schema:
             type: string
             format: uuid
-  /api/v1/assumptions/{assumptionId}/evidence-links:
+  "/api/v1/assumptions/{assumptionId}/evidence-links":
     post:
       tags:
         - Research
@@ -2189,7 +2247,60 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/EvidenceLinkCreate"
-  /api/v1/assumptions/{assumptionId}/evidence-links/{evidenceId}:
+    get:
+      tags:
+        - Research
+      summary: List authorized assumption evidence relationships
+      operationId: getAssumptionsAssumptionIdEvidenceLinks
+      responses:
+        "200":
+          description: "Relationship-only page; empty authorized set returns200 items[]."
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvidenceLinkList"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: "P4-AM04 pure owner-authorized same-idea relationship read. Clerk session Bearer, ACTIVE account/idea. Stable (createdAt,evidenceId) opaque cursor bound to principal/idea/assumption; limit1..100 default25. No total count inferred from one page; no note/raw source body, no external fetch or trust change. No-store, no If-Match/Idempotency-Key;400 invalid scope cursor/UUID,401 invalid session,403 blocked lifecycle,404 foreign/missing assumption,429 rate,500/503 safe failure."
+      parameters:
+        - in: path
+          name: assumptionId
+          required: true
+          schema:
+            &schema10
+            type: string
+            format: uuid
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+        - in: query
+          name: cursor
+          required: false
+          schema:
+            type: string
+  "/api/v1/assumptions/{assumptionId}/evidence-links/{evidenceId}":
     delete:
       tags:
         - Research
@@ -2226,15 +2337,15 @@ paths:
           name: assumptionId
           required: true
           schema:
-            &schema
+            &schema7
             type: string
             format: uuid
         - in: path
           name: evidenceId
           required: true
           schema:
-            *schema
-  /api/v1/ideas/{ideaId}/snapshots:
+            *schema7
+  "/api/v1/ideas/{ideaId}/snapshots":
     get:
       tags:
         - Documents
@@ -2275,7 +2386,7 @@ paths:
           name: ideaId
           required: true
           schema:
-            &schema
+            &schema8
             type: string
             format: uuid
         - in: query
@@ -2336,7 +2447,7 @@ paths:
           name: ideaId
           required: true
           schema:
-            *schema
+            *schema8
         - in: header
           name: Idempotency-Key
           required: true
@@ -2351,7 +2462,7 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/SnapshotCreate"
-  /api/v1/snapshots/{snapshotId}:
+  "/api/v1/snapshots/{snapshotId}":
     get:
       tags:
         - Documents
@@ -2397,7 +2508,7 @@ paths:
           name: snapshotId
           required: true
           schema:
-            &schema
+            &schema9
             type: string
             format: uuid
     patch:
@@ -2447,7 +2558,7 @@ paths:
           name: snapshotId
           required: true
           schema:
-            *schema
+            *schema9
         - in: header
           name: If-Match
           required: true
@@ -2461,7 +2572,7 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/SnapshotPatch"
-  /api/v1/snapshots/{snapshotId}/approve:
+  "/api/v1/snapshots/{snapshotId}/approve":
     post:
       tags:
         - Documents
@@ -2532,7 +2643,7 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/SnapshotApprove"
-  /api/v1/snapshots/{snapshotId}/exports:
+  "/api/v1/snapshots/{snapshotId}/exports":
     post:
       tags:
         - Documents
@@ -2595,7 +2706,7 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/ExportCreate"
-  /api/v1/exports/{exportId}:
+  "/api/v1/exports/{exportId}":
     get:
       tags:
         - Documents
@@ -2638,7 +2749,7 @@ paths:
           schema:
             type: string
             format: uuid
-  /api/v1/exports/{exportId}/download-grant:
+  "/api/v1/exports/{exportId}/download-grant":
     post:
       tags:
         - Documents
@@ -2753,13 +2864,57 @@ paths:
             type: string
             minLength: 1
       description: "Raw bytes verified by pinned Clerk Express verifyWebhook before JSON use. svix-id dedupe is durable; same event ID/different body 409. Allowlisted user.created/user.updated/user.deleted; no webhook provisioning/reactivation. user.deleted gates/tombstones in same acceptance transaction. 204 after inbox+outbox commit, 503 rollback/transient DB. Security design section 16 governs."
+  "/api/v1/conversations/{conversationId}/submissions/{clientSubmissionId}":
+    get:
+      tags:
+        - Conversation
+      summary: Read original submission correlation
+      operationId: getConversationsConversationIdSubmissionsClientSubmissionId
+      responses:
+        "200":
+          description: Committed original correlation only; current generation status remains a separate authorized GET.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubmissionCorrelation"
+        "400":
+          $ref: "#/components/responses/400"
+        "401":
+          $ref: "#/components/responses/401"
+        "403":
+          $ref: "#/components/responses/403"
+        "404":
+          $ref: "#/components/responses/404"
+        "429":
+          $ref: "#/components/responses/429"
+        "500":
+          $ref: "#/components/responses/500"
+        "503":
+          $ref: "#/components/responses/503"
+      description: "P4-AM01. Clerk session Bearer; local account/idea ACTIVE, conversation owner/same idea. Pure PostgreSQL read of USER clientSubmissionKey and original attemptNumber=1. No queue/Redis/LLM or mutation.404 neutral/inconclusive, never resend permission;403 blocked known lifecycle;400 invalid UUID/query;503 safe infrastructure/invariant uncertainty. Cache-Control:no-store. No If-Match/Idempotency-Key."
+      parameters:
+        - in: path
+          name: conversationId
+          required: true
+          schema:
+            *schema10
+        - in: path
+          name: clientSubmissionId
+          required: true
+          schema:
+            *schema10
 components:
   securitySchemes:
     ClerkSession:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: Verified Clerk session token, never a user-controlled internal owner ID
+      description: "Verified Clerk session token, never a user-controlled internal owner ID"
   schemas:
     Error:
       type: object
@@ -2788,28 +2943,28 @@ components:
                   reason:
                     type: string
                 required:
-                - path
-                - reason
+                  - path
+                  - reason
           required:
-          - code
-          - message
-          - requestId
-          - retryable
+            - code
+            - message
+            - requestId
+            - retryable
       required:
-      - error
+        - error
     Pagination:
       type: object
       additionalProperties: false
       properties:
         nextCursor:
           type:
-          - string
-          - 'null'
+            - string
+            - "null"
         hasMore:
           type: boolean
       required:
-      - nextCursor
-      - hasMore
+        - nextCursor
+        - hasMore
     UserAccount:
       type: object
       additionalProperties: false
@@ -2916,28 +3071,32 @@ components:
       type: object
       additionalProperties: false
       properties:
-        id: {"type":"string","format":"uuid"}
-        conversationId: {"type":"string","format":"uuid"}
+        id:
+          type: string
+          format: uuid
+        conversationId:
+          type: string
+          format: uuid
         sequence:
           type: integer
           minimum: 1
         role:
           type: string
           enum:
-          - USER
-          - ASSISTANT
+            - USER
+            - ASSISTANT
         content:
           type: string
         createdAt:
           type: string
           format: date-time
       required:
-      - id
-      - conversationId
-      - sequence
-      - role
-      - content
-      - createdAt
+        - id
+        - conversationId
+        - sequence
+        - role
+        - content
+        - createdAt
     Generation:
       type: object
       additionalProperties: false
@@ -3021,47 +3180,55 @@ components:
       type: object
       additionalProperties: false
       properties:
-        id: {"type":"string","format":"uuid"}
-        ideaId: {"type":"string","format":"uuid"}
+        id:
+          type: string
+          format: uuid
+        ideaId:
+          type: string
+          format: uuid
         kind:
           type: string
           enum:
-          - FACT
-          - HYPOTHESIS
-          - DECISION
-          - LEARNING
-          - CORRECTION
+            - FACT
+            - HYPOTHESIS
+            - DECISION
+            - LEARNING
+            - CORRECTION
         proposedText:
           type: string
         status:
           type: string
           enum:
-          - PROPOSED
-          - ACCEPTED
-          - EDITED_AND_ACCEPTED
-          - DISMISSED
-          - INVALIDATED
+            - PROPOSED
+            - ACCEPTED
+            - EDITED_AND_ACCEPTED
+            - DISMISSED
+            - INVALIDATED
         version:
           type: integer
           minimum: 1
       required:
-      - id
-      - ideaId
-      - kind
-      - status
+        - id
+        - ideaId
+        - kind
+        - status
     ConfirmedMemory:
       type: object
       additionalProperties: false
       properties:
-        id: {"type":"string","format":"uuid"}
-        ideaId: {"type":"string","format":"uuid"}
+        id:
+          type: string
+          format: uuid
+        ideaId:
+          type: string
+          format: uuid
         kind:
           type: string
           enum:
-          - FACT
-          - HYPOTHESIS
-          - DECISION
-          - LEARNING
+            - FACT
+            - HYPOTHESIS
+            - DECISION
+            - LEARNING
         text:
           type: string
         version:
@@ -3070,21 +3237,25 @@ components:
         status:
           type: string
           enum:
-          - ACTIVE
-          - REMOVED
+            - ACTIVE
+            - REMOVED
       required:
-      - id
-      - ideaId
-      - kind
-      - text
-      - version
-      - status
+        - id
+        - ideaId
+        - kind
+        - text
+        - version
+        - status
     MemoryRevision:
       type: object
       additionalProperties: false
       properties:
-        id: {"type":"string","format":"uuid"}
-        memoryId: {"type":"string","format":"uuid"}
+        id:
+          type: string
+          format: uuid
+        memoryId:
+          type: string
+          format: uuid
         version:
           type: integer
           minimum: 1
@@ -3094,45 +3265,53 @@ components:
           type: string
           format: date-time
       required:
-      - id
-      - memoryId
-      - version
-      - text
+        - id
+        - memoryId
+        - version
+        - text
     Assumption:
       type: object
       additionalProperties: false
       properties:
-        id: {"type":"string","format":"uuid"}
-        ideaId: {"type":"string","format":"uuid"}
+        id:
+          type: string
+          format: uuid
+        ideaId:
+          type: string
+          format: uuid
         statement:
           type: string
         status:
           type: string
           enum:
-          - PROPOSED
-          - ACTIVE
-          - REVISED
-          - ARCHIVED
-          - DISMISSED
+            - PROPOSED
+            - ACTIVE
+            - REVISED
+            - ARCHIVED
+            - DISMISSED
         version:
           type: integer
           minimum: 1
       required:
-      - id
-      - ideaId
-      - statement
-      - status
-      - version
+        - id
+        - ideaId
+        - statement
+        - status
+        - version
     Experiment:
       type: object
       additionalProperties: false
       properties:
-        id: {"type":"string","format":"uuid"}
-        ideaId: {"type":"string","format":"uuid"}
+        id:
+          type: string
+          format: uuid
+        ideaId:
+          type: string
+          format: uuid
         assumptionId:
           type:
-          - string
-          - 'null'
+            - string
+            - "null"
           format: uuid
         title:
           type: string
@@ -3140,60 +3319,68 @@ components:
         status:
           type: string
           enum:
-          - SUGGESTED
-          - PLANNED
-          - IN_PROGRESS
-          - COMPLETED
-          - CANCELLED
+            - SUGGESTED
+            - PLANNED
+            - IN_PROGRESS
+            - COMPLETED
+            - CANCELLED
         version:
           type: integer
           minimum: 1
       required:
-      - id
-      - ideaId
-      - title
-      - status
-      - version
+        - id
+        - ideaId
+        - title
+        - status
+        - version
     Learning:
       type: object
       additionalProperties: false
       properties:
-        id: {"type":"string","format":"uuid"}
-        ideaId: {"type":"string","format":"uuid"}
+        id:
+          type: string
+          format: uuid
+        ideaId:
+          type: string
+          format: uuid
         experimentId:
           type:
-          - string
-          - 'null'
+            - string
+            - "null"
           format: uuid
         reflection:
           type: string
       required:
-      - id
-      - ideaId
-      - reflection
+        - id
+        - ideaId
+        - reflection
     ResearchJob:
       type: object
       additionalProperties: false
       properties:
-        id: {"type":"string","format":"uuid"}
-        ideaId: {"type":"string","format":"uuid"}
+        id:
+          type: string
+          format: uuid
+        ideaId:
+          type: string
+          format: uuid
         status:
           type: string
           enum:
-          - QUEUED
-          - RUNNING
-          - SUCCEEDED
-          - INSUFFICIENT_EVIDENCE
-          - FAILED
-          - LIMIT_REACHED
-          - CANCELLED
+            - QUEUED
+            - RUNNING
+            - SUCCEEDED
+            - INSUFFICIENT_EVIDENCE
+            - FAILED
+            - LIMIT_REACHED
+            - CANCELLED
         createdAt:
           type: string
           format: date-time
       required:
-      - id
-      - ideaId
-      - status
+        - id
+        - ideaId
+        - status
     Evidence:
       type: object
       additionalProperties: false
@@ -3281,18 +3468,22 @@ components:
       type: object
       additionalProperties: false
       properties:
-        assumptionId: {"type":"string","format":"uuid"}
-        evidenceId: {"type":"string","format":"uuid"}
+        assumptionId:
+          type: string
+          format: uuid
+        evidenceId:
+          type: string
+          format: uuid
         relationship:
           type: string
           enum:
-          - SUPPORTS
-          - CHALLENGES
-          - INCONCLUSIVE
+            - SUPPORTS
+            - CHALLENGES
+            - INCONCLUSIVE
       required:
-      - assumptionId
-      - evidenceId
-      - relationship
+        - assumptionId
+        - evidenceId
+        - relationship
     DocumentSnapshot:
       type: object
       additionalProperties: false
@@ -3479,8 +3670,8 @@ components:
           type: string
           format: date-time
       required:
-      - url
-      - expiresAt
+        - url
+        - expiresAt
     PreferencesPatch:
       type: object
       additionalProperties: false
@@ -3488,8 +3679,8 @@ components:
         language:
           type: string
           enum:
-          - en
-          - hinglish
+            - en
+            - hinglish
         researchEnabled:
           type: boolean
     DataOperationCreate:
@@ -3561,7 +3752,7 @@ components:
           type: string
           maxLength: 5000
       required:
-      - title
+        - title
     IdeaPatch:
       type: object
       additionalProperties: false
@@ -3571,13 +3762,13 @@ components:
           maxLength: 200
         summary:
           type:
-          - string
-          - 'null'
+            - string
+            - "null"
         status:
           type: string
           enum:
-          - ACTIVE
-          - ARCHIVED
+            - ACTIVE
+            - ARCHIVED
     ConversationCreate:
       type: object
       additionalProperties: false
@@ -3599,27 +3790,31 @@ components:
         status:
           type: string
           enum:
-          - ACTIVE
-          - ARCHIVED
+            - ACTIVE
+            - ARCHIVED
     MessageCreate:
       type: object
       additionalProperties: false
       properties:
-        clientSubmissionId: {"type":"string","format":"uuid"}
+        clientSubmissionId:
+          type: string
+          format: uuid
         content:
           type: string
           minLength: 1
           maxLength: 10000
       required:
-      - clientSubmissionId
-      - content
+        - clientSubmissionId
+        - content
     RegenerationCreate:
       type: object
       additionalProperties: false
       properties:
-        triggerMessageId: {"type":"string","format":"uuid"}
+        triggerMessageId:
+          type: string
+          format: uuid
       required:
-      - triggerMessageId
+        - triggerMessageId
     ProposalPatch:
       type: object
       additionalProperties: false
@@ -3629,7 +3824,7 @@ components:
           minLength: 1
           maxLength: 5000
       required:
-      - proposedText
+        - proposedText
     ProposalDecision:
       type: object
       additionalProperties: false
@@ -3677,7 +3872,7 @@ components:
           minLength: 1
           maxLength: 5000
       required:
-      - statement
+        - statement
     AssumptionPatch:
       type: object
       additionalProperties: false
@@ -3688,10 +3883,10 @@ components:
         status:
           type: string
           enum:
-          - ACTIVE
-          - REVISED
-          - ARCHIVED
-          - DISMISSED
+            - ACTIVE
+            - REVISED
+            - ARCHIVED
+            - DISMISSED
     ExperimentCreate:
       type: object
       additionalProperties: false
@@ -3700,7 +3895,9 @@ components:
           type: string
           minLength: 1
           maxLength: 200
-        assumptionId: {"type":"string","format":"uuid"}
+        assumptionId:
+          type: string
+          format: uuid
         method:
           type: string
           maxLength: 5000
@@ -3708,8 +3905,8 @@ components:
           type: string
           maxLength: 2000
       required:
-      - title
-      - method
+        - title
+        - method
     ExperimentPatch:
       type: object
       additionalProperties: false
@@ -3723,10 +3920,10 @@ components:
         status:
           type: string
           enum:
-          - PLANNED
-          - IN_PROGRESS
-          - COMPLETED
-          - CANCELLED
+            - PLANNED
+            - IN_PROGRESS
+            - COMPLETED
+            - CANCELLED
     LearningCreate:
       type: object
       additionalProperties: false
@@ -3738,9 +3935,11 @@ components:
         evidenceIds:
           type: array
           maxItems: 20
-          items: {"type":"string","format":"uuid"}
+          items:
+            type: string
+            format: uuid
       required:
-      - reflection
+        - reflection
     ResearchRequest:
       type: object
       additionalProperties: false
@@ -3753,21 +3952,23 @@ components:
           type: string
           maxLength: 200
       required:
-      - question
+        - question
     EvidenceLinkCreate:
       type: object
       additionalProperties: false
       properties:
-        evidenceId: {"type":"string","format":"uuid"}
+        evidenceId:
+          type: string
+          format: uuid
         relationship:
           type: string
           enum:
-          - SUPPORTS
-          - CHALLENGES
-          - INCONCLUSIVE
+            - SUPPORTS
+            - CHALLENGES
+            - INCONCLUSIVE
       required:
-      - evidenceId
-      - relationship
+        - evidenceId
+        - relationship
     SnapshotCreate:
       type: object
       additionalProperties: false
@@ -3792,7 +3993,7 @@ components:
           type: boolean
           const: true
       required:
-      - confirmed
+        - confirmed
     ExportCreate:
       type: object
       additionalProperties: false
@@ -3801,7 +4002,7 @@ components:
           type: string
           const: pdf
       required:
-      - format
+        - format
     IdeaList:
       type: object
       additionalProperties: false
@@ -3809,12 +4010,12 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/Idea'
+            $ref: "#/components/schemas/Idea"
         page:
-          $ref: '#/components/schemas/Pagination'
+          $ref: "#/components/schemas/Pagination"
       required:
-      - items
-      - page
+        - items
+        - page
     ConversationList:
       type: object
       additionalProperties: false
@@ -3822,12 +4023,12 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/Conversation'
+            $ref: "#/components/schemas/Conversation"
         page:
-          $ref: '#/components/schemas/Pagination'
+          $ref: "#/components/schemas/Pagination"
       required:
-      - items
-      - page
+        - items
+        - page
     MessageList:
       type: object
       additionalProperties: false
@@ -3835,12 +4036,12 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/Message'
+            $ref: "#/components/schemas/Message"
         page:
-          $ref: '#/components/schemas/Pagination'
+          $ref: "#/components/schemas/Pagination"
       required:
-      - items
-      - page
+        - items
+        - page
     MemoryList:
       type: object
       additionalProperties: false
@@ -3848,12 +4049,12 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/ConfirmedMemory'
+            $ref: "#/components/schemas/ConfirmedMemory"
         page:
-          $ref: '#/components/schemas/Pagination'
+          $ref: "#/components/schemas/Pagination"
       required:
-      - items
-      - page
+        - items
+        - page
     ProposalList:
       type: object
       additionalProperties: false
@@ -3861,12 +4062,12 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/MemoryProposal'
+            $ref: "#/components/schemas/MemoryProposal"
         page:
-          $ref: '#/components/schemas/Pagination'
+          $ref: "#/components/schemas/Pagination"
       required:
-      - items
-      - page
+        - items
+        - page
     MemoryRevisionList:
       type: object
       additionalProperties: false
@@ -3874,12 +4075,12 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/MemoryRevision'
+            $ref: "#/components/schemas/MemoryRevision"
         page:
-          $ref: '#/components/schemas/Pagination'
+          $ref: "#/components/schemas/Pagination"
       required:
-      - items
-      - page
+        - items
+        - page
     AssumptionList:
       type: object
       additionalProperties: false
@@ -3887,12 +4088,12 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/Assumption'
+            $ref: "#/components/schemas/Assumption"
         page:
-          $ref: '#/components/schemas/Pagination'
+          $ref: "#/components/schemas/Pagination"
       required:
-      - items
-      - page
+        - items
+        - page
     ExperimentList:
       type: object
       additionalProperties: false
@@ -3900,12 +4101,12 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/Experiment'
+            $ref: "#/components/schemas/Experiment"
         page:
-          $ref: '#/components/schemas/Pagination'
+          $ref: "#/components/schemas/Pagination"
       required:
-      - items
-      - page
+        - items
+        - page
     LearningList:
       type: object
       additionalProperties: false
@@ -3913,12 +4114,12 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/Learning'
+            $ref: "#/components/schemas/Learning"
         page:
-          $ref: '#/components/schemas/Pagination'
+          $ref: "#/components/schemas/Pagination"
       required:
-      - items
-      - page
+        - items
+        - page
     EvidenceList:
       type: object
       additionalProperties: false
@@ -3926,12 +4127,12 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/Evidence'
+            $ref: "#/components/schemas/Evidence"
         page:
-          $ref: '#/components/schemas/Pagination'
+          $ref: "#/components/schemas/Pagination"
       required:
-      - items
-      - page
+        - items
+        - page
     ResearchJobList:
       type: object
       additionalProperties: false
@@ -3939,12 +4140,12 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/ResearchJob'
+            $ref: "#/components/schemas/ResearchJob"
         page:
-          $ref: '#/components/schemas/Pagination'
+          $ref: "#/components/schemas/Pagination"
       required:
-      - items
-      - page
+        - items
+        - page
     SnapshotList:
       type: object
       additionalProperties: false
@@ -3952,12 +4153,12 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/DocumentSnapshot'
+            $ref: "#/components/schemas/DocumentSnapshot"
         page:
-          $ref: '#/components/schemas/Pagination'
+          $ref: "#/components/schemas/Pagination"
       required:
-      - items
-      - page
+        - items
+        - page
     SnapshotContent:
       type: object
       additionalProperties: false
@@ -4108,6 +4309,817 @@ components:
         - periodEnd
         - trust
         - limitations
+    AssistantCitation:
+      type: object
+      additionalProperties: false
+      properties:
+        claimText:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        evidenceId:
+          type: string
+          format: uuid
+        qualification:
+          type: string
+          minLength: 1
+          maxLength: 1000
+      required:
+        - claimText
+        - evidenceId
+    AssumptionResponseCard:
+      type: object
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          const: assumption
+        statement:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        whyItMatters:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        suggestedTest:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        assumptionId:
+          type: string
+          format: uuid
+      required:
+        - type
+        - statement
+        - whyItMatters
+    EvidenceResponseCard:
+      type: object
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          const: evidence
+        finding:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        evidenceIds:
+          type: array
+          minItems: 1
+          maxItems: 6
+          items:
+            type: string
+            format: uuid
+          uniqueItems: true
+        scope:
+          type: string
+          minLength: 1
+          maxLength: 500
+        limitations:
+          type: array
+          minItems: 0
+          maxItems: 6
+          items:
+            type: string
+            minLength: 1
+            maxLength: 1000
+      required:
+        - type
+        - finding
+        - evidenceIds
+        - scope
+        - limitations
+    ComparisonResponseCard:
+      type: object
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          const: comparison
+        options:
+          type: array
+          minItems: 2
+          maxItems: 4
+          items:
+            type: object
+            additionalProperties: false
+            properties:
+              id:
+                type: string
+                minLength: 1
+                maxLength: 64
+              label:
+                type: string
+                minLength: 1
+                maxLength: 200
+              summary:
+                type: string
+                minLength: 1
+                maxLength: 1000
+            required:
+              - id
+              - label
+              - summary
+        criteria:
+          type: array
+          minItems: 1
+          maxItems: 6
+          items:
+            type: object
+            additionalProperties: false
+            properties:
+              id:
+                type: string
+                minLength: 1
+                maxLength: 64
+              label:
+                type: string
+                minLength: 1
+                maxLength: 200
+              values:
+                type: array
+                minItems: 2
+                maxItems: 4
+                items:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    optionId:
+                      type: string
+                      minLength: 1
+                      maxLength: 64
+                    text:
+                      type: string
+                      minLength: 1
+                      maxLength: 1000
+                  required:
+                    - optionId
+                    - text
+            required:
+              - id
+              - label
+              - values
+        unknowns:
+          type: array
+          minItems: 0
+          maxItems: 10
+          items:
+            type: string
+            minLength: 1
+            maxLength: 1000
+      required:
+        - type
+        - options
+        - criteria
+        - unknowns
+    ExperimentResponseCard:
+      type: object
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          const: experiment
+        hypothesis:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        plan:
+          type: string
+          minLength: 1
+          maxLength: 3000
+        successSignals:
+          type: array
+          minItems: 1
+          maxItems: 6
+          items:
+            type: string
+            minLength: 1
+            maxLength: 1000
+        timebox:
+          type: string
+          minLength: 1
+          maxLength: 200
+        constraints:
+          type: array
+          minItems: 0
+          maxItems: 6
+          items:
+            type: string
+            minLength: 1
+            maxLength: 500
+        assumptionId:
+          type: string
+          format: uuid
+      required:
+        - type
+        - hypothesis
+        - plan
+        - successSignals
+        - timebox
+    ResponseCard:
+      oneOf:
+        - $ref: "#/components/schemas/AssumptionResponseCard"
+        - $ref: "#/components/schemas/EvidenceResponseCard"
+        - $ref: "#/components/schemas/ComparisonResponseCard"
+        - $ref: "#/components/schemas/ExperimentResponseCard"
+      discriminator:
+        propertyName: type
+        mapping:
+          assumption: "#/components/schemas/AssumptionResponseCard"
+          evidence: "#/components/schemas/EvidenceResponseCard"
+          comparison: "#/components/schemas/ComparisonResponseCard"
+          experiment: "#/components/schemas/ExperimentResponseCard"
+    AssistantAction:
+      type: object
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          enum:
+            - VIEW_EVIDENCE
+            - OPEN_MEMORY_REVIEW
+            - OPEN_EXPERIMENT_DRAFT
+            - REQUEST_RESEARCH
+        label:
+          type: string
+          minLength: 1
+          maxLength: 120
+        resourceId:
+          type: string
+          format: uuid
+      required:
+        - type
+        - label
+      description: Presentation intent only. Server validates allowed resource/type/idea. Rendering/clicking is not domain approval; explicit existing authorized command is required.
+    AssistantResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        schemaVersion:
+          type: integer
+          const: 1
+        primaryStrategy:
+          type: string
+          enum:
+            - EXPLORE
+            - CHALLENGE
+            - INFORM
+            - COMPARE
+            - ACT
+            - REFLECT
+        card:
+          $ref: "#/components/schemas/ResponseCard"
+        citationRefs:
+          type: array
+          minItems: 0
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/AssistantCitation"
+        proposalIds:
+          type: array
+          minItems: 0
+          maxItems: 3
+          items:
+            type: string
+            format: uuid
+          uniqueItems: true
+        nextQuestion:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        actions:
+          type: array
+          minItems: 0
+          maxItems: 2
+          items:
+            $ref: "#/components/schemas/AssistantAction"
+      required:
+        - schemaVersion
+        - primaryStrategy
+        - citationRefs
+        - proposalIds
+        - actions
+      description: Approved versioned response principle P3-P01; exact field/count bounds are provisional engineering settings. Zero or one optional card; text is Message.content. No prompt/metadata/hidden reasoning. Server validates all evidence/proposals/resources in same idea and text-source support.
+    StructuredMessage:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        conversationId:
+          type: string
+          format: uuid
+        sequence:
+          type: integer
+          minimum: 1
+        role:
+          type: string
+          enum:
+            - USER
+            - ASSISTANT
+        content:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        assistantContent:
+          $ref: "#/components/schemas/AssistantResponse"
+      required:
+        - id
+        - conversationId
+        - sequence
+        - role
+        - content
+        - createdAt
+      allOf:
+        - if:
+            properties:
+              role:
+                const: USER
+            required:
+              - role
+          then:
+            not:
+              required:
+                - assistantContent
+      description: Opt-in representation 2 only; same legacy fields/content:string. assistantContent only for validated ASSISTANT format-v2 rows; absent on USER/legacy rows. No invented historical strategy/card data.
+    StructuredMessageList:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/StructuredMessage"
+        page:
+          $ref: "#/components/schemas/Pagination"
+      required:
+        - items
+        - page
+    SubmissionCorrelation:
+      type: object
+      additionalProperties: false
+      properties:
+        clientSubmissionId:
+          *schema10
+        messageId:
+          *schema10
+        generationId:
+          *schema10
+        statusUrl:
+          type: string
+          format: uri-reference
+        eventsUrl:
+          type: string
+          format: uri-reference
+      required:
+        - clientSubmissionId
+        - messageId
+        - generationId
+        - statusUrl
+        - eventsUrl
+      description: "P4-AM01: read-only correlation to original attemptNumber=1, never latest regeneration or proof of current status. Neutral404 is not proof of noncommit. No request text or paid work."
+    ProposalSource:
+      type: object
+      additionalProperties: false
+      properties:
+        availability:
+          type: string
+          enum:
+            - AVAILABLE
+            - UNAVAILABLE
+            - UNKNOWN
+        messageId:
+          &messageId1
+          type:
+            - string
+            - "null"
+          format: uuid
+        conversationId:
+          *messageId1
+        messageRole:
+          type:
+            - string
+            - "null"
+          enum:
+            - USER
+            - ASSISTANT
+            - null
+      required:
+        - availability
+        - messageId
+        - conversationId
+        - messageRole
+      allOf:
+        - if:
+            properties:
+              availability:
+                const: AVAILABLE
+            required:
+              - availability
+          then:
+            properties:
+              messageId:
+                *schema10
+              conversationId:
+                *schema10
+              messageRole:
+                type: string
+                enum:
+                  - USER
+                  - ASSISTANT
+          else:
+            properties:
+              messageId:
+                type: "null"
+              conversationId:
+                type: "null"
+              messageRole:
+                type: "null"
+      description: "Server-authorized source identity only, no excerpt/raw provenance JSON. UNKNOWN means no recorded source; UNAVAILABLE collapses missing/deleted/ineligible/foreign source and exposes no IDs/role. Author role is not verification or confirmation."
+    MemoryProposalV2:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        ideaId:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum:
+            - FACT
+            - HYPOTHESIS
+            - DECISION
+            - LEARNING
+            - CORRECTION
+        proposedText:
+          type: string
+          minLength: 1
+          maxLength: 5000
+        status:
+          type: string
+          enum:
+            - PROPOSED
+            - ACCEPTED
+            - EDITED_AND_ACCEPTED
+            - DISMISSED
+            - INVALIDATED
+        version:
+          type: integer
+          minimum: 1
+        source:
+          $ref: "#/components/schemas/ProposalSource"
+      required:
+        - id
+        - ideaId
+        - kind
+        - proposedText
+        - status
+        - version
+        - source
+      description: "Explicit projectionVersion=2 only. version maps persisted proposal.version, proposedText=candidate.text. No invented legacy text/version, metadata or owner acceptance. Active same-idea authorization applies to every source."
+    ProposalListV2:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/MemoryProposalV2"
+        page:
+          $ref: "#/components/schemas/Pagination"
+      required:
+        - items
+        - page
+    ExperimentV2:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        ideaId:
+          type: string
+          format: uuid
+        assumptionId:
+          type:
+            - string
+            - "null"
+          format: uuid
+        title:
+          type: string
+          maxLength: 200
+        status:
+          type: string
+          enum:
+            - SUGGESTED
+            - PLANNED
+            - IN_PROGRESS
+            - COMPLETED
+            - CANCELLED
+        version:
+          type: integer
+          minimum: 1
+        method:
+          type:
+            - string
+            - "null"
+          maxLength: 5000
+        successCriteria:
+          type:
+            - string
+            - "null"
+          maxLength: 2000
+      required:
+        - id
+        - ideaId
+        - title
+        - status
+        - version
+        - method
+        - successCriteria
+      description: "Unchanged projection2 shape. title from plan.title only; unknown title cannot become null in this view(503). method/criteria supported string or null. P4-B01 resolved by explicit creation3, never inferred hypothesis."
+    ExperimentListV2:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExperimentV2"
+        page:
+          $ref: "#/components/schemas/Pagination"
+      required:
+        - items
+        - page
+    LearningCreateV2:
+      type: object
+      additionalProperties: false
+      properties:
+        observation:
+          type:
+            - string
+            - "null"
+          maxLength: 10000
+        interpretation:
+          type: string
+          minLength: 1
+          maxLength: 10000
+        evidenceIds:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+            format: uuid
+      required:
+        - interpretation
+      description: "Unchanged projection2 input shape: interpretation replaces legacy reflection; omitted/null observation is unknown. Approved P4-B02 atomically persists distinct same-idea evidenceIds and capture marker after validated rollout."
+    LearningV2:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          *schema10
+        ideaId:
+          *schema10
+        experimentId:
+          *messageId1
+        observation:
+          type:
+            - string
+            - "null"
+        interpretation:
+          type: string
+      required:
+        - id
+        - ideaId
+        - experimentId
+        - observation
+        - interpretation
+      description: "Negotiated projection2 only; legacy reflection is renamed interpretation in this view. Stored nullable observation remains null when unknown, never derived from interpretation. No update/approval action introduced."
+    LearningListV2:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/LearningV2"
+        page:
+          $ref: "#/components/schemas/Pagination"
+      required:
+        - items
+        - page
+    EvidenceLinkList:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/EvidenceLink"
+        page:
+          $ref: "#/components/schemas/Pagination"
+      required:
+        - items
+        - page
+    ExperimentCreateV3:
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        method:
+          type: string
+          minLength: 1
+          maxLength: 5000
+        hypothesis:
+          type: string
+          minLength: 1
+          maxLength: 5000
+        assumptionId:
+          type: string
+          format: uuid
+        successCriteria:
+          type: string
+          maxLength: 2000
+      required: [title, method, hypothesis]
+      description: Explicit3 only. title->plan.title,method->plan.method,hypothesis->required separate column;no inference from title orassumption. Body bounds are engineering defaults,not measured capabilities.
+    ExperimentPatchV3:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        method:
+          type: string
+          minLength: 1
+          maxLength: 5000
+        hypothesis:
+          type: string
+          minLength: 1
+          maxLength: 5000
+        status:
+          type: string
+          enum: [PLANNED, IN_PROGRESS, COMPLETED, CANCELLED]
+      description: Explicit3 plus existing If-Match. JSON field merge preserves unrelated plan keys;rename never edits hypothesis. No successCriteria edit ornew state.
+    ExperimentV3:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        ideaId:
+          type: string
+          format: uuid
+        assumptionId:
+          type: [string, "null"]
+          format: uuid
+        title:
+          type: [string, "null"]
+          maxLength: 200
+        hypothesis:
+          type: string
+        status:
+          type: string
+          enum: [SUGGESTED, PLANNED, IN_PROGRESS, COMPLETED, CANCELLED]
+        version:
+          type: integer
+          minimum: 1
+        method:
+          type: [string, "null"]
+          maxLength: 5000
+        successCriteria:
+          type: [string, "null"]
+          maxLength: 2000
+      required: [id, ideaId, title, hypothesis, status, version, method, successCriteria]
+      description: Current stored hypothesis,not label. Missing/unsupported historical title isnull only in3;old views fail503 if required title cannot be projected. Historical JSON/string values are not fabricated/backfilled.
+    ExperimentListV3:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExperimentV3"
+        page:
+          $ref: "#/components/schemas/Pagination"
+      required: [items, page]
+    ExperimentReceiptV3:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        ideaId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [SUGGESTED, PLANNED, IN_PROGRESS, COMPLETED, CANCELLED]
+        version:
+          type: integer
+          minimum: 1
+      required: [id, ideaId, status, version]
+      description: Small operational original201 snapshot for create3;no private mutable title/plan/hypothesis in ledger. Read full current content through list3. Status/version refer to acceptance,not later GET truth.
+    LearningCreateV3:
+      allOf:
+        - $ref: "#/components/schemas/LearningCreateV2"
+      description: Same strict input fields/bounds as2;only response/replay representation differs. Evidence set capture is durable on all accepted input versions after rollout.
+    LearningV3:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        ideaId:
+          type: string
+          format: uuid
+        experimentId:
+          type: [string, "null"]
+          format: uuid
+        observation:
+          type: [string, "null"]
+        interpretation:
+          type: string
+        evidenceLinkage:
+          type: string
+          enum: [RECORDED, LEGACY_UNKNOWN]
+        evidenceIds:
+          type: [array, "null"]
+          maxItems: 20
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+      required: [id, ideaId, experimentId, observation, interpretation, evidenceLinkage, evidenceIds]
+      allOf:
+        - if:
+            properties:
+              evidenceLinkage:
+                const: RECORDED
+            required: [evidenceLinkage]
+          then:
+            properties:
+              evidenceIds:
+                type: array
+          else:
+            properties:
+              evidenceIds:
+                type: "null"
+      description: Markertrue->RECORDED andsorted unique array(including explicitempty). Legacyfalse->LEGACY_UNKNOWN/null;never infer historic selections from assumption links. Reauthorize all IDs;corrupt marker/scope503,no partial foreign list.
+    LearningListV3:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/LearningV3"
+        page:
+          $ref: "#/components/schemas/Pagination"
+      required: [items, page]
+  parameters:
+    ExperimentReadProjection:
+      in: query
+      name: projectionVersion
+      required: false
+      schema:
+        type: integer
+        enum: [1, 2, 3]
+        default: 1
+      description: Exact legacy views1/2;explicit3 adds distinct hypothesis/nullable historical title. Cursor binds selection;unknown orchanged cursor400.
+    ExperimentWriteProjection:
+      in: query
+      name: projectionVersion
+      required: false
+      schema:
+        type: integer
+        enum: [1, 3]
+        default: 1
+      description: Fresh create1 rejects409 EXPERIMENT_HYPOTHESIS_REQUIRED after old accepted replay resolution.3 requires explicit hypothesis for creation. PATCH1 remains legacy;PATCH3 supports separate hypothesis.2/unknown400;keyed fingerprint binds selection,If-Match unchanged.
+    LearningProjection:
+      in: query
+      name: projectionVersion
+      required: false
+      schema:
+        type: integer
+        enum: [1, 2, 3]
+        default: 1
+      description: Default1 reflection unchanged;2 observation/interpretation unchanged;3 read-back adds evidence linkage status/IDs. All successful creates capture marker/joins atomically. Cursor/fingerprint binds selection;unknown400,no alias guessing.
   responses:
     "400":
       description: Validation error

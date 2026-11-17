@@ -86,3 +86,16 @@ FR-025 / AT-024: API Â§11 MemoryPatch removal, ConfirmedMemory.status/currentV
 | NFR-003/005/012/013/018/020; FR-045â€“047 | redacted inbox/log policy, bounded retries/outbox/scanner, backup residual/watermark | FSEC-01/05â€“08/14â€“16; existing REL/OPS suites; AT-044â€“046 |
 
 All original 47 functional requirement rows remain. Prior grouped indexes do not replace SRS wording or demonstrate executed coverage. No privacy period or provider behavior is silently promoted to an approved SRS requirement.
+
+
+## Controlled Phase 4 traceability additions
+
+FR-007/010/011→P4-AM01 lookup/current generation vs original acceptance,CT-P4-01/02,F4D-04/05/26–28. FR-022/023/024/025/028→P4-AM03 actual proposal version/text/minimal source,CT-P4-03/04,F4D-16/29/30/39. FR-031/032/033→P4-AM04 observation/interpretation/experiment/evidence-link reads,CT-P4-05–07,DB-P4-03–05,F4D-18/38;P4-B01/B02 unresolved mappings block complete roundtrip claims. FR-001–006/NFR-014/019→approved FE4D-A01/A02/A03 and unchanged authorization/privacy/accessibility gates,F4D-01–40.4D retains47 exact FR/AT pairs and all test IDs. No requirement/acceptance execution or final package approval is inferred;API§19/current4D own controlled amendments over historical counts.
+
+## Approved final mapping traceability
+
+P4-B01/P4-B02 close the earlier design-mapping gaps, not their implementation tests. FR-031/033 and AT-030/032 map to distinct plan.title/hypothesis, create3 explicit input, legacy rejection/replay and current read-back (MAP-01–03/11/14/15,CT-MAP-01–03,F4D-18/29/38). FR-004/005/028/032/033 and AT-003/004/027/031/032 map to atomic LearningEvidence capture, composite scope, marker states, immutable history and authorized ordered purge (MAP-04–10/12–15,DB-MAP-02–07,F4D-12/18/36/38). The exact47 FR/AT pairs and all original scenario IDs are retained. API section21/physical section18/current Phase4D own the approved design over historical pending annotations. All acceptance executions remain Not executed; FE4D-A08 is a separate owner decision.
+
+## P5-AM01 controlled traceability
+
+SRS FR-001–005,NFR-001–005/015/018 and existing FSEC-15 map to the approved state-machines independent deletion protocol, API/security/reliability amendment and P5-DEL-01–11 acceptance in database/API/streaming plans. Original IDs remain; all runtime scenarios are Not executed. No new memory-removal API or product retention period is inferred.
