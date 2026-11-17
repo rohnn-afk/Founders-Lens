@@ -1,0 +1,13 @@
+{
+  "name": "@founders-lens/dispatcher",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npm run build && npm start",
+    "build": "tsc --project tsconfig.json",
+    "start": "node dist/main.js",
+    "lint": "eslint src --max-warnings=0",
+    "typecheck": "tsc --project tsconfig.json --noEmit"
+  }
+}

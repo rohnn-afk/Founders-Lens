@@ -1,0 +1,22 @@
+{
+  "name": "@founders-lens/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node ../../scripts/next.mjs dev --hostname 127.0.0.1",
+    "build": "node ../../scripts/next.mjs build",
+    "start": "node ../../scripts/next.mjs start --hostname 127.0.0.1",
+    "lint": "eslint app next.config.ts --max-warnings=0",
+    "typecheck": "node ../../scripts/next.mjs typegen && tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "16.4.6",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0"
+  }
+}
