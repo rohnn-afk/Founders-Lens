@@ -21,17 +21,24 @@
     "dev:api": "npm run dev --workspace=@founders-lens/api",
     "dev:worker": "npm run dev --workspace=@founders-lens/worker",
     "dev:dispatcher": "npm run dev --workspace=@founders-lens/dispatcher",
-    "build": "npm run check-toolchain && npm run build --workspaces",
+    "build": "npm run check-toolchain && npm run db:generate && npm run build --workspaces",
     "lint": "eslint . --max-warnings=0",
-    "typecheck": "npm run typecheck --workspaces",
+    "typecheck": "npm run db:generate && tsc --project tsconfig.prisma.json && npm run typecheck --workspaces",
     "test": "npm run build && node --test tests/*.test.mjs",
     "test:smoke": "node --test tests/shell-smoke.test.mjs",
     "test:boundaries": "node --test tests/import-boundaries.test.mjs",
-    "test:infrastructure": "node tests/local-infrastructure.test.mjs --live"
+    "test:infrastructure": "node tests/local-infrastructure.test.mjs --live",
+    "db:validate": "node node_modules/prisma/build/index.js validate --config prisma.config.ts",
+    "db:generate": "node node_modules/prisma/build/index.js generate --config prisma.config.ts",
+    "db:plan": "node apps/api/scripts/database.mjs plan",
+    "db:provision": "node apps/api/scripts/database.mjs provision",
+    "db:migrate": "node apps/api/scripts/database.mjs migrate",
+    "test:database": "npm run db:generate && npm run build --workspace=@founders-lens/api && node tests/database-contract.test.mjs --live"
   },
   "devDependencies": {
     "@types/node": "24.10.1",
     "eslint": "10.15.0",
+    "prisma": "7.10.1",
     "typescript": "6.0.3",
     "typescript-eslint": "8.73.0"
   }

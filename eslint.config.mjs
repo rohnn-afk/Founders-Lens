@@ -1,7 +1,7 @@
 import tseslint from 'typescript-eslint';
 
 export default [
-  { ignores: ['**/node_modules/**', '**/.next/**', '**/dist/**', '.cache/**', 'Docs/**', '**/next-env.d.ts'] },
+  { ignores: ['**/node_modules/**', '**/.next/**', '**/dist/**', '.cache/**', 'Docs/**', '**/next-env.d.ts', 'apps/api/src/generated/prisma/**'] },
   ...tseslint.configs.recommended,
   {
     files: ['apps/web/**/*.{ts,tsx}'],
