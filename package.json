@@ -26,7 +26,8 @@
     "typecheck": "npm run typecheck --workspaces",
     "test": "npm run build && node --test tests/*.test.mjs",
     "test:smoke": "node --test tests/shell-smoke.test.mjs",
-    "test:boundaries": "node --test tests/import-boundaries.test.mjs"
+    "test:boundaries": "node --test tests/import-boundaries.test.mjs",
+    "test:infrastructure": "node tests/local-infrastructure.test.mjs --live"
   },
   "devDependencies": {
     "@types/node": "24.10.1",
