@@ -3,6 +3,7 @@ import { Prisma, type PrismaClient } from '../generated/prisma/client.js';
 import type { Principal } from '../security/principal.js';
 import { SecurityError } from '../security/errors.js';
 import type { IdeaAccess } from '../security/authorization.js';
+import { lockWorkspaceAccount } from '../persistence/workspace-transaction.js';
 
 export const ideaFields = { id: true, title: true, summary: true, status: true, version: true,
   createdAt: true, updatedAt: true } as const;
@@ -78,24 +79,7 @@ export class WorkspaceRepository {
   async transaction<T>(principal: Principal, action: (tx: WorkspaceTransaction) => Promise<T>): Promise<T> {
     try {
       return await this.client.$transaction(async tx => {
-        // Recheck the account in the same transaction as the read or write.
-        // Lock it before any idea to match the lifecycle lock order and avoid
-        // two transactions waiting on locks held by each other in reverse order.
-        const accounts = await tx.$queryRaw<{ status: string; subjectKey: string; subjectKeyVersion: number }[]>
-          `SELECT status, "subjectKey", "subjectKeyVersion" FROM "UserAccount"
-            WHERE id = ${principal.localUserId}::uuid AND "clerkSubject" = ${principal.clerkSubject}
-            AND "clerkInstanceId" = ${principal.clerkInstanceId} FOR UPDATE`;
-        const account = accounts[0];
-        if (!account || account.status !== 'ACTIVE') throw new SecurityError('ACCOUNT_UNAVAILABLE');
-        if (!principal.subjectKeys.some(key => key.version === account.subjectKeyVersion && key.digest === account.subjectKey)) {
-          throw new SecurityError('DEPENDENCY_UNAVAILABLE');
-        }
-        const tombstone = await tx.identityTombstone.findFirst({ where: { clerkInstanceId: principal.clerkInstanceId,
-          OR: principal.subjectKeys.map(key => ({ subjectKey: key.digest, subjectKeyVersion: key.version })) }, select: { id: true } });
-        const deletion = await tx.dataOperation.findFirst({ where: { clerkInstanceId: principal.clerkInstanceId,
-          kind: 'DELETE_ACCOUNT', OR: principal.subjectKeys.map(key => ({ ownerSubjectKey: key.digest, subjectKeyVersion: key.version })) },
-          select: { id: true } });
-        if (tombstone || deletion) throw new SecurityError('ACCOUNT_UNAVAILABLE');
+        await lockWorkspaceAccount(tx, principal);
         return action(new WorkspaceTransaction(tx));
       }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
     } catch (error) {
