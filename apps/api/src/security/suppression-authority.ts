@@ -1,3 +1,6 @@
+// Security evidence boundary. Identity and resource policies request clearance
+// from a suppression authority, an independent source of deletion restrictions.
+
 import { randomUUID } from 'node:crypto';
 import { SecurityError } from './errors.js';
 
@@ -17,6 +20,8 @@ export interface SuppressionEvidence {
   readonly authority: 'INDEPENDENT';
   readonly epoch: string;
 }
+// The interface describes the evidence an adapter must supply. Synthetic
+// fixtures exercise these checks without proving real authority independence.
 export interface SuppressionAuthority {
   lookup(scope: SuppressionScope, query: SuppressionQuery): Promise<SuppressionEvidence | null>;
 }
@@ -26,6 +31,9 @@ export function suppressionScopeKey(scope: SuppressionScope): string {
     : JSON.stringify(['IDEA', scope.instanceId, scope.accountId, scope.ideaId]);
 }
 export async function requireClearance(authority: SuppressionAuthority, scope: SuppressionScope): Promise<void> {
+  // A nonce is a fresh value that binds evidence to this lookup. Only a current,
+  // complete and matching clear result allows progress. Everything else fails
+  // closed, meaning the operation stops when permission cannot be established.
   const query = Object.freeze({ nonce: randomUUID(), requestedAt: Date.now() });
   let evidence: SuppressionEvidence | null;
   try { evidence = await authority.lookup(Object.freeze({ ...scope }), query); }

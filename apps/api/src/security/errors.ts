@@ -1,3 +1,6 @@
+// Security error boundary. API and test routes map internal failures to stable,
+// sanitized responses with a request ID for correlation.
+
 import type { ErrorRequestHandler } from 'express';
 import { requestContext } from './request-context.js';
 
@@ -15,6 +18,8 @@ export class SecurityError extends Error {
 }
 
 export function securityFailure(error: unknown, requestId: string) {
+  // Only known error codes cross the HTTP boundary. Unexpected failures use a
+  // generic response so driver or provider details stay out of the payload.
   const code = error instanceof SecurityError ? error.code : 'INTERNAL_ERROR';
   const { status, message, retryable } = catalog[code];
   return { status, body: { error: { code, message, requestId, retryable } } };

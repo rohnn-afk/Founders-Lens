@@ -1,3 +1,6 @@
+// Persistence configuration layer. The client factory uses this validator to
+// accept only the restricted local database identity before opening a client.
+
 export interface DatabaseConfig {
   readonly connectionString: string;
 }

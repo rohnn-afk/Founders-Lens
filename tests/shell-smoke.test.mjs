@@ -1,3 +1,6 @@
+// Process smoke tests. Node launches the compiled API, worker, dispatcher,
+// and Next.js to verify public behavior and startup and shutdown boundaries.
+
 import assert from 'node:assert/strict';
 import { fork } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -14,6 +17,8 @@ const require = createRequire(import.meta.url);
 // signal. This test-only preload observes delivery in the actual child process;
 // Windows invokes its real handlers via IPC, while POSIX delivers an OS signal.
 // Application start scripts never load this bridge.
+// IPC means inter-process communication. The test uses it to ask the child
+// to exercise its own shutdown handler and send back an observation.
 function shutdownBridge() {
   process.once('message', (message) => {
     const { type, pid, signal, nonce } = message;
@@ -35,6 +40,8 @@ function shutdownBridge() {
 }
 const signalBridge = `data:text/javascript,${encodeURIComponent(`(${shutdownBridge.toString()})();`)}`;
 
+// Track output and exit separately so a failed startup has useful context.
+// Cleanup also checks that the launched child is gone after each test.
 function start(t, entry, args = [], env = {}) {
   const child = fork(entry, args, {
     cwd: root,
@@ -71,6 +78,8 @@ async function until(predicate, description, output, timeout = 30_000) {
   assert.fail(`Timed out waiting for ${description}. ${output()}`);
 }
 
+// Match the receipt to this process and request before interpreting its exit
+// code. An exit code alone cannot establish which shutdown path ran.
 async function stop(processHandle, signal, { nextSignalExit = false } = {}) {
   assert.equal(processHandle.child.exitCode, null, 'Process exited before shutdown was requested.');
   assert.equal(processHandle.child.signalCode, null);

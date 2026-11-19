@@ -1,3 +1,6 @@
+// Authentication contract tests. The installed Clerk SDK verifies locally
+// signed fixtures, and an isolated Express app checks HTTP denial behavior.
+
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { request } from 'node:http';
@@ -20,6 +23,8 @@ const environment = {
   CLERK_JWT_KEY: pair.publicKey.export({ type: 'spki', format: 'pem' })
 };
 const config = clerkConfig(environment);
+// A JWT (JSON Web Token) carries claims. These fixtures sign controlled
+// claims with a selectable key to test policy and signature failures.
 function jwt(changes = {}, key = pair.privateKey, header = {}) {
   const now = Math.floor(Date.now() / 1000);
   const payload = { iss: issuer, sub: 'user_synthetic', sid: 'sess_synthetic', azp: 'http://127.0.0.1:3000',
@@ -34,6 +39,8 @@ function authenticate(boundary, token) {
   const authorization = 'Bearer ' + token;
   return boundary.authenticate({ authorization }, ['Authorization', authorization]);
 }
+// Bind a temporary loopback server to inspect status, headers, and body at
+// the HTTP boundary. The test runner closes it after the case.
 async function probe(t, boundary) {
   const app = express();
   app.use(attachRequestContext);

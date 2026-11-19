@@ -1,9 +1,11 @@
+// Covers local CLI safety with synthetic dependencies and verifies the
+// approved schema and runtime restrictions with opt-in PostgreSQL fixtures.
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
-import { connection, databases, migrationPath, reviewedMigration, root, settings } from '../apps/api/scripts/database.mjs';
+import { connection, databases, main, migrationPath, reviewedMigration, root, settings } from '../apps/api/scripts/database.mjs';
 import { databaseConfig } from '../apps/api/dist/persistence/config.js';
 import { createDatabaseClient } from '../apps/api/dist/persistence/client.js';
 
@@ -72,6 +74,91 @@ test('runtime configuration rejects missing, owner, remote and malformed connect
   for (const url of [valid.replace('fl_m02_runtime', 'fl_m02_migrator'), valid.replace('127.0.0.1', 'example.com'),
     valid.replace('55432', '5432'), valid.replace('_test', '_production'), valid + '&sslmode=disable', 'not-a-url']) {
     assert.throws(() => databaseConfig({ DATABASE_URL: url }), /Invalid restricted database configuration/);
+  }
+});
+
+function syntheticCli({ host = '127.0.0.1', existingRoles = [], existingDatabases = [], failAt } = {}) {
+  const migratorPassword = 'a'.repeat(64);
+  const runtimePassword = 'b'.repeat(64);
+  const url = (role, password, database) => `postgresql://${role}:${password}@${host}:55432/${database}?schema=public`;
+  const migratorUrl = database => url('fl_m02_migrator', migratorPassword, database);
+  const runtimeUrl = database => url('fl_m02_runtime', runtimePassword, database);
+  const settingsText = [
+    `MIGRATION_DATABASE_URL=${migratorUrl(databases[0])}`,
+    `TEST_MIGRATION_DATABASE_URL=${migratorUrl(databases[1])}`,
+    `SHADOW_DATABASE_URL=${migratorUrl(databases[2])}`,
+    `DATABASE_URL=${runtimeUrl(databases[0])}`,
+    `TEST_DATABASE_URL=${runtimeUrl(databases[1])}`
+  ].join('\n');
+  const calls = [];
+  const reports = [];
+  const dependencies = {
+    readSettingsFile: async () => settingsText,
+    report: message => reports.push(message),
+    openAdmin: async () => {
+      calls.push('open');
+      return {
+        async connect() { calls.push('connect'); },
+        async end() { calls.push('end'); },
+        async query(sql) {
+          calls.push(sql.startsWith('CREATE ROLE ') ? sql.split(' ').slice(0, 3).join(' ') : sql);
+          if (sql.startsWith('SELECT rolname')) return { rows: existingRoles };
+          if (sql.startsWith('SELECT datname')) return { rows: existingDatabases };
+          if (sql.startsWith(failAt ?? '\0')) {
+            throw Object.assign(new Error(`Synthetic driver failure at ${migratorUrl(databases[0])}`),
+              { code: runtimePassword });
+          }
+          return { rows: [] };
+        }
+      };
+    }
+  };
+  return { calls, reports, dependencies, secrets: [migratorPassword, runtimePassword] };
+}
+
+test('database CLI rejects a remote target before opening an admin connection', async () => {
+  const fixture = syntheticCli({ host: 'example.invalid' });
+  await assert.rejects(main('provision', fixture.dependencies), /failed during local database target validation/);
+  assert.deepEqual(fixture.calls, []);
+  assert.deepEqual(fixture.reports, []);
+});
+
+test('database CLI plan and collision refusal issue inventory reads only', async () => {
+  for (const inventory of [
+    { existingRoles: [{ rolname: 'fl_m02_runtime' }] },
+    { existingDatabases: [{ datname: databases[0] }] }
+  ]) {
+    const plan = syntheticCli(inventory);
+    await main('plan', plan.dependencies);
+    const provision = syntheticCli(inventory);
+    await assert.rejects(main('provision', provision.dependencies), /already exists\. No setup writes were attempted/);
+    assert.deepEqual(provision.calls, plan.calls);
+    assert.deepEqual(plan.calls.map(call => call.split(' ')[0]), ['open', 'connect', 'SELECT', 'SELECT', 'end']);
+  }
+});
+
+test('database CLI reports only confirmed setup progress and never retries', async t => {
+  for (const [failAt, stoppedAt, confirmed, writes] of [
+    ['CREATE ROLE fl_m02_runtime', 'role creation or commit', 'inventory check',
+      ['BEGIN', "SET LOCAL password_encryption = 'scram-sha-256'", 'CREATE ROLE fl_m02_migrator', 'CREATE ROLE fl_m02_runtime', 'ROLLBACK']],
+    ['COMMIT', 'role creation or commit', 'inventory check', ['COMMIT', 'ROLLBACK']],
+    [`CREATE DATABASE ${databases[0]}`, `create database ${databases[0]}`, 'role commit',
+      ['COMMIT', `CREATE DATABASE ${databases[0]} OWNER fl_m02_migrator`]],
+    [`REVOKE ALL ON DATABASE ${databases[0]}`, `revoke public access to ${databases[0]}`, `create database ${databases[0]}`,
+      [`CREATE DATABASE ${databases[0]} OWNER fl_m02_migrator`, `REVOKE ALL ON DATABASE ${databases[0]} FROM PUBLIC`]]
+  ]) {
+    await t.test(stoppedAt, async () => {
+      const fixture = syntheticCli({ failAt });
+      await assert.rejects(main('provision', fixture.dependencies), error => {
+        assert.equal(error.message, `Provisioning stopped at: ${stoppedAt}. Last confirmed step: ${confirmed}. Run the read-only plan and review the inventory before manual recovery.`);
+        for (const secret of fixture.secrets) assert.ok(![error.message, ...fixture.reports].join(' ').includes(secret));
+        assert.equal(error.cause, undefined);
+        return true;
+      });
+      assert.equal(fixture.reports.length, 1, 'Only the plan inventory was reported');
+      assert.equal(fixture.calls.filter(call => call.startsWith(failAt)).length, 1);
+      assert.deepEqual(fixture.calls.slice(-writes.length - 1), [...writes, 'end']);
+    });
   }
 });
 

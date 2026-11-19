@@ -1,3 +1,6 @@
+// Architecture tests. The TypeScript parser inspects application imports so
+// the web and process workspaces keep their intended dependency boundaries.
+
 import assert from 'node:assert/strict';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -20,6 +23,8 @@ async function sources(directory) {
   return result;
 }
 
+// The abstract syntax tree represents parsed code. Walking it lets the test
+// inspect imports and re-exports without executing application modules.
 function inspect(file, text) {
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
   const imports = [];

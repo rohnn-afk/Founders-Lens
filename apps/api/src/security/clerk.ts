@@ -1,3 +1,6 @@
+// Authentication adapter. It verifies Clerk session credentials and returns a
+// provider identity for the identity service, leaving local account lookup to that service.
+
 import { createClerkClient } from '@clerk/express';
 import type { IncomingHttpHeaders } from 'node:http';
 import { bearerToken } from './bearer.js';
@@ -5,6 +8,9 @@ import type { ClerkConfig } from './config.js';
 import { SecurityError } from './errors.js';
 import type { VerifiedIdentity } from './principal.js';
 
+// A JWT is a JSON Web Token carrying claims. The issuer identifies who issued
+// it, and the audience identifies the intended recipients. Policy uses claims
+// returned by signature verification, never an unverified payload.
 function matchesConfiguredAudience(value: unknown, allowed: readonly string[]): boolean {
   const audiences: unknown = typeof value === 'string' ? [value] : value;
   return allowed.length > 0 && Array.isArray(audiences) && audiences.length > 0 &&

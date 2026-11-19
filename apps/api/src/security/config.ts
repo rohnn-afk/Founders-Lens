@@ -1,3 +1,6 @@
+// Authentication configuration layer. It supplies the Clerk adapter with explicit
+// trust settings and rejects invalid configuration without exposing values.
+
 import { createPublicKey } from 'node:crypto';
 import { SecurityError } from './errors.js';
 

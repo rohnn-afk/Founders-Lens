@@ -1,3 +1,7 @@
+// Identity and authorization tests. Synthetic provider responses exercise
+// security policy. Opt-in PostgreSQL tests check provisioning and ownership
+// with scoped fixture identities and real database transactions.
+
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -149,6 +153,9 @@ test('real PostgreSQL identity and authorization foundation', { skip: !live, tim
       await assert.rejects(service().resolve({ ...identity(sub), expiresAt: 0 }, 'request'), denied('UNAUTHENTICATED'));
       assert.equal((await owner.query('SELECT count(*)::int AS count FROM "UserAccount" WHERE "clerkSubject"=$1', [sub])).rows[0].count, 0);
     });
+    // An advisory lock serializes work by an agreed subject key even before an
+    // account exists. Observe real waiters before releasing it to prove the
+    // requests overlap, then verify they converge on one local account.
     await scenario(t, '20 independent connections wait on the approved subject lock and converge', async () => {
       const sub = await subject(), clients = Array.from({ length: 20 }, () => createDatabaseClient({ DATABASE_URL: values.TEST_DATABASE_URL }));
       let pending;

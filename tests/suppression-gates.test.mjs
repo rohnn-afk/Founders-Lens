@@ -1,3 +1,6 @@
+// Security policy tests. Synthetic evidence exercises the suppression gate,
+// which requires fresh clearance before protected work can proceed.
+
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomBytes } from 'node:crypto';
@@ -9,6 +12,8 @@ import { authorizeIdea } from '../apps/api/dist/security/authorization.js';
 
 const scope = Object.freeze({ kind: 'ACCOUNT', instanceId: 'ins_synthetic', subjectKeyVersion: 1,
   subjectKey: 'a'.repeat(64), incarnation: 'ALL' });
+// The nonce ties a reply to one lookup. This fixture mirrors the expected
+// shape to test validation without providing real independent evidence.
 function clearEvidence(scope, query) {
   return { verdict: 'CLEAR', scope: suppressionScopeKey(scope), nonce: query.nonce,
     observedAt: Date.now(), validUntil: Date.now() + 1000, integrity: 'VERIFIED', coverage: 'COMPLETE',

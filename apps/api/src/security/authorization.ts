@@ -1,3 +1,6 @@
+// Authorization policy and metadata adapter. After authentication establishes
+// who the caller is, these checks decide which ideas and children they may access.
+
 import type { Principal } from './principal.js';
 import { SecurityError } from './errors.js';
 import { requireClearance } from './suppression-authority.js';
@@ -12,6 +15,8 @@ export type IdeaAccess = 'read' | 'write';
 // These policies do not replace transactional lifecycle/version rechecks in use cases.
 export async function authorizeIdea(principal: Principal, idea: IdeaScope | null, authority: SuppressionAuthority, access: IdeaAccess = 'write'): Promise<void> {
   if (principal.accountStatus !== 'ACTIVE') throw new SecurityError('ACCOUNT_UNAVAILABLE');
+  // Eligible owners can read active or archived ideas. Writes require an active
+  // idea, and an absent or foreign idea gets the same not-found result.
   if (!idea || idea.ownerId !== principal.localUserId ||
     (idea.status !== 'ACTIVE' && !(access === 'read' && idea.status === 'ARCHIVED'))) throw new SecurityError('RESOURCE_NOT_FOUND');
   if (principal.subjectKeys.length === 0) throw new SecurityError('DEPENDENCY_UNAVAILABLE');
@@ -27,6 +32,8 @@ export async function authorizeChild(principal: Principal, idea: IdeaScope | nul
   await authorizeIdea(principal, idea, authority, access);
 }
 
+// External clearance cannot freeze the database. Callers must recheck local
+// ownership and lifecycle at the transaction boundary before accessing data.
 // Metadata-only repository boundary. Future use cases must still recheck lifecycle
 // and versions inside their own write transactions; no private route uses this yet.
 export class PrismaAuthorization {

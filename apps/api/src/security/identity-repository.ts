@@ -1,3 +1,6 @@
+// Identity persistence layer. The identity service calls this repository to resolve
+// or provision a local account after provider and suppression checks.
+
 import { randomUUID } from 'node:crypto';
 import type { PrismaClient } from '../generated/prisma/client.js';
 import { SecurityError } from './errors.js';
@@ -16,8 +19,13 @@ export class PrismaIdentityRepository implements IdentityRepository {
     if (!current || keys.length === 0) throw new SecurityError('DEPENDENCY_UNAVAILABLE');
     try {
       return await this.client.$transaction(async tx => {
+        // A transaction groups database operations into one commit or rollback. This
+        // advisory lock uses an agreed subject key, so requests serialize even before
+        // an account row exists. Repeated requests converge on one account (idempotency).
         const lock = subjectLock(identity.instanceId, identity.subject);
         await tx.$queryRaw`SELECT 1::integer AS locked FROM (SELECT pg_advisory_xact_lock(hashtextextended(${lock}, 0))) AS subject_lock`;
+        // A tombstone is a retained marker that prevents account recreation after
+        // deletion. Check all retained key versions before looking up or creating the account.
         const tombstone = await tx.identityTombstone.findFirst({ where: { clerkInstanceId: identity.instanceId,
           OR: keys.map(key => ({ subjectKey: key.digest, subjectKeyVersion: key.version })) }, select: { id: true } });
         const deletion = await tx.dataOperation.findFirst({ where: { clerkInstanceId: identity.instanceId,

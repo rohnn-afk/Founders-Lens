@@ -1,3 +1,6 @@
+// Public UI entry point. Next.js maps this page module to the home route,
+// and the root layout wraps the placeholder it renders.
+
 export default function Home() {
   return (
     <main style={{ maxWidth: '48rem', margin: '5rem auto', padding: '0 1.5rem' }}>

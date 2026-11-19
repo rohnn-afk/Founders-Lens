@@ -1,3 +1,6 @@
+// Local database administration CLI. Unlike the restricted runtime Prisma
+// Client, it manages setup. Plan only reads inventory. Provision creates
+// roles and databases, and migrate applies the reviewed baseline and grants.
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -12,8 +15,8 @@ export const roles = ['fl_m02_migrator', 'fl_m02_runtime'];
 export const migrationPath = 'apps/api/prisma/migrations/0001_approved_baseline/migration.sql';
 export const sha256 = value => createHash('sha256').update(value).digest('hex');
 
-export async function settings() {
-  const values = parseEnv(await readFile(path.join(root, '.env.database'), 'utf8'));
+export async function settings(readSettingsFile = readFile) {
+  const values = parseEnv(await readSettingsFile(path.join(root, '.env.database'), 'utf8'));
   const keys = ['MIGRATION_DATABASE_URL', 'TEST_MIGRATION_DATABASE_URL', 'SHADOW_DATABASE_URL', 'DATABASE_URL', 'TEST_DATABASE_URL'];
   const targets = [databases[0], databases[1], databases[2], databases[0], databases[1]];
   for (const [index, key] of keys.entries()) {
@@ -86,76 +89,134 @@ async function prismaDeploy(values, url) {
   let safe = result.output.replace(/postgres(?:ql)?:\/\/[^\s"']+/g, '[redacted database URL]');
   for (const value of Object.values(values)) safe = safe.replaceAll(new URL(value).password, '[redacted]');
   process.stdout.write(safe);
-  if (result.code !== 0) throw new Error(`Prisma migration failed (exit ${result.code})`);
+  if (result.code !== 0) throw new DatabaseCliError(`Prisma migration failed (exit ${result.code}).`);
 }
 
-export async function main(command) {
-  if (!['plan', 'provision', 'migrate'].includes(command)) throw new Error('Expected plan, provision or migrate');
-  const values = await settings();
-  const migration = await reviewedMigration();
-  const admin = await adminConnection();
-  await admin.connect();
+// Only this class carries messages safe to print. Driver errors can contain
+// SQL, credentials, or details from the server and stay out of diagnostics.
+class DatabaseCliError extends Error {}
+
+async function createRoles(admin, values) {
+  await admin.query('BEGIN');
   try {
-    const current = await inventory(admin);
-    console.log(JSON.stringify({ command, migrationSHA256: migration.checksum, plannedDatabases: databases,
-      plannedRoles: roles, current, runtime: 'CONNECT dev/test; USAGE public; SELECT/INSERT/UPDATE application tables; no DELETE/DDL/purge/migration-table access' }));
-    if (command === 'plan') return;
-    if (command === 'provision') {
-      if (current.roles.length || current.databases.length) throw new Error('Name collision: provisioning will not overwrite existing resources');
-      await admin.query('BEGIN');
-      try {
-        await admin.query("SET LOCAL password_encryption = 'scram-sha-256'");
-        for (const [index, role] of roles.entries()) {
-          const password = new URL(values[index === 0 ? 'MIGRATION_DATABASE_URL' : 'DATABASE_URL']).password;
-          await admin.query(`CREATE ROLE ${role} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT PASSWORD '${password}'`);
-        }
-        await admin.query('COMMIT');
-      } catch (error) { await admin.query('ROLLBACK'); throw error; }
-      for (const database of databases) {
-        await admin.query(`CREATE DATABASE ${database} OWNER fl_m02_migrator`);
-        await admin.query(`REVOKE ALL ON DATABASE ${database} FROM PUBLIC`);
-        if (database !== databases[2]) await admin.query(`GRANT CONNECT ON DATABASE ${database} TO fl_m02_runtime`);
+    await admin.query("SET LOCAL password_encryption = 'scram-sha-256'");
+    // Roles are database identities. Least privilege gives the migrator
+    // ownership and limits the runtime role to the access granted later.
+    for (const [index, role] of roles.entries()) {
+      const password = new URL(values[index === 0 ? 'MIGRATION_DATABASE_URL' : 'DATABASE_URL']).password;
+      await admin.query(`CREATE ROLE ${role} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT PASSWORD '${password}'`);
+    }
+    await admin.query('COMMIT');
+  } catch (error) {
+    await admin.query('ROLLBACK').catch(() => {});
+    throw error;
+  }
+}
+
+async function provision(admin, current, values) {
+  // Setup is not idempotent: repeating it can collide with objects from a
+  // previous attempt. Refuse all collisions before issuing any write.
+  if (current.roles.length || current.databases.length) {
+    throw new DatabaseCliError('Provisioning refused: a planned role or database already exists. No setup writes were attempted.');
+  }
+  let completed = 'inventory check';
+  let step = 'role creation or commit';
+  try {
+    await createRoles(admin, values);
+    completed = 'role commit';
+    // PostgreSQL creates databases outside a transaction block. A failure here
+    // can leave roles or databases in place, so record only acknowledged steps.
+    for (const database of databases) {
+      step = `create database ${database}`;
+      await admin.query(`CREATE DATABASE ${database} OWNER fl_m02_migrator`);
+      completed = step;
+      step = `revoke public access to ${database}`;
+      await admin.query(`REVOKE ALL ON DATABASE ${database} FROM PUBLIC`);
+      completed = step;
+      if (database !== databases[2]) {
+        step = `grant runtime connect to ${database}`;
+        await admin.query(`GRANT CONNECT ON DATABASE ${database} TO fl_m02_runtime`);
+        completed = step;
       }
-      console.log('Created only the two named roles and three isolated databases; bootstrap database unchanged.');
-      return;
     }
-    if (current.roles.length !== 2 || current.databases.length !== 3 ||
+  } catch {
+    // A lost acknowledgement leaves the failing step uncertain. Inventory is
+    // safe to inspect before deciding how to recover. Setup never retries.
+    throw new DatabaseCliError(`Provisioning stopped at: ${step}. Last confirmed step: ${completed}. Run the read-only plan and review the inventory before manual recovery.`);
+  }
+}
+
+async function migrate(current, values, migration) {
+  if (current.roles.length !== 2 || current.databases.length !== 3 ||
       current.roles.some(role => role.rolsuper || role.rolcreatedb || role.rolcreaterole || role.rolreplication || role.rolbypassrls || role.rolinherit) ||
-      current.databases.some(db => db.owner !== roles[0])) throw new Error('Unexpected role/database ownership');
-    for (const key of ['MIGRATION_DATABASE_URL', 'TEST_MIGRATION_DATABASE_URL']) {
-      const client = connection(values[key]);
-      await client.connect();
-      try {
-        const tables = (await client.query("SELECT tablename FROM pg_tables WHERE schemaname='public'")).rows.map(row => row.tablename);
-        if (tables.length) {
-          const expected = [...migration.sql.matchAll(/^CREATE TABLE "([^"]+)"/gm)].map(match => match[1]);
-          expected.push('_prisma_migrations');
-          if (tables.length !== expected.length || tables.some(table => !expected.includes(table))) {
-            throw new Error('Unrecognized existing database contents');
-          }
-          const rows = (await client.query('SELECT migration_name, checksum, finished_at, rolled_back_at FROM "_prisma_migrations"')).rows;
-          if (rows.length !== 1 || rows[0].migration_name !== '0001_approved_baseline' || rows[0].checksum !== migration.checksum || !rows[0].finished_at || rows[0].rolled_back_at) {
-            throw new Error('Unrecognized or failed migration history');
-          }
+      current.databases.some(db => db.owner !== roles[0])) throw new DatabaseCliError('Unexpected role/database ownership');
+  // Inspect both targets before the first deploy. A migration is a recorded
+  // schema change, so existing history must match the reviewed checksum.
+  for (const key of ['MIGRATION_DATABASE_URL', 'TEST_MIGRATION_DATABASE_URL']) {
+    const client = connection(values[key]);
+    await client.connect();
+    try {
+      const tables = (await client.query("SELECT tablename FROM pg_tables WHERE schemaname='public'")).rows.map(row => row.tablename);
+      if (tables.length) {
+        const expected = [...migration.sql.matchAll(/^CREATE TABLE "([^"]+)"/gm)].map(match => match[1]);
+        expected.push('_prisma_migrations');
+        if (tables.length !== expected.length || tables.some(table => !expected.includes(table))) {
+          throw new DatabaseCliError('Unrecognized existing database contents');
         }
-      } finally { await client.end(); }
+        const rows = (await client.query('SELECT migration_name, checksum, finished_at, rolled_back_at FROM "_prisma_migrations"')).rows;
+        if (rows.length !== 1 || rows[0].migration_name !== '0001_approved_baseline' || rows[0].checksum !== migration.checksum || !rows[0].finished_at || rows[0].rolled_back_at) {
+          throw new DatabaseCliError('Unrecognized or failed migration history');
+        }
+      }
+    } finally { await client.end(); }
+  }
+  for (const key of ['MIGRATION_DATABASE_URL', 'TEST_MIGRATION_DATABASE_URL']) {
+    await prismaDeploy(values, values[key]);
+    const client = connection(values[key]);
+    await client.connect();
+    try { await client.query(await readFile(path.join(root, 'apps/api/prisma/privileges.sql'), 'utf8')); }
+    finally { await client.end(); }
+  }
+}
+
+export async function main(command, { readSettingsFile = readFile, openAdmin = adminConnection, report = console.log } = {}) {
+  if (!['plan', 'provision', 'migrate'].includes(command)) throw new DatabaseCliError('Expected plan, provision or migrate');
+  let phase = 'local database target validation';
+  let admin;
+  try {
+    const values = await settings(readSettingsFile);
+    phase = 'reviewed migration validation';
+    const migration = await reviewedMigration();
+    phase = 'local infrastructure validation or connection';
+    admin = await openAdmin();
+    await admin.connect();
+    phase = 'read-only inventory';
+    const current = await inventory(admin);
+    report(JSON.stringify({ command, migrationSHA256: migration.checksum, plannedDatabases: databases,
+      plannedRoles: roles, current, runtime: 'CONNECT dev/test; USAGE public; SELECT/INSERT/UPDATE application tables; no DELETE/DDL/purge/migration-table access' }));
+    if (command === 'provision') {
+      phase = 'provisioning';
+      await provision(admin, current, values);
+      report('Created only the two named roles and three isolated databases; bootstrap database unchanged.');
+    } else if (command === 'migrate') {
+      phase = 'migration or restricted grants';
+      await migrate(current, values, migration);
+      report('Reviewed baseline and restricted grants applied to isolated dev/test only.');
     }
-    for (const key of ['MIGRATION_DATABASE_URL', 'TEST_MIGRATION_DATABASE_URL']) {
-      await prismaDeploy(values, values[key]);
-      const client = connection(values[key]);
-      await client.connect();
-      try { await client.query(await readFile(path.join(root, 'apps/api/prisma/privileges.sql'), 'utf8')); }
-      finally { await client.end(); }
-    }
-    console.log('Reviewed baseline and restricted grants applied to isolated dev/test only.');
-  } finally { await admin.end(); }
+  } catch (error) {
+    if (admin) await admin.end().catch(() => {});
+    if (error instanceof DatabaseCliError) throw error;
+    throw new DatabaseCliError(`Local database operation failed during ${phase}.`);
+  }
+  try { await admin.end(); }
+  catch { throw new DatabaseCliError('The command finished, but closing the local database connection failed.'); }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try { await main(process.argv[2]); }
   catch (error) {
     // Driver errors may contain connection details; never dump raw errors or SQL.
-    console.error('Database operation stopped:', error.code ?? (error.message?.startsWith('Prisma migration failed') ? error.message : 'verification or local operation failed'));
+    console.error('Database operation stopped:', error instanceof DatabaseCliError ? error.message : 'verification or local operation failed');
     process.exitCode = 1;
   }
 }

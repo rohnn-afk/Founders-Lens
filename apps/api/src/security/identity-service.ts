@@ -1,3 +1,6 @@
+// Identity orchestration layer. It takes a verified provider identity, checks
+// liveness and suppression, then asks the repository for a local principal.
+
 import type { IdentityProvider } from './identity-provider.js';
 import type { IdentityRepository } from './identity-repository.js';
 import type { Principal, VerifiedIdentity } from './principal.js';
@@ -7,6 +10,8 @@ import { requireClearance } from './suppression-authority.js';
 import type { SuppressionAuthority } from './suppression-authority.js';
 
 export class IdentityService {
+  // Dependency injection supplies the provider, repository, and suppression
+  // port from outside the service so orchestration can be tested in isolation.
   constructor(private readonly instanceId: string, private readonly keys: SubjectKeys,
     private readonly provider: IdentityProvider, private readonly repository: IdentityRepository,
     private readonly suppression: SuppressionAuthority) {}

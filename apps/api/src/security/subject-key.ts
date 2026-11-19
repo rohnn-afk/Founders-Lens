@@ -1,7 +1,12 @@
+// Identity key derivation. The identity and persistence layers use these keys
+// to check versioned deletion markers and coordinate account provisioning.
+
 import { createHmac } from 'node:crypto';
 import { SecurityError } from './errors.js';
 
 export interface SubjectKey { readonly version: number; readonly digest: string }
+// An HMAC is a keyed digest. Binding it to the provider instance and subject
+// lets deletion markers match an identity without storing the raw subject there.
 export class SubjectKeys {
   private readonly keys: ReadonlyMap<number, Buffer>;
   constructor(readonly currentVersion: number, versions: ReadonlyMap<number, Buffer>) {
@@ -21,6 +26,8 @@ export class SubjectKeys {
   }
 }
 
+// The subject lock uses a stable identity tuple so rotating the HMAC key
+// cannot cause two requests for the same identity to acquire different locks.
 export function subjectLock(instanceId: string, subject: string): string {
   if (!/^[A-Za-z0-9_-]{1,100}$/.test(instanceId) || !/^user_[A-Za-z0-9_-]{1,250}$/.test(subject)) {
     throw new SecurityError('UNAUTHENTICATED');

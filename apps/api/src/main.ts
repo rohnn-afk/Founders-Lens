@@ -1,3 +1,6 @@
+// API process entry point. It validates runtime configuration, starts the
+// Express app on loopback, and owns the server's shutdown lifecycle.
+
 import { z } from 'zod';
 import { createApp } from './app.js';
 
@@ -24,6 +27,8 @@ if (!config.success) {
   const shutdown = () => {
     if (stopping) return;
     stopping = true;
+    // Graceful shutdown stops new connections and lets active requests finish.
+    // The deadline caps that wait by closing any remaining active connections.
     const deadline = setTimeout(() => {
       server.closeAllConnections();
       process.exitCode = 1;

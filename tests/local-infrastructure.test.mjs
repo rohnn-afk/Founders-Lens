@@ -1,3 +1,7 @@
+// Opt-in infrastructure tests. Docker Compose starts the project's local
+// PostgreSQL and Redis containers and checks health, access, and persistence.
+// These tests may restart project services and leave them running.
+
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -201,6 +205,8 @@ test('local infrastructure: configuration, health, connectivity and persistent r
     assert.match(receipt, /\+OK\r\n\+OK\r\n\*2\r\n:1\r\n:0\r\n/);
   });
   assert.match(oid ?? '', /^\d+$/, 'Persistence fixture must exist before restart.');
+  // A named volume outlives a container restart. Compare volume identities and
+  // read back the synthetic data to verify both storage and service recovery.
   await t.test('controlled restart preserves volume identities and synthetic data; unrelated containers untouched', async () => {
     const before = containers();
     compose(['restart', '--timeout', '30', 'postgres', 'redis']);

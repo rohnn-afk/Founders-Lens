@@ -1,6 +1,11 @@
+// Authentication input adapter. The Clerk boundary calls it to extract exactly
+// one bearer credential before passing anything to the verification SDK.
+
 import type { IncomingHttpHeaders } from 'node:http';
 import { SecurityError } from './errors.js';
 
+// A bearer credential can be presented by whoever holds it. Inspect the raw
+// headers for duplicates before relying on Node's normalized header value.
 export function bearerToken(headers: IncomingHttpHeaders, rawHeaders: readonly string[]): string {
   let count = 0;
   for (let index = 0; index < rawHeaders.length; index += 2) {
