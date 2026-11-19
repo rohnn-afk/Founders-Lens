@@ -20,6 +20,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Check required files
         run: |
@@ -32,5 +34,28 @@ jobs:
           done
           echo "Required files are present."
 
-  # Add test, build, and deploy jobs here once the application exists.
-  # A separate .github/workflows/deploy.yml is the right place for CD.
+      # Use the same Node pin locally and in CI to reproduce a clean checkout.
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+
+      - name: Verify Node.js and npm versions
+        run: npm run check-toolchain
+
+      # npm ci installs the locked versions and checks package integrity.
+      # Dependency lifecycle scripts are disabled during installation.
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund --cache ./.cache/npm
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck all workspaces
+        run: npm run typecheck
+
+      # npm test builds all four apps first. The deterministic suite uses
+      # synthetic inputs and keeps live PostgreSQL and Redis tests opt-in.
+      - name: Build and run default tests
+        run: npm test
