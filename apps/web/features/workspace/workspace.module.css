@@ -1,0 +1,93 @@
+/* Workspace presentation. A single-column reading layout keeps navigation,
+   forms, and visible focus usable on narrow or zoomed viewports. */
+.shell {
+  /* With both schemes allowed, CSS follows OS changes without a JavaScript
+     listener. Explicit preferences limit this shell to one color scheme. */
+  color-scheme: light dark;
+  --workspace-text: light-dark(#17271e, #edf5ef);
+  --workspace-background: light-dark(#f7f9f6, #14201d);
+  --workspace-header: light-dark(#e7efe7, #1d302b);
+  --workspace-surface: light-dark(#fff, #233832);
+  --workspace-divider: light-dark(#b5c4b8, #55736a);
+  --workspace-control-border: light-dark(#637667, #91ada3);
+  --workspace-link: light-dark(#185238, #a3e6c5);
+  --workspace-focus: light-dark(#225f42, #a3e6c5);
+  color: var(--workspace-text);
+  background: var(--workspace-background);
+  min-height: 100vh;
+  overflow-wrap: anywhere;
+}
+
+.shell[data-workspace-appearance='light'] { color-scheme: light; }
+.shell[data-workspace-appearance='dark'] { color-scheme: dark; }
+
+.header {
+  background: var(--workspace-header);
+  border-bottom: 1px solid var(--workspace-divider);
+  padding: 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem 1.25rem;
+}
+
+.header nav, .actions, .appearance {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1.25rem;
+}
+
+.main {
+  max-width: 48rem;
+  margin-inline: auto;
+  padding: clamp(1rem, 4vw, 2.5rem);
+}
+
+.skip {
+  position: absolute;
+  inset-inline-start: 1rem;
+  transform: translateY(-150%);
+  padding: 0.75rem;
+  background: var(--workspace-surface);
+}
+
+.skip:focus { transform: translateY(0); }
+
+.shell a { color: var(--workspace-link); }
+
+.shell :is(a, button, input, select):focus-visible, .main:focus-visible {
+  outline: 3px solid var(--workspace-focus);
+  outline-offset: 3px;
+}
+
+.list { padding: 0; list-style: none; }
+
+.list li {
+  background: var(--workspace-surface);
+  border: 1px solid var(--workspace-divider);
+  border-radius: 0.5rem;
+  padding: 1rem;
+  margin-block: 0.75rem;
+}
+
+.form { display: grid; gap: 0.75rem; max-width: 32rem; }
+
+.form input, .shell button, .appearance select {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0.55rem 0.75rem;
+  font: inherit;
+  color: var(--workspace-text);
+  background: var(--workspace-surface);
+  border: 1px solid var(--workspace-control-border);
+  border-radius: 0.375rem;
+}
+
+.shell button:disabled { opacity: 0.65; }
+
+@media (prefers-reduced-motion: reduce) {
+  .shell { scroll-behavior: auto; }
+}
