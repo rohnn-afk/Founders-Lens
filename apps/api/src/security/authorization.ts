@@ -6,12 +6,14 @@ import type { PrismaClient } from '../generated/prisma/client.js';
 
 export interface IdeaScope { readonly id: string; readonly ownerId: string; readonly status: string }
 export interface ChildScope { readonly id: string; readonly ideaId: string }
+export type IdeaAccess = 'read' | 'write';
 
 // Inputs are freshly loaded, server-owned metadata, never request-body owner IDs.
 // These policies do not replace transactional lifecycle/version rechecks in use cases.
-export async function authorizeIdea(principal: Principal, idea: IdeaScope | null, authority: SuppressionAuthority): Promise<void> {
+export async function authorizeIdea(principal: Principal, idea: IdeaScope | null, authority: SuppressionAuthority, access: IdeaAccess = 'write'): Promise<void> {
   if (principal.accountStatus !== 'ACTIVE') throw new SecurityError('ACCOUNT_UNAVAILABLE');
-  if (!idea || idea.ownerId !== principal.localUserId || idea.status !== 'ACTIVE') throw new SecurityError('RESOURCE_NOT_FOUND');
+  if (!idea || idea.ownerId !== principal.localUserId ||
+    (idea.status !== 'ACTIVE' && !(access === 'read' && idea.status === 'ARCHIVED'))) throw new SecurityError('RESOURCE_NOT_FOUND');
   if (principal.subjectKeys.length === 0) throw new SecurityError('DEPENDENCY_UNAVAILABLE');
   for (const key of principal.subjectKeys) await requireClearance(authority, { kind: 'ACCOUNT', instanceId: principal.clerkInstanceId,
     subjectKeyVersion: key.version, subjectKey: key.digest, incarnation: 'ALL' });
@@ -19,17 +21,17 @@ export async function authorizeIdea(principal: Principal, idea: IdeaScope | null
     accountId: principal.localUserId, ideaId: idea.id });
 }
 export async function authorizeChild(principal: Principal, idea: IdeaScope | null, child: ChildScope | null,
-  authority: SuppressionAuthority): Promise<void> {
+  authority: SuppressionAuthority, access: IdeaAccess = 'write'): Promise<void> {
   if (principal.accountStatus !== 'ACTIVE') throw new SecurityError('ACCOUNT_UNAVAILABLE');
   if (!child || !idea || child.ideaId !== idea.id) throw new SecurityError('RESOURCE_NOT_FOUND');
-  await authorizeIdea(principal, idea, authority);
+  await authorizeIdea(principal, idea, authority, access);
 }
 
 // Metadata-only repository boundary. Future use cases must still recheck lifecycle
 // and versions inside their own write transactions; no private route uses this yet.
 export class PrismaAuthorization {
   constructor(private readonly client: PrismaClient, private readonly authority: SuppressionAuthority) {}
-  async idea(principal: Principal, ideaId: string): Promise<IdeaScope> {
+  async idea(principal: Principal, ideaId: string, access: IdeaAccess = 'write'): Promise<IdeaScope> {
     if (principal.accountStatus !== 'ACTIVE') throw new SecurityError('ACCOUNT_UNAVAILABLE');
     if (principal.subjectKeys.length === 0) throw new SecurityError('DEPENDENCY_UNAVAILABLE');
     for (const key of principal.subjectKeys) await requireClearance(this.authority, { kind: 'ACCOUNT',
@@ -49,15 +51,15 @@ export class PrismaAuthorization {
     if (tombstone || deletion) throw new SecurityError('ACCOUNT_UNAVAILABLE');
     const idea = await this.client.idea.findFirst({ where: { id: ideaId, ownerId: principal.localUserId },
       select: { id: true, ownerId: true, status: true } });
-    await authorizeIdea(principal, idea, this.authority);
+    await authorizeIdea(principal, idea, this.authority, access);
     if (!idea) throw new SecurityError('RESOURCE_NOT_FOUND');
     return idea;
   }
-  async conversation(principal: Principal, ideaId: string, conversationId: string): Promise<ChildScope> {
-    const idea = await this.idea(principal, ideaId);
+  async conversation(principal: Principal, ideaId: string, conversationId: string, access: IdeaAccess = 'write'): Promise<ChildScope> {
+    const idea = await this.idea(principal, ideaId, access);
     const child = await this.client.conversation.findFirst({ where: { id: conversationId, ideaId: idea.id,
       idea: { ownerId: principal.localUserId } }, select: { id: true, ideaId: true } });
-    await authorizeChild(principal, idea, child, this.authority);
+    await authorizeChild(principal, idea, child, this.authority, access);
     if (!child) throw new SecurityError('RESOURCE_NOT_FOUND');
     return child;
   }

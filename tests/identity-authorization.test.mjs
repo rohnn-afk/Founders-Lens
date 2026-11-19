@@ -263,6 +263,15 @@ test('real PostgreSQL identity and authorization foundation', { skip: !live, tim
       await runtime.conversation.create({ data: { id: conversation, ideaId: aliceIdea } });
       assert.equal((await authorization.idea(alice.principal, aliceIdea)).id, aliceIdea);
       assert.equal((await authorization.conversation(alice.principal, aliceIdea, conversation)).id, conversation);
+      await owner.query('UPDATE "Idea" SET status=\'ARCHIVED\' WHERE id=$1', [aliceIdea]);
+      assert.equal((await authorization.idea(alice.principal, aliceIdea, 'read')).status, 'ARCHIVED');
+      assert.equal((await authorization.conversation(alice.principal, aliceIdea, conversation, 'read')).id, conversation);
+      await assert.rejects(authorization.idea(alice.principal, aliceIdea), denied('RESOURCE_NOT_FOUND'));
+      await assert.rejects(authorization.conversation(alice.principal, aliceIdea, conversation, 'write'), denied('RESOURCE_NOT_FOUND'));
+      await assert.rejects(authorization.idea(bob.principal, aliceIdea, 'read'), denied('RESOURCE_NOT_FOUND'));
+      await assert.rejects(authorization.idea(alice.principal, randomUUID(), 'read'), denied('RESOURCE_NOT_FOUND'));
+      await assert.rejects(authorization.idea({ ...alice.principal, accountStatus: 'DISABLED' }, aliceIdea, 'read'), denied('ACCOUNT_UNAVAILABLE'));
+      await assert.rejects(new PrismaAuthorization(runtime, unavailableSuppressionAuthority()).idea(alice.principal, aliceIdea, 'read'), denied('DEPENDENCY_UNAVAILABLE'));
       const failures = [];
       for (const target of [bobIdea, randomUUID()]) {
         try { await authorization.idea(alice.principal, target); assert.fail('Foreign/missing scope unexpectedly allowed'); }
