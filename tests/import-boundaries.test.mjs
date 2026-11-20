@@ -69,7 +69,9 @@ test('application imports remain inside their own workspace and browser-safe dep
     }
     if (app === 'web') {
       assert.deepEqual(Object.keys(manifest.dependencies).sort(), [...browserPackages].sort());
-    } else if (app === 'worker' || app === 'dispatcher') {
+    } else if (app === 'dispatcher') {
+      assert.deepEqual(Object.keys(manifest.dependencies ?? {}).sort(), ['bullmq', 'ioredis', 'pg']);
+    } else if (app === 'worker') {
       assert.deepEqual(manifest.dependencies ?? {}, {}, `${app} must have no integration clients`);
     }
   }
