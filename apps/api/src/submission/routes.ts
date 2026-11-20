@@ -6,7 +6,7 @@ import { bearerToken } from '../security/bearer.js';
 import { SecurityError, securityFailure } from '../security/errors.js';
 import type { Principal } from '../security/principal.js';
 import { attachRequestContext, requestContext } from '../security/request-context.js';
-import { acceptance, keySchema, messageCreate, SubmissionError, uuid } from './contracts.js';
+import { acceptance, keySchema, messageCreate, SubmissionError, transcriptQuery, uuid } from './contracts.js';
 import type { SubmissionService } from './service.js';
 
 // A supplementary code point can occupy 12 bytes when JSON-escaped.
@@ -34,6 +34,36 @@ function readBody(request: Request, response: Response): Promise<void> {
 export function submissionRoutes(service: SubmissionService, authenticate: (request: Request) => Promise<Principal | null>) {
   const router = Router();
   router.use(attachRequestContext);
+  const read = (action: (request: Request, principal: Principal) => Promise<unknown>) =>
+    async (request: Request, response: Response) => {
+      response.set('Cache-Control', 'no-store');
+      const { requestId } = requestContext(response);
+      try {
+        bearerToken(request.headers, request.rawHeaders);
+        const principal = await authenticate(request);
+        if (!principal) throw new SecurityError('UNAUTHENTICATED');
+        if (request.get('transfer-encoding') || Number(request.get('content-length') ?? 0) > 0) {
+          throw new SubmissionError('VALIDATION_ERROR');
+        }
+        const dto = await action(request, principal);
+        response.status(200).type('application/json').end(JSON.stringify(dto));
+      } catch (error) {
+        const mapped = error instanceof SecurityError && error.code === 'RESOURCE_NOT_FOUND'
+          ? new SubmissionError('NOT_FOUND') : error;
+        const failure = mapped instanceof SubmissionError ? mapped.failure(requestId) : securityFailure(mapped, requestId);
+        response.status(failure.status).json(failure.body);
+      }
+    };
+  router.get('/conversations/:conversationId/submissions/:clientSubmissionId', read(async (request, principal) => {
+    if (Object.keys(request.query).length) throw new SubmissionError('VALIDATION_ERROR');
+    const conversationId = validate(uuid, request.params['conversationId']);
+    const clientSubmissionId = validate(uuid, request.params['clientSubmissionId']);
+    const { messageId, generationId } = await service.correlate(principal, conversationId, clientSubmissionId);
+    const { statusUrl, eventsUrl } = acceptance({ messageId, generationId });
+    return { clientSubmissionId, messageId, generationId, statusUrl, eventsUrl };
+  }));
+  router.get('/conversations/:conversationId/messages', read((request, principal) =>
+    service.history(principal, validate(uuid, request.params['conversationId']), validate(transcriptQuery, request.query))));
   router.post('/conversations/:conversationId/messages', async (request, response) => {
     response.set('Cache-Control', 'no-store');
     const { requestId } = requestContext(response);

@@ -19,11 +19,18 @@ const run = promisify(execFile);
 const fixture = `// Temporary test composition. Never copied into the real application.
 'use client';
 import { WorkspaceProvider } from '../../features/workspace/workspace-provider';
-import type { Conversation, Idea, SessionSource, WorkspaceApi } from '../../features/workspace/contracts';
+import type { Conversation, Idea, MessageApi, SessionSource, WorkspaceApi } from '../../features/workspace/contracts';
 import { useMemo, type ReactNode } from 'react';
 
 function fixture() {
   let account = { localAccountId: 'a' } as ReturnType<SessionSource['getSnapshot']>;
+  const founderA = '11111111-1111-4111-8111-111111111111';
+  const founderB = '22222222-2222-4222-8222-222222222222';
+  const recoveryIdeaId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const recoveryChatId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const messageId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const generationId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+  const statusUrl = '/api/v1/generations/' + generationId;
   const listeners = new Set<() => void>();
   const change = (id: string | null) => {
     account = id ? { localAccountId: id } : null;
@@ -41,7 +48,7 @@ function fixture() {
   let unlock: (() => void) | undefined;
   let blockedRead: Promise<void> | undefined;
   const session: SessionSource = {
-    getSnapshot: () => account,
+    getSnapshot: () => account && ({ localAccountId: account.localAccountId === 'a' ? founderA : founderB }),
     subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     async revalidate() {}
   };
@@ -53,6 +60,7 @@ function fixture() {
         page: { nextCursor: owner === 'a' && !cursor ? 'second' : null, hasMore: owner === 'a' && !cursor } } };
     },
     async idea(id) {
+      if (id === recoveryIdeaId && account?.localAccountId === 'a') return { status: 200, data: idea(id, 'Recovery idea') };
       const found = (account?.localAccountId === 'a' ? ideas : [b]).find(value => value.id === id);
       return found ? { status: 200, data: found } : { status: 404 };
     },
@@ -60,6 +68,9 @@ function fixture() {
       return { status: 200, data: { items: conversations.filter(value => value.ideaId === id), page: { hasMore: false, nextCursor: null } } };
     },
     async conversation(id) {
+      if (id === recoveryChatId && account?.localAccountId === 'a') {
+        return { status: 200, data: { ...saved, id, ideaId: recoveryIdeaId, title: 'Recovery conversation' } };
+      }
       const found = account?.localAccountId === 'a' && conversations.find(value => value.id === id);
       return found ? { status: 200, data: found } : { status: 404 };
     },
@@ -73,7 +84,29 @@ function fixture() {
       throw Error('Synthetic response lost after create');
     }
   };
-  return { session, api, change, hold() { blockedRead = new Promise(resolve => { unlock = resolve; }); },
+  const messageApi: MessageApi = {
+    async submit() {
+      sessionStorage.setItem('synthetic-posts', String(Number(sessionStorage.getItem('synthetic-posts')) + 1));
+      throw Error('Synthetic acknowledgement lost');
+    },
+    async correlate(id, clientSubmissionId) {
+      if (id !== recoveryChatId || account?.localAccountId !== 'a') return { status: 404 };
+      const count = Number(sessionStorage.getItem('synthetic-checks')) + 1;
+      sessionStorage.setItem('synthetic-checks', String(count));
+      return count === 1 ? { status: 404 } : { status: 200, data: {
+        clientSubmissionId, messageId, generationId, statusUrl, eventsUrl: statusUrl + '/events'
+      } };
+    },
+    async history(id) {
+      const saved = id === recoveryChatId && account?.localAccountId === 'a' &&
+        Number(sessionStorage.getItem('synthetic-checks')) >= 2;
+      return { status: 200, data: { page: { nextCursor: null, hasMore: false }, items: saved ? [{
+        id: messageId, conversationId: id, sequence: 1, role: 'USER', content: 'Synthetic message',
+        createdAt: '2026-01-01T00:00:00.000Z'
+      }] : [] } };
+    }
+  };
+  return { session, api, messageApi, change, hold() { blockedRead = new Promise(resolve => { unlock = resolve; }); },
     release() { unlock?.(); blockedRead = undefined; } };
 }
 export default function TestLayout({ children }: { children: ReactNode }) {
@@ -86,7 +119,9 @@ export default function TestLayout({ children }: { children: ReactNode }) {
       <button onClick={harness.hold}>Hold founder A reads</button>
       <button onClick={harness.release}>Release held reads</button>
     </aside>
-    <WorkspaceProvider api={harness.api} session={harness.session}>{children}</WorkspaceProvider>
+    <WorkspaceProvider api={harness.api} session={harness.session} messageApi={harness.messageApi} recoveryTtl={600_000}>
+      {children}
+    </WorkspaceProvider>
   </>;
 }
 `;
@@ -207,7 +242,8 @@ test('Edge synthetic navigation, history, accessibility and identity isolation',
   };
   async function fill(id, value) {
     const field = 'document.getElementById(' + JSON.stringify(id) + ')';
-    await evaluate('Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set.call(' + field + ',' + JSON.stringify(value) + ')');
+    await evaluate('Object.getOwnPropertyDescriptor(Object.getPrototypeOf(' + field + '),"value").set.call(' +
+      field + ',' + JSON.stringify(value) + ')');
     await evaluate(field + '.dispatchEvent(new InputEvent("input", { bubbles: true }))');
     assert.equal(await evaluate(field + '.value'), value);
   }
@@ -292,9 +328,9 @@ test('Edge synthetic navigation, history, accessibility and identity isolation',
   }
 
   await command('Emulation.setDeviceMetricsOverride', { width: 320, height: 640, deviceScaleFactor: 1, mobile: false });
-  await osMode('light');
   await open('/app');
   await text('Alpha idea');
+  await osMode('light');
   await appearanceChecks();
   const viewport = await evaluate('({ viewport: innerWidth, width: document.documentElement.clientWidth, content: document.documentElement.scrollWidth })');
   assert.equal(viewport.viewport, 320);
@@ -353,4 +389,51 @@ test('Edge synthetic navigation, history, accessibility and identity isolation',
   assert.equal(await mode(), 'dark');
   assert.deepEqual(await evaluate('Object.entries(localStorage)'), [[storageKey, 'dark']]);
   assert.deepEqual(await evaluate('Object.entries(sessionStorage)'), []);
+
+  await click('Use founder A');
+  const recoveryRoute = '/app/ideas/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/conversations/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  await open(recoveryRoute);
+  await text('No saved messages.');
+  await fill('workspace-message', 'Synthetic message');
+  await click('Send message');
+  await text('Acceptance is unknown.');
+  const recoveryRecord = 'Object.entries(sessionStorage).find(([key]) => key.startsWith("founders-lens.submission.v1:"))';
+  const [key, raw] = await evaluate(recoveryRecord);
+  assert.equal(raw.includes('Synthetic message'), false);
+  const record = JSON.parse(raw);
+  assert.equal(record.expiresAt - record.createdAt, 600_000);
+  await open('/app');
+  await text('Alpha idea');
+  await traverse(-1);
+  await locationIs(recoveryRoute);
+  await text('Acceptance is unknown.');
+  await traverse(1);
+  await locationIs('/app');
+  await traverse(-1);
+  await locationIs(recoveryRoute);
+  await reload();
+  await text('Acceptance is unknown.');
+  await evaluate('[...document.querySelectorAll("button")].find(button => button.textContent === "Check Again").focus()');
+  assert.equal(await evaluate('document.activeElement.textContent'), 'Check Again');
+  const space = { key: ' ', code: 'Space', windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32 };
+  await command('Input.dispatchKeyEvent', { type: 'keyDown', ...space, text: ' ', unmodifiedText: ' ' });
+  await command('Input.dispatchKeyEvent', { type: 'keyUp', ...space });
+  try {
+    await waitFor(() => evaluate('sessionStorage.getItem("synthetic-checks") === "1"'), 'keyboard recovery GET');
+  } catch (error) {
+    t.diagnostic(JSON.stringify(await evaluate('({ checks: sessionStorage.getItem("synthetic-checks"), active: document.activeElement?.textContent })')));
+    throw error;
+  }
+  await text('Acceptance is unknown.');
+  assert.equal(await evaluate('sessionStorage.getItem(' + JSON.stringify(key) + ')'), raw);
+  await click('Check Again');
+  await text('Message accepted.');
+  await text('Synthetic message');
+  assert.equal(await evaluate('sessionStorage.getItem("synthetic-posts")'), '1');
+  assert.equal(await evaluate('sessionStorage.getItem(' + JSON.stringify(key) + ')'), null);
+  await evaluate('sessionStorage.setItem(' + JSON.stringify(key) + ',' + JSON.stringify(raw) + ')');
+  await click('Use founder B');
+  await text('This workspace item is unavailable.');
+  assert.equal(await evaluate('document.querySelector("main").innerText.includes("Synthetic message")'), false);
+  assert.equal(await evaluate('sessionStorage.getItem(' + JSON.stringify(key) + ')'), null);
 });

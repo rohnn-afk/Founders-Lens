@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import express from 'express';
+import { createApp } from '../apps/api/dist/app.js';
 import { submissionRoutes } from '../apps/api/dist/submission/routes.js';
 import { SubmissionError } from '../apps/api/dist/submission/contracts.js';
 import { createSubmissionService } from '../apps/api/dist/submission/service.js';
@@ -26,9 +27,9 @@ async function harness(t, service) {
   const server = app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
-  return async ({ input = JSON.stringify(body), fields = headers, id = conversationId } = {}) => {
-    const response = await fetch('http://127.0.0.1:' + server.address().port + '/api/v1/conversations/' + id + '/messages',
-      { method: 'POST', headers: fields, body: input });
+  return async ({ input = JSON.stringify(body), fields = headers, id = conversationId, method = 'POST', path = '/messages' } = {}) => {
+    const response = await fetch('http://127.0.0.1:' + server.address().port + '/api/v1/conversations/' + id + path,
+      { method, headers: fields, ...(method === 'POST' ? { body: input } : {}) });
     assert.equal(response.headers.get('cache-control'), 'no-store');
     return { status: response.status, headers: response.headers, body: await response.json() };
   };
@@ -48,6 +49,70 @@ test('isolated submission returns the exact 202 representation and Location', as
   assert.equal(result.status, 202);
   assert.equal(result.headers.get('location'), statusUrl);
   assert.deepEqual(result.body, { ...ref, status: 'PENDING', statusUrl, eventsUrl: statusUrl + '/events' });
+});
+
+test('isolated recovery projects the original IDs and negotiates legacy transcript without downgrade', async t => {
+  const ref = { messageId: randomUUID(), generationId: randomUUID() };
+  let reads = 0;
+  const repo = {
+    async scope(_actor, id) {
+      return id === conversationId ? { id, ideaId, status: 'ACTIVE', idea: { id: ideaId, status: 'ACTIVE', ownerId: principal.localUserId } } : null;
+    },
+    async correlate(_actor, _scope, id) { return id === body.clientSubmissionId ? ref : null; },
+    async history(_actor, _scope, limit) { reads++; assert.equal(limit, 26); return []; },
+    async accept() { assert.fail('A GET reached acceptance'); }
+  };
+  const get = await harness(t, createSubmissionService(repo, authority, { clock: () => new Date(), cursorSecret: Buffer.alloc(32, 17) }));
+  const path = '/submissions/' + body.clientSubmissionId;
+  const recovered = await get({ method: 'GET', path });
+  const statusUrl = '/api/v1/generations/' + ref.generationId;
+  assert.equal(recovered.status, 200);
+  assert.deepEqual(recovered.body, { clientSubmissionId: body.clientSubmissionId, ...ref, statusUrl, eventsUrl: statusUrl + '/events' });
+  for (const opts of [{ path, id: randomUUID() }, { path: '/submissions/' + randomUUID() }]) {
+    const response = await get({ method: 'GET', ...opts });
+    assert.equal(response.status, 404);
+    assert.equal(response.body.error.code, 'NOT_FOUND');
+  }
+  assert.equal((await get({ method: 'GET', path, fields: {} })).status, 401);
+  assert.equal((await get({ method: 'GET', path: path + '?unexpected=true' })).status, 400);
+  for (const suffix of ['', '?assistantResponseVersion=1']) {
+    const response = await get({ method: 'GET', path: '/messages' + suffix });
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, { items: [], page: { nextCursor: null, hasMore: false } });
+  }
+  const unavailable = await get({ method: 'GET', path: '/messages?assistantResponseVersion=2' });
+  assert.equal(unavailable.status, 503);
+  assert.deepEqual(unavailable.body.error, { code: 'PROJECTION_UNAVAILABLE',
+    message: 'The workspace request could not be completed.', retryable: true, requestId: unavailable.body.error.requestId });
+  assert.ok(unavailable.body.error.requestId);
+  for (const query of ['limit=0', 'limit=101', 'assistantResponseVersion=3', 'assistantResponseVersion=',
+    'assistantResponseVersion=1&assistantResponseVersion=2', 'cursor=invalid']) {
+    const response = await get({ method: 'GET', path: '/messages?' + query });
+    assert.equal(response.status, 400);
+    assert.equal(response.body.error.code, 'VALIDATION_ERROR');
+  }
+  assert.equal(reads, 2);
+  const denied = await harness(t, createSubmissionService(repo, unavailableSuppressionAuthority(), { clock: () => new Date() }));
+  for (const readPath of [path, '/messages']) {
+    assert.equal((await denied({ method: 'GET', path: readPath })).body.error.code, 'DEPENDENCY_UNAVAILABLE');
+  }
+});
+
+test('the public shell remains unready and exposes neither recovery read', async t => {
+  const server = createApp().listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const origin = 'http://127.0.0.1:' + server.address().port;
+  for (const [path, status] of [
+    ['/health/ready', 503],
+    ['/api/v1/conversations/' + conversationId + '/messages', 404],
+    ['/api/v1/conversations/' + conversationId + '/submissions/' + body.clientSubmissionId, 404]
+  ]) {
+    const response = await fetch(origin + path, { headers });
+    assert.equal(response.status, status);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal(await response.text(), '');
+  }
 });
 
 test('validates bearer, key, media type, body and Unicode before submission', async t => {

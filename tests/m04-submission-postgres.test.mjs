@@ -31,6 +31,7 @@ async function clean(owner, ids, instance) {
     await owner.query('DELETE FROM "OutboxEvent" WHERE "aggregateType"=\'GenerationAttempt\' AND "aggregateId" IN (' + attempts + ')', args);
     await owner.query('DELETE FROM "UsageLedger" WHERE "accountId" IN (' + accounts + ')', args);
     await owner.query('DELETE FROM "IdempotencyRecord" WHERE "accountId" IN (' + accounts + ')', args);
+    await owner.query("DELETE FROM \"Message\" WHERE role='ASSISTANT' AND \"conversationId\" IN (" + conversations + ')', args);
     await owner.query('DELETE FROM "GenerationAttempt" WHERE "conversationId" IN (' + conversations + ')', args);
     await owner.query('DELETE FROM "Message" WHERE "conversationId" IN (' + conversations + ')', args);
     await owner.query('DELETE FROM "Conversation" WHERE "ideaId" IN (' + ideas + ')', args);
@@ -58,13 +59,20 @@ async function startRouter(t, services, principal) {
   const server = app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
-  return async (index, conversationId, key, body, extra = {}) => {
+  const send = async (index, conversationId, key, body, extra = {}) => {
     const url = 'http://127.0.0.1:' + server.address().port + '/test/' + index + '/api/v1/conversations/' + conversationId + '/messages';
     const response = await fetch(url, { method: 'POST', headers: {
       Authorization: 'Bearer test.only.token', 'Idempotency-Key': key, 'Content-Type': 'application/json', ...extra
     }, body: JSON.stringify(body) });
     return { status: response.status, headers: response.headers, body: await response.json() };
   };
+  send.read = async (index, conversationId, path) => {
+    const url = 'http://127.0.0.1:' + server.address().port + '/test/' + index + '/api/v1/conversations/' + conversationId + path;
+    const response = await fetch(url, { headers: { Authorization: 'Bearer test.only.token' } });
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    return { status: response.status, body: await response.json() };
+  };
+  return send;
 }
 
 test('isolated atomic submission, quota and replay in PostgreSQL', { skip: !process.argv.includes('--live'), timeout: 90_000 }, async t => {
@@ -105,7 +113,9 @@ test('isolated atomic submission, quota and replay in PostgreSQL', { skip: !proc
   const start = Date.parse('2026-01-01T00:00:00Z');
   let time = start;
   const clock = () => new Date(time);
-  const service = (client, injected = policy) => createSubmissionService(createSubmissionRepository(client), authority, { clock, policy: injected });
+  const cursorSecret = randomBytes(32);
+  const service = (client, injected = policy) => createSubmissionService(createSubmissionRepository(client), authority,
+    { clock, policy: injected, cursorSecret });
   const services = clients.map(client => service(client));
   const makeBody = () => ({ clientSubmissionId: randomUUID(), content: 'M04 private synthetic content' });
   const scope = conversationId => ({ conversationId });
@@ -130,7 +140,7 @@ test('isolated atomic submission, quota and replay in PostgreSQL', { skip: !proc
       assert.equal(event.dispatchAttempts, 0);
       assert.deepEqual(event.payload, { generationId: event.aggregateId });
     }
-    return { messages, attempts, ledger, receipts };
+    return { messages, attempts, ledger, receipts, outbox, conversation };
   }
 
   await t.test('three concurrent conversations consume exactly two account-wide units', async () => {
@@ -266,14 +276,96 @@ test('isolated atomic submission, quota and replay in PostgreSQL', { skip: !proc
 
   await t.test('a committed response can be lost without duplicating work', async t => {
     const { principal, conversations: [id] } = await founder(1);
-    const send = await startRouter(t, services, principal), body = makeBody();
-    await assert.rejects(send(0, id, 'lost-reply', body, { 'X-Test-Disconnect': 'yes' }), TypeError);
+    const entered = Promise.withResolvers(), release = Promise.withResolvers();
+    const gated = { ...services[0], async submit(...args) {
+      entered.resolve();
+      await release.promise;
+      return services[0].submit(...args);
+    } };
+    const send = await startRouter(t, [gated, ...services.slice(1)], principal), body = makeBody();
+    const path = '/submissions/' + body.clientSubmissionId;
+    const lost = assert.rejects(send(0, id, 'lost-reply', body, { 'X-Test-Disconnect': 'yes' }), TypeError);
+    await entered.promise;
+    try { assert.equal((await send.read(1, id, path)).status, 404); }
+    finally { release.resolve(); await lost; }
     const state = await effects(principal, id, 1);
+    for (const index of [0, 1, 2]) {
+      const { status, body: recovered } = await send.read(index, id, path);
+      assert.equal(status, 200);
+      assert.equal(recovered.clientSubmissionId, body.clientSubmissionId);
+      assert.equal(recovered.messageId, state.messages[0].id);
+      assert.equal(recovered.generationId, state.attempts[0].id);
+    }
+    assert.deepEqual(await effects(principal, id, 1), state);
     const replay = await send(1, id, 'lost-reply', body);
     assert.equal(replay.status, 202);
     assert.equal(replay.body.messageId, state.messages[0].id);
     assert.equal(replay.body.generationId, state.attempts[0].id);
     assert.equal((await effects(principal, id, 1)).ledger.length, 1);
+  });
+
+  await t.test('logical transcript pages select the regenerated reply and correlation stays on attempt one', async t => {
+    const { principal, conversations: [id, other] } = await founder(2);
+    const foreign = await founder(1);
+    const send = await startRouter(t, services, principal);
+    const ideaId = (await runtime.conversation.findUniqueOrThrow({ where: { id } })).ideaId;
+    const first = makeBody(), second = { ...makeBody(), content: 'Second turn' };
+    const original = (await send(0, id, 'first-turn', first)).body;
+    await runtime.generationAttempt.update({ where: { id: original.generationId },
+      data: { status: 'FAILED', completedAt: clock() } });
+    const next = (await send(0, id, 'second-turn', second)).body;
+    const selected = await runtime.generationAttempt.create({ data: {
+      conversationId: id, triggerMessageId: original.messageId, attemptNumber: 2, status: 'COMPLETED',
+      completedAt: clock(), selectedAt: clock(), deadlineAt: new Date(time + 120_000)
+    } });
+    const answer = await runtime.message.create({ data: { conversationId: id, ideaId, sequence: 3, role: 'ASSISTANT',
+      generationAttemptId: selected.id, content: { text: 'Selected answer' } } });
+    const path = '/messages?limit=1';
+    let result = await send.read(0, id, path);
+    for (const expected of [original.messageId, answer.id, next.messageId]) {
+      assert.equal(result.status, 200);
+      assert.deepEqual(result.body.items.map(message => message.id), [expected]);
+      const cursor = result.body.page.nextCursor;
+      if (!cursor) {
+        assert.equal(expected, next.messageId);
+        assert.equal(result.body.page.hasMore, false);
+        break;
+      }
+      assert.equal((await send.read(0, other, path + '&cursor=' + encodeURIComponent(cursor))).status, 400);
+      result = await send.read(0, id, path + '&cursor=' + encodeURIComponent(cursor));
+    }
+    assert.deepEqual((await send.read(0, other, '/messages')).body, { items: [], page: { hasMore: false, nextCursor: null } });
+    assert.equal((await send.read(0, foreign.conversations[0], '/messages')).status, 404);
+    assert.equal((await send.read(0, id, '/submissions/' + first.clientSubmissionId)).body.generationId, original.generationId);
+    const orphan = makeBody();
+    await runtime.message.create({ data: { conversationId: other, ideaId, sequence: 1, role: 'USER',
+      clientSubmissionKey: orphan.clientSubmissionId, submissionSha256: '0'.repeat(64), content: { text: orphan.content } } });
+    assert.equal((await send.read(0, other, '/submissions/' + orphan.clientSubmissionId)).body.error.code, 'PROJECTION_UNAVAILABLE');
+    await runtime.message.updateMany({ where: { conversationId: other }, data: { contentSchemaVersion: 99 } });
+    assert.equal((await send.read(0, other, '/messages')).body.error.code, 'PROJECTION_UNAVAILABLE');
+  });
+
+  await t.test('correlation rechecks account lifecycle after obtaining independent clearance', async t => {
+    const { principal, conversations: [id] } = await founder(1);
+    const body = makeBody();
+    await services[0].submit(principal, id, 'lock-read-fixture', body);
+    const cleared = Promise.withResolvers(), locked = Promise.withResolvers(), release = Promise.withResolvers();
+    const observedAuthority = { async lookup(scope, query) {
+      if (scope.kind === 'IDEA') cleared.resolve();
+      return authority.lookup(scope, query);
+    } };
+    const reader = createSubmissionService(createSubmissionRepository(clients[1]), observedAuthority, { clock, cursorSecret });
+    const send = await startRouter(t, [reader], principal);
+    const statusUpdate = runtime.$transaction(async tx => {
+      await tx.userAccount.update({ where: { id: principal.localUserId }, data: { status: 'DISABLED' } });
+      locked.resolve();
+      await release.promise;
+    });
+    await locked.promise;
+    const pending = send.read(0, id, '/submissions/' + body.clientSubmissionId);
+    try { await cleared.promise; }
+    finally { release.resolve(); await statusUpdate; }
+    assert.equal((await pending).status, 403);
   });
 
   await t.test('foreign and archived conversations leave no acceptance effects', async () => {

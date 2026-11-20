@@ -6,7 +6,7 @@ import { lockWorkspaceAccount } from '../persistence/workspace-transaction.js';
 import { SecurityError } from '../security/errors.js';
 import type { Principal } from '../security/principal.js';
 import { acceptanceRef, fingerprintVersion, submissionOperation, SubmissionError, type AcceptanceRef } from './contracts.js';
-import type { AdmissionPolicy, SubmissionCommand, SubmissionRepository } from './service.js';
+import type { AdmissionPolicy, SubmissionCommand, SubmissionRepository, SubmissionScope, TranscriptRow } from './service.js';
 
 type Tx = Prisma.TransactionClient;
 type ReceiptKey = Prisma.IdempotencyRecordAccountIdOperationTypeTargetScopeKeyCompoundUniqueInput;
@@ -129,10 +129,71 @@ async function persistAcceptance(tx: Tx, scope: ReceiptKey, command: SubmissionC
 }
 
 export function createSubmissionRepository(client: PrismaClient): SubmissionRepository {
+  async function read<T>(principal: Principal, scope: SubmissionScope, activeOnly: boolean,
+    select: (tx: Tx) => Promise<T>): Promise<T> {
+    try {
+      return await client.$transaction(async tx => {
+        // Match submission's lock order so lifecycle cannot change between
+        // the local authorization recheck and the private projection.
+        await lockWorkspaceAccount(tx, principal);
+        const idea = await tx.$queryRaw<{ id: string }[]>`
+          SELECT id FROM "Idea" WHERE id = ${scope.ideaId}::uuid AND "ownerId" = ${principal.localUserId}::uuid
+          AND (status = 'ACTIVE' OR (NOT ${activeOnly} AND status = 'ARCHIVED')) FOR SHARE`;
+        if (!idea.length) throw new SecurityError('RESOURCE_NOT_FOUND');
+        const conversation = await tx.$queryRaw<{ id: string }[]>`
+          SELECT id FROM "Conversation" WHERE id = ${scope.id}::uuid AND "ideaId" = ${scope.ideaId}::uuid
+          AND status IN ('ACTIVE', 'ARCHIVED') FOR SHARE`;
+        if (!conversation.length) throw new SecurityError('RESOURCE_NOT_FOUND');
+        return select(tx);
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError ||
+        error instanceof Prisma.PrismaClientInitializationError) throw unavailable();
+      throw error;
+    }
+  }
+
   return {
     scope(principal, conversationId) {
       return client.conversation.findFirst({ where: { id: conversationId, idea: { ownerId: principal.localUserId } },
         select: { id: true, ideaId: true, status: true, idea: { select: { id: true, ownerId: true, status: true } } } });
+    },
+    correlate(principal, scope, submissionId) {
+      return read(principal, scope, true, async tx => {
+        // A regenerated or selected answer does not change the attempt
+        // originally created by acceptance. Read only that attempt's ID.
+        const rows = await tx.$queryRaw<{ messageId: string; generationId: string | null }[]>`
+          SELECT m.id AS "messageId", a.id AS "generationId" FROM "Message" m
+          LEFT JOIN "GenerationAttempt" a ON a."triggerMessageId" = m.id
+            AND a."conversationId" = m."conversationId" AND a."attemptNumber" = 1
+          WHERE m."conversationId" = ${scope.id}::uuid AND m."ideaId" = ${scope.ideaId}::uuid
+            AND m.role = 'USER' AND m."clientSubmissionKey" = ${submissionId}`;
+        const row = rows[0];
+        if (!row) return null;
+        const result = acceptanceRef.safeParse(row);
+        if (!result.success) throw new SubmissionError('PROJECTION_UNAVAILABLE');
+        return result.data;
+      });
+    },
+    history(principal, scope, limit, after) {
+      return read(principal, scope, false, tx => {
+        const [turn, slot] = after ?? [0, 0];
+        // Regenerated answers may be appended much later. Place the selected
+        // answer immediately after its own USER turn, including across pages.
+        return tx.$queryRaw<TranscriptRow[]>`
+          SELECT m.id, m."conversationId", m.sequence, m.role::text AS role, m.content,
+            m."contentSchemaVersion", m."createdAt", u.sequence AS turn, slots.slot
+          FROM "Message" u
+          LEFT JOIN "GenerationAttempt" a ON a."triggerMessageId" = u.id
+            AND a."conversationId" = u."conversationId" AND a."selectedAt" IS NOT NULL AND a.status = 'COMPLETED'
+          CROSS JOIN (VALUES (0), (1)) AS slots(slot)
+          JOIN "Message" m ON m."conversationId" = u."conversationId" AND m."ideaId" = u."ideaId"
+            AND ((slots.slot = 0 AND m.id = u.id)
+              OR (slots.slot = 1 AND m."generationAttemptId" = a.id AND m.role = 'ASSISTANT'))
+          WHERE u."conversationId" = ${scope.id}::uuid AND u."ideaId" = ${scope.ideaId}::uuid AND u.role = 'USER'
+            AND (u.sequence, slots.slot) > (${turn}::int, ${slot}::int)
+          ORDER BY u.sequence, slots.slot LIMIT ${limit}`;
+      });
     },
     async accept(principal, command, clock, policy) {
       try {

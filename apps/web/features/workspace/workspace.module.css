@@ -91,3 +91,25 @@
 @media (prefers-reduced-motion: reduce) {
   .shell { scroll-behavior: auto; }
 }
+.messages {
+  margin-block: 1.5rem;
+}
+
+.messages form {
+  display: grid;
+  gap: 0.5rem;
+  justify-items: start;
+  margin-block: 1rem;
+}
+
+.messages textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 6rem;
+  font: inherit;
+}
+
+.messages li p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

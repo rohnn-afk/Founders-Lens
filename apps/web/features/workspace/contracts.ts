@@ -19,6 +19,17 @@ export type ConversationCreate = { title?: string; proactiveResearch?: boolean }
 // in view state or in the session snapshot used to scope this client.
 export type Reply<T> = { status: 200 | 201; data: T } |
   { status: 400 | 401 | 403 | 404 | 409 | 413 | 415 | 429 | 500 | 503 };
+export type Message = {
+  id: string; conversationId: string; sequence: number; role: 'USER' | 'ASSISTANT'; content: string; createdAt: string;
+};
+export type Acceptance = { messageId: string; generationId: string; statusUrl: string; eventsUrl: string };
+export type MessageBody = Readonly<{ content: string; clientSubmissionId: string }>;
+export type MessageApi = {
+  submit(id: string, body: MessageBody, key: string, signal: AbortSignal): Promise<
+    { status: 202; data: Acceptance & { status: 'PENDING' } } | Extract<Reply<never>, { status: number; data?: never }>>;
+  correlate(id: string, submissionId: string, signal: AbortSignal): Promise<Reply<Acceptance & { clientSubmissionId: string }>>;
+  history(id: string, cursor: string | null, signal: AbortSignal): Promise<Reply<Page<Message>>>;
+};
 export interface WorkspaceApi {
   ideas(cursor: string | null, signal: AbortSignal): Promise<Reply<Page<Idea>>>;
   idea(id: string, signal: AbortSignal): Promise<Reply<Idea>>;
