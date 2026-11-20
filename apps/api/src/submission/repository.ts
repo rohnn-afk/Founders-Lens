@@ -98,10 +98,23 @@ async function requireNewAdmission(tx: Tx, accountId: string, conversationId: st
   if (active) throw new SubmissionError('GENERATION_IN_PROGRESS');
   // All writers for this policy take the same account lock, even across
   // conversations. Otherwise concurrent sums can both spend the last unit.
-  const usage = await tx.usageLedger.aggregate({ where: { accountId, operationType: policy.operationType,
-    unit: policy.unit }, _sum: { reservedUnits: true } });
-  const reserved = usage._sum.reservedUnits ?? new Prisma.Decimal(0);
-  if (reserved.plus(policy.reservationUnits).greaterThan(policy.quotaUnits)) throw new SubmissionError('QUOTA_EXCEEDED');
+  // An open reservation holds its original units until settlement. Settlement
+  // counts actual usage, and release frees capacity only for zero measured usage.
+  const [usage] = await tx.$queryRaw<{ consumed: Prisma.Decimal; inconsistent: boolean }[]>`
+    SELECT COALESCE(SUM(CASE WHEN valid THEN CASE "reservationState"
+      WHEN 'RESERVED' THEN "reservedUnits" WHEN 'SETTLED' THEN "measuredUnits" ELSE 0 END END), 0) AS consumed,
+      COALESCE(BOOL_OR(valid IS NOT TRUE), false) AS inconsistent
+    FROM (
+      SELECT "reservationState", "reservedUnits", "measuredUnits",
+        ("reservedUnits" >= 0 AND "reservedUnits" < 'Infinity'::numeric
+          AND "measuredUnits" >= 0 AND "measuredUnits" < 'Infinity'::numeric
+          AND ("reservationState" = 'SETTLED'
+            OR ("reservationState" IN ('RESERVED', 'RELEASED') AND "measuredUnits" = 0))) AS valid
+      FROM "UsageLedger"
+      WHERE "accountId" = ${accountId}::uuid AND "operationType" = ${policy.operationType} AND unit = ${policy.unit}
+    ) AS ledger`;
+  if (!usage || usage.inconsistent) throw unavailable();
+  if (usage.consumed.plus(policy.reservationUnits).greaterThan(policy.quotaUnits)) throw new SubmissionError('QUOTA_EXCEEDED');
 }
 
 async function persistAcceptance(tx: Tx, scope: ReceiptKey, command: SubmissionCommand, sequence: number,

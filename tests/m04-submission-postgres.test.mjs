@@ -187,6 +187,69 @@ test('isolated atomic submission, quota and replay in PostgreSQL', { skip: !proc
     assert.equal(await runtime.usageLedger.count({ where: { accountId: principal.localUserId } }), 2);
   });
 
+  async function seedUsage(principal, reservationState, reservedUnits, measuredUnits, overrides = {}) {
+    const reservationId = randomUUID();
+    await runtime.usageLedger.create({ data: { accountId: principal.localUserId, operationType: policy.operationType,
+      unit: policy.unit, reservationId, reconciliationKey: 'm04-quota-fixture:' + reservationId,
+      reservationState, reservedUnits, measuredUnits, occurredAt: clock(), ...overrides } });
+    return reservationId;
+  }
+
+  await t.test('quota counts open reserves, measured settlement and zero-cost release in the existing scope', async () => {
+    for (const [state, reserved, measured] of [['RESERVED', 2, 0], ['SETTLED', 1, 2]]) {
+      const { principal, conversations: [id] } = await founder(1);
+      await seedUsage(principal, state, reserved, measured);
+      await assert.rejects(services[0].submit(principal, id, 'quota-state-denial', makeBody()), denial('QUOTA_EXCEEDED'));
+      const unchanged = await effects(principal, id, 0);
+      assert.equal(unchanged.ledger.length, 1);
+      assert.equal(unchanged.receipts.length, 0);
+    }
+
+    const { principal, conversations } = await founder(2);
+    await seedUsage(principal, 'SETTLED', 2, 1);
+    await seedUsage(principal, 'RELEASED', 2, 0);
+    await seedUsage(principal, 'RESERVED', 2, 0, { unit: 'separate_unit' });
+    await seedUsage(principal, 'RESERVED', 2, 0, { operationType: 'separate_operation' });
+    const payloads = conversations.map(makeBody);
+    const results = await Promise.allSettled(conversations.map((id, index) =>
+      services[index].submit(principal, id, 'last-unit-' + index, payloads[index])));
+    assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+    for (const [index, result] of results.entries()) {
+      const id = conversations[index];
+      if (result.status === 'rejected') {
+        assert.equal(result.reason.code, 'QUOTA_EXCEEDED');
+        assert.equal((await effects(principal, id, 0)).receipts.length, 0);
+        continue;
+      }
+      const original = await effects(principal, id, 1);
+      assert.equal(original.ledger.length, 5);
+      // A full budget does not block replay or charge it again after receipt expiry.
+      for (const timestamp of [start, start + policy.receiptTtlMs]) {
+        time = timestamp;
+        try {
+          assert.deepEqual(await services[2].submit(principal, id, 'last-unit-' + index, payloads[index]), result.value);
+          assert.deepEqual(await effects(principal, id, 1), original);
+        } finally { time = start; }
+      }
+    }
+  });
+
+  await t.test('inconsistent accounting fails closed without writing any admission effects', async () => {
+    for (const [state, measured] of [['RELEASED', 1], ['RESERVED', 1], ['SETTLED', 0]]) {
+      const { principal, conversations: [id] } = await founder(1);
+      const reservationId = await seedUsage(principal, state, 1, measured);
+      if (state === 'SETTLED') {
+        // PostgreSQL numeric NaN passes the existing nonnegative constraint.
+        await runtime.$executeRaw`UPDATE "UsageLedger" SET "measuredUnits"='NaN'::numeric
+          WHERE "reservationId"=${reservationId}::uuid AND "accountId"=${principal.localUserId}::uuid`;
+      }
+      await assert.rejects(services[0].submit(principal, id, 'invalid-ledger-fixture', makeBody()), denial('DEPENDENCY_UNAVAILABLE'));
+      const unchanged = await effects(principal, id, 0);
+      assert.equal(unchanged.ledger.length, 1);
+      assert.equal(unchanged.receipts.length, 0);
+    }
+  });
+
   await t.test('same-key races, alternate keys, expiry and later attempt state preserve original acceptance', async t => {
     const { principal, conversations: [id, other, third] } = await founder(3);
     const body = makeBody(), key = 'replay-fixture';
