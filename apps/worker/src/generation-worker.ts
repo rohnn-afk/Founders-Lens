@@ -1,6 +1,7 @@
 // Isolated worker coordinator. It validates scoped synthetic evidence, bounds
 // fake execution, and hands durable transitions to the PostgreSQL adapter.
 import { randomUUID } from 'node:crypto';
+import { assembleGenerationContext, type GenerationContext } from './generation-context.js';
 import type { Repository, Scope } from './generation-repository.js';
 
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
@@ -18,7 +19,7 @@ export function generationId(job: { id?: string; name: string; data: unknown }) 
 
 export function generationWorker(repository: Repository, authority: Authority, allowed: (id: string) => boolean,
   fake: (signal: AbortSignal) => Promise<string> = async () => 'This is a deterministic test response.',
-  now = Date.now) {
+  now = Date.now, contextResponse?: (context: GenerationContext, signal: AbortSignal) => Promise<string>) {
   let recovering = false;
   const running = new Set<AbortController>();
   let stopping = false;
@@ -48,8 +49,15 @@ export function generationWorker(repository: Repository, authority: Authority, a
     const started = performance.now();
     const lease = await repository.claim(scope, recover, claimExpiry);
     if (!lease || stopping) return;
-    const invocationExpiry = await clearance(scope);
-    if (!invocationExpiry || stopping || !await repository.markInvocation(scope, lease.epoch, invocationExpiry)) {
+    const readExpiry = await clearance(scope);
+    const context = contextResponse && readExpiry && !stopping
+      ? await assembleGenerationContext(() => repository.readContext(scope, lease.epoch, readExpiry), scope.triggerMessageId)
+      : undefined;
+    // Acquire fresh evidence after the bounded projection. The existing
+    // invocation fence rechecks the captured context epoch before execution.
+    const invocationExpiry = context && !stopping ? await clearance(scope) : readExpiry;
+    if (!invocationExpiry || stopping || (contextResponse && !context) ||
+      !await repository.markInvocation(scope, lease.epoch, invocationExpiry)) {
       const expiry = stopping ? undefined : await clearance(scope);
       if (expiry && !stopping) await repository.finish(scope, lease.epoch, null, expiry);
       return;
@@ -75,7 +83,8 @@ export function generationWorker(repository: Repository, authority: Authority, a
         // Recording invocation can wait for a row lock. Recheck the original
         // evidence immediately before invoking, without an intervening await.
         if (now() < invocationExpiry) {
-          const text = await Promise.race([fake(abort.signal), interrupted]);
+          const work = contextResponse && context ? contextResponse(context, abort.signal) : fake(abort.signal);
+          const text = await Promise.race([work, interrupted]);
           if (typeof text === 'string' && text.length > 0 && Array.from(text).length <= 10_000 &&
             text.isWellFormed() && !text.includes('\0')) result = { id: randomUUID(), text };
         }

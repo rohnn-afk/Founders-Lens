@@ -28,6 +28,7 @@ import { outboxRepository } from '../apps/dispatcher/dist/outbox-repository.js';
 import { generationQueue } from '../apps/dispatcher/dist/generation-queue.js';
 import { generationRepository } from '../apps/worker/dist/generation-repository.js';
 import { generationWorker } from '../apps/worker/dist/generation-worker.js';
+import { syntheticContextResponse } from '../apps/worker/dist/generation-context.js';
 import { generationConsumer } from '../apps/worker/dist/generation-consumer.js';
 
 const require = createRequire(new URL('../apps/api/package.json', import.meta.url));
@@ -40,10 +41,19 @@ const redisImage = 'docker.io/library/redis:7.4.12-bookworm@sha256:2e3eb11462c4e
 const checksum = '19fcf7f5f144d1ff39a00a489193392e9deaa60617ebe2f42a8ee576e203032b';
 const roles = { api: 'fl_m05_t02_api', worker: 'fl_m05_t02_worker', fixture: 'fl_m05_t02_fixture', dispatch: 'fl_m05_e2e_dispatcher' };
 const policy = { operationType: 'generation', unit: 'synthetic_unit', reservationUnits: 1,
-  quotaUnits: 5, deadlineMs: 120_000, receiptTtlMs: 120_000 };
+  quotaUnits: 6, deadlineMs: 120_000, receiptTtlMs: 120_000 };
 const secret = () => randomBytes(32).toString('hex');
 const browserMode = process.argv.includes('--browser');
 const edge = process.env.WORKSPACE_EDGE ?? 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
+const browserMessage = 'Browser founder message';
+const correction = 'Correction: the pilot serves clinics.';
+const correctionMessage = correction + ' ' + 'x'.repeat(1200) + 'outside the bound';
+const fixtureMessages = new Set(['Synthetic USER', browserMessage, correctionMessage]);
+
+function restrictedPool(name, credentials) {
+  return new Pool({ connectionString: 'postgresql://' + roles[name] + ':' + credentials[name] +
+    '@127.0.0.1:55435/' + database, statement_timeout: 5000 });
+}
 
 async function loopback(server) {
   server.listen(0, '127.0.0.1');
@@ -218,7 +228,7 @@ async function browserJourney({ account, idea, first, url, token, allowed, deliv
     await text('No saved messages.');
     await evaluate(`(() => {
       const field = document.querySelector('textarea');
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(field, 'Browser founder message');
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(field, ${JSON.stringify(browserMessage)});
       field.dispatchEvent(new Event('input', { bubbles: true }));
     })()`);
     await press('Send message');
@@ -332,6 +342,15 @@ async function postgres(id, run, credentials) {
     }
     await admin.query(await readFile('tests/m05-local-generation-grants.sql', 'utf8'));
     await admin.query(await readFile('tests/m05-t02-bootstrap.sql', 'utf8'));
+    // Prove that the baseline and earlier test grants expose no context reader.
+    const worker = restrictedPool('worker', credentials);
+    try {
+      const { rows: [identity] } = await worker.query('SELECT current_user AS role,current_database() AS db');
+      assert.deepEqual(identity, { role: roles.worker, db: database });
+      await assert.rejects(worker.query('SELECT m06_context.read_attempt($1,$2,$3,$4)',
+        [randomUUID(), 1, 0, Date.now() + 1000]), { code: '3F000' });
+    } finally { await worker.end(); }
+    await admin.query(await readFile('tests/m06-context-bootstrap.sql', 'utf8'));
     assert.equal((await admin.query('SELECT checksum FROM "_prisma_migrations"')).rows[0].checksum, checksum);
     await admin.query('ALTER ROLE bootstrap NOLOGIN PASSWORD NULL');
     docker(['exec', id, 'rm', '/tmp/bootstrap']);
@@ -352,6 +371,18 @@ async function verify(pool, name, run) {
     content: name === 'api', metadata: false, settlement: name === 'worker', ddl: false,
     cross_db: false, bootstrap: false, functions: name === 'worker' ? 2 : name === 'fixture' ? 1 : 0 });
   await assert.rejects(pool.query('SELECT "orchestrationMetadata" FROM "GenerationAttempt" WHERE false'), { code: '42501' });
+  await assert.rejects(pool.query('SELECT "currentContent" FROM "ConfirmedMemory" WHERE false'), { code: '42501' });
+  await assert.rejects(pool.query('SELECT content FROM "MemoryRevision" WHERE false'), { code: '42501' });
+  if (name !== 'worker') {
+    await assert.rejects(pool.query('SELECT m06_context.read_attempt(NULL,1,1,1)'), { code: '42501' });
+  } else {
+    const { rows: [definer] } = await pool.query(`SELECT r.rolcanlogin,r.rolinherit,r.rolsuper,r.rolbypassrls,p.prosecdef,
+      p.proconfig, has_function_privilege(current_user,p.oid,'EXECUTE') AS execute
+      FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace JOIN pg_roles r ON r.oid=p.proowner
+      WHERE n.nspname='m06_context' AND p.proname='read_attempt'`);
+    assert.deepEqual(definer, { rolcanlogin: false, rolinherit: false, rolsuper: false,
+      rolbypassrls: false, prosecdef: true, proconfig: ['search_path=pg_catalog, pg_temp'], execute: true });
+  }
   if (name !== 'api') await assert.rejects(pool.query('SELECT content FROM "Message" WHERE false'), { code: '42501' });
   if (name !== 'worker') {
     await assert.rejects(pool.query(`UPDATE "UsageLedger" SET "reservationState"='RELEASED' WHERE false`), { code: '42501' });
@@ -384,6 +415,14 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, run, startServ
   const fixtureToken = 'test.' + secret() + '.fixture';
   const authenticate = async request => request.get('authorization') === 'Bearer ' + fixtureToken ? principal : null;
   const app = express();
+  // The browser proxy can submit on behalf of the fixture. Allow only the
+  // scripted message text even if someone manually opens the loopback page.
+  app.post('/api/v1/conversations/:conversationId/messages', express.json({ limit: '128kb' }), (req, res, next) => {
+    if (!fixtureMessages.has(req.body?.content)) {
+      return res.status(400).json({ error: { code: 'FIXTURE_INPUT_DENIED' } });
+    }
+    next();
+  });
   app.use('/api/v1', submissionRoutes(createSubmissionService(createSubmissionRepository(prisma), apiAuthority,
     { clock: () => new Date(), policy, cursorSecret: randomBytes(32) }), authenticate));
   app.use('/api/v1', generationRoutes(createGenerationService(createGenerationRepository(prisma, policy), apiAuthority), authenticate));
@@ -414,12 +453,16 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, run, startServ
     return rows[0];
   };
 
-  let fake = async () => 'Synthetic assistant', expire = false, dispatchDenied = false, executions = 0;
+  let fake, lastContext, expire = false, dispatchDenied = false, executions = 0;
   const allowed = new Set(), work = generationRepository(pools.worker);
   const worker = generationWorker(work, async (scope, query) => {
     const proof = evidence(scope, query);
     return expire && proof ? { ...proof, validUntil: proof.observedAt } : proof;
-  }, id => allowed.has(id), async () => { executions++; return fake(); });
+  }, id => allowed.has(id), undefined, Date.now, async context => {
+    executions++;
+    lastContext = context;
+    return fake ? fake() : syntheticContextResponse(context);
+  });
   const consumer = generationConsumer(redisUrl, prefix, worker);
   startConsumer(consumer);
   await consumer.waitUntilReady();
@@ -460,6 +503,9 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, run, startServ
   }
 
   const key = randomUUID(), body = { clientSubmissionId: randomUUID(), content: 'Synthetic USER' };
+  assert.equal((await submit(first, 400, randomUUID(),
+    { clientSubmissionId: randomUUID(), content: 'Unscripted test sentinel' })).error.code, 'FIXTURE_INPUT_DENIED');
+  assert.deepEqual((await history(first)).items, []);
   const admitted = await submit(first, 202, key, body);
   const id = admitted.generationId;
   assert.deepEqual(await submit(first, 202, key, body), admitted);
@@ -479,8 +525,10 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, run, startServ
   assert.equal(executions, 1);
   assert.equal((await cancel(id, 200)).status, 'COMPLETED');
   assert.deepEqual(await ledger(id), { reservationState: 'SETTLED', measuredUnits: '1.00000' });
-  assert.deepEqual((await history(first)).items.map(item => [item.role, item.content]),
-    [['USER', 'Synthetic USER'], ['ASSISTANT', 'Synthetic assistant']]);
+  const initialTranscript = (await history(first)).items;
+  assert.deepEqual(initialTranscript.map(item => item.role), ['USER', 'ASSISTANT']);
+  assert.equal(initialTranscript[0].content, body.content);
+  assert.match(initialTranscript[1].content, /Current founder statement: .*Synthetic USER/);
 
   fake = async () => 'Regenerated synthetic assistant';
   const regenKey = randomUUID();
@@ -489,12 +537,52 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, run, startServ
   const regenerated = await regenRequest();
   assert.equal((await status(id)).selected, true);
   await delivered(regenerated.id);
-  await terminal(regenerated.id, 'COMPLETED');
+  const replacement = await terminal(regenerated.id, 'COMPLETED');
   assert.deepEqual(await regenRequest(), regenerated);
   assert.equal((await status(id)).selected, false);
   assert.equal((await history(first)).items.at(-1).content, 'Regenerated synthetic assistant');
 
-  const early = (await submit(second)).generationId;
+  async function seedMemory(ideaId, message, state = 'ACTIVE', actor = account) {
+    const memory = randomUUID(), content = { text: message };
+    await fixture.query(`INSERT INTO "ConfirmedMemory" (id,"ideaId",kind,"currentContent",status,"updatedAt")
+      VALUES ($1,$2,'FACT',$3,$4,now())`, [memory, ideaId, content, state]);
+    await fixture.query(`INSERT INTO "MemoryRevision" (id,"memoryId",version,content,"actorId")
+      VALUES ($1,$2,1,$3,$4)`, [randomUUID(), memory, content, actor]);
+    return memory;
+  }
+  const otherIdea = randomUUID();
+  await fixture.query('INSERT INTO "Idea" (id,"ownerId",title,"updatedAt") VALUES ($1,$2,$3,now())',
+    [otherIdea, account, 'Other synthetic idea']);
+  const reviewed = await seedMemory(idea, 'Reviewed channel is referrals');
+  await seedMemory(otherIdea, 'Other idea confidential marker');
+  const foreign = randomUUID(), foreignIdea = randomUUID();
+  await fixture.query('INSERT INTO "UserAccount" (id,"clerkSubject","clerkInstanceId","subjectKey","updatedAt") VALUES ($1,$2,$3,$4,now())',
+    [foreign, 'fixture-' + foreign, instance, createHash('sha256').update(foreign).digest('hex')]);
+  await fixture.query('INSERT INTO "Idea" (id,"ownerId",title,"updatedAt") VALUES ($1,$2,$3,now())',
+    [foreignIdea, foreign, 'Foreign synthetic idea']);
+  await seedMemory(foreignIdea, 'Foreign account confidential marker', 'ACTIVE', foreign);
+  await fixture.query(`INSERT INTO "MemoryProposal" (id,"ideaId",kind,candidate)
+    VALUES ($1,$2,'FACT',$3)`, [randomUUID(), idea, { text: 'Pending confidential marker' }]);
+  fake = undefined;
+  const followUp = await submit(first, 202, randomUUID(),
+    { clientSubmissionId: randomUUID(), content: correctionMessage });
+  await delivered(followUp.generationId);
+  await terminal(followUp.generationId, 'COMPLETED');
+  assert.equal(lastContext.current.id, followUp.messageId);
+  assert.equal(lastContext.current.text.length, 1200);
+  assert.equal(lastContext.current.truncated, true);
+  assert.deepEqual(lastContext.previous.map(turn => [turn.user.id, turn.assistant?.id]),
+    [[admitted.messageId, replacement.outputMessageId]]);
+  assert.deepEqual(lastContext.memory.map(item => item.id), [reviewed]);
+  const answer = (await history(first)).items.at(-1).content;
+  assert.ok(answer.includes(correction));
+  assert.ok(answer.includes('Reviewed channel is referrals'));
+  assert.doesNotMatch(answer, /confidential marker|outside the bound/);
+  assert.notEqual(answer, initialTranscript[1].content);
+  assert.deepEqual(await ledger(followUp.generationId), { reservationState: 'SETTLED', measuredUnits: '1.00000' });
+
+  const earlySubmission = await submit(second);
+  const early = earlySubmission.generationId;
   assert.equal((await cancel(early)).status, 'CANCEL_REQUESTED');
   await poll(early);
   assert.equal(await queue.getJob(early), undefined);
@@ -508,8 +596,33 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, run, startServ
   const during = (await submit(second)).generationId;
   await delivered(during);
   await Promise.race([started, sleep(4000).then(() => { throw new Error('Fake did not start'); })]);
+  assert.deepEqual(lastContext.previous.map(turn => [turn.user.id, turn.assistant?.id]), [[earlySubmission.messageId, undefined]]);
+  assert.deepEqual(lastContext.memory.map(item => item.id), [reviewed]);
   assert.equal((await status(during)).status, 'RUNNING');
-  try { assert.equal((await cancel(during)).status, 'CANCEL_REQUESTED'); }
+  try {
+    const active = await work.scope(during);
+    const { rows: [{ leaseEpoch }] } = await fixture.query('SELECT "leaseEpoch" FROM "GenerationAttempt" WHERE id=$1', [during]);
+    const read = (id, epoch, contextEpoch, expiry = Date.now() + 1000) => pools.worker.query(
+      'SELECT m06_context.read_attempt($1,$2,$3,$4) AS context', [id, epoch, contextEpoch, expiry])
+      .then(({ rows }) => rows[0].context);
+    assert.equal(await read(during, leaseEpoch, active.contextEpoch + 1), null);
+    assert.equal(await read(during, leaseEpoch + 1, active.contextEpoch), null);
+    assert.equal(await read(during, leaseEpoch, active.contextEpoch, Date.now() - 1), null);
+    assert.equal(await work.readContext({ ...active, accountId: foreign }, leaseEpoch, Date.now() + 1000), undefined);
+    const removed = await seedMemory(idea, 'Removed confidential marker', 'REMOVED');
+    assert.notEqual(removed, reviewed);
+    const visible = await read(during, leaseEpoch, active.contextEpoch);
+    assert.deepEqual(visible.previous, []);
+    assert.deepEqual(visible.memory.map(item => item.id), [reviewed]);
+    const deletion = randomUUID();
+    await fixture.query(`INSERT INTO "DataOperation"
+      (id,"accountId","ideaId",kind,"deadlineAt","clerkInstanceId","ownerSubjectKey","deletionScopeKey","deletionState","policyVersion")
+      VALUES ($1,$2,$3,'DELETE_IDEA',now()+interval '120 seconds',$4,$5,$6,'DELETION_REQUESTED','synthetic')`,
+    [deletion, account, idea, instance, digest, 'context:' + run]);
+    try { assert.equal(await read(during, leaseEpoch, active.contextEpoch), null); }
+    finally { await fixture.query('DELETE FROM "DataOperation" WHERE id=$1', [deletion]); }
+    assert.equal((await cancel(during)).status, 'CANCEL_REQUESTED');
+  }
   finally { resume('Discarded by cancellation'); }
   await terminal(during, 'CANCELLED');
   assert.equal((await ledger(during)).reservationState, 'SETTLED');
@@ -532,6 +645,7 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, run, startServ
   assert.equal((await ledger(known)).reservationState, 'RESERVED');
   const expireLease = id => fixture.query('UPDATE "GenerationAttempt" SET "leaseUntil"=now()-interval \'1 second\' WHERE id=$1', [id]);
   await expireLease(known);
+  assert.equal(await work.readContext(scope, attempt.leaseEpoch, Date.now() + 1000), undefined);
   assert.equal(await work.heartbeat(scope, attempt.leaseEpoch), false);
   await worker.recover([known]);
   await worker.recover([known]);
@@ -619,9 +733,8 @@ test('isolated HTTP submission through outbox, BullMQ and the fake generation wo
       ['--entrypoint', 'sh'], ['-ec', 'while [ ! -s /tmp/run-config ]; do sleep 1; done; exec redis-server /tmp/run-config']);
     docker(['exec', '-i', redisId, 'sh', '-ec', 'umask 077; cat > /tmp/run-config-new; mv /tmp/run-config-new /tmp/run-config'],
       'bind 0.0.0.0\nprotected-mode yes\nrequirepass ' + credentials.redis + '\nsave ""\nappendonly no\n');
-    for (const [name, role] of Object.entries(roles)) {
-      pools[name] = new Pool({ connectionString: 'postgresql://' + role + ':' + credentials[name] +
-        '@127.0.0.1:55435/' + database, statement_timeout: 5000 });
+    for (const name of Object.keys(roles)) {
+      pools[name] = restrictedPool(name, credentials);
       await verify(pools[name], name, run);
     }
     redis = new Redis(redisUrl.href, { maxRetriesPerRequest: 0, connectTimeout: 1000 });

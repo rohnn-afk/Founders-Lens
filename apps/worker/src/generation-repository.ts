@@ -86,6 +86,16 @@ export function generationRepository(pool: Pool) {
 
   return {
     async scope(id: string) { return (await pool.query<Scope>(scopeSql, [id])).rows[0]; },
+    readContext(scope: Scope, epoch: number, clearanceExpiry: number) {
+      return locked(scope, async (tx, state) => {
+        if (state.status !== 'RUNNING' || !state.live || !state.remainingMs || state.leaseEpoch !== epoch ||
+          state.contextEpoch !== scope.contextEpoch || !await clearanceCurrent(tx, clearanceExpiry)) return;
+        const { rows: [row] } = await tx.query<{ context: unknown }>(
+          'SELECT m06_context.read_attempt($1,$2,$3,$4) AS context',
+          [scope.id, epoch, scope.contextEpoch, clearanceExpiry]);
+        return row?.context;
+      });
+    },
     claim(scope: Scope, recover: boolean, clearanceExpiry: number) {
       return locked(scope, async (tx, state) => {
         if (!['PENDING', 'RUNNING', 'CANCEL_REQUESTED'].includes(state.status)) {
