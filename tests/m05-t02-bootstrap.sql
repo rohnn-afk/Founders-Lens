@@ -5,9 +5,13 @@
 BEGIN;
 DO $verify$
 BEGIN
-  IF current_database() <> 'founders_lens_m05_t02_test' OR
-     shobj_description((SELECT oid FROM pg_catalog.pg_database WHERE datname=current_database()),'pg_database')
-       IS DISTINCT FROM 'isolated M05-T02 run c4493052-1f5e-4060-8e40-700e374c3946' THEN
+  IF NOT COALESCE((
+    SELECT (datname='founders_lens_m05_t02_test' AND shobj_description(oid,'pg_database') =
+        'isolated M05-T02 run c4493052-1f5e-4060-8e40-700e374c3946')
+      OR (datname='founders_lens_m05_e2e_test' AND shobj_description(oid,'pg_database') ~
+        '^isolated M05-E2E run [0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
+    FROM pg_catalog.pg_database WHERE datname=current_database()
+  ), false) THEN
     RAISE EXCEPTION 'Unexpected T02 database';
   END IF;
 END

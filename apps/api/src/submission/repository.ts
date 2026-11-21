@@ -48,7 +48,7 @@ async function lockSubmissionScope(tx: Tx, principal: Principal, command: Submis
 async function saveReceipt(tx: Tx, scope: ReceiptKey, fingerprint: string, ref: AcceptanceRef, now: Date, ttl: number) {
   await tx.idempotencyRecord.create({ data: { ...scope, requestFingerprint: fingerprint,
     algorithmVersion: fingerprintVersion, status: 'SUCCEEDED', responseStatus: 202,
-    responseRef: ref, createdAt: now, expiresAt: atOffset(now, ttl) } });
+    responseRef: ref, createdAt: now, expiresAt: atOffset(now, ttl) }, select: { id: true } });
 }
 
 async function resolveReplay(tx: Tx, scope: ReceiptKey, command: SubmissionCommand, now: Date, policy?: AdmissionPolicy) {
@@ -123,21 +123,27 @@ async function persistAcceptance(tx: Tx, scope: ReceiptKey, command: SubmissionC
   const ref = { messageId: randomUUID(), generationId: randomUUID() };
   // An atomic transaction commits these writes together. If the final outbox
   // write fails, rollback restores both the sequence and the reserved budget.
-  await tx.conversation.update({ where: { id: command.conversationId }, data: { nextSequence: { increment: 1 } } });
+  await tx.conversation.update({ where: { id: command.conversationId }, data: { nextSequence: { increment: 1 } },
+    select: { id: true } });
   await tx.message.create({ data: { id: ref.messageId, ideaId: command.ideaId, conversationId: command.conversationId,
     sequence, role: 'USER', content: { text: command.body.content }, contentSchemaVersion: 1,
-    clientSubmissionKey: command.body.clientSubmissionId, submissionSha256: command.contentHash, createdAt: now } });
-  await tx.generationAttempt.create({ data: { id: ref.generationId, triggerMessageId: ref.messageId,
-    conversationId: command.conversationId, attemptNumber: 1, status: 'PENDING', createdAt: now, deadlineAt } });
+    clientSubmissionKey: command.body.clientSubmissionId, submissionSha256: command.contentHash, createdAt: now },
+  select: { id: true } });
+  // Admission never reads private orchestration metadata or sets worker fences.
+  await tx.$executeRaw`INSERT INTO "GenerationAttempt"
+    (id,"triggerMessageId","conversationId","attemptNumber","createdAt","deadlineAt")
+    VALUES (${ref.generationId}::uuid,${ref.messageId}::uuid,${command.conversationId}::uuid,1,${now},${deadlineAt})`;
   await tx.usageLedger.create({ data: { accountId: scope.accountId, operationType: policy.operationType, unit: policy.unit,
     reservationId: ref.generationId, reconciliationKey: 'message-submission:' + ref.generationId,
-    reservationState: 'RESERVED', provider: null, reservedUnits: policy.reservationUnits, measuredUnits: 0, occurredAt: now } });
+    reservationState: 'RESERVED', provider: null, reservedUnits: policy.reservationUnits, measuredUnits: 0, occurredAt: now },
+  select: { id: true } });
   await saveReceipt(tx, scope, command.fingerprint, ref, now, policy.receiptTtlMs);
   // The outbox is a durable instruction for later delivery. Store IDs only,
   // so publishing later never requires keeping an extra copy of private text.
-  await tx.outboxEvent.create({ data: { kind: 'generation.requested', aggregateType: 'GenerationAttempt',
-    aggregateId: ref.generationId, status: 'PENDING', payload: { generationId: ref.generationId },
-    createdAt: now, nextAttemptAt: now } });
+  await tx.$executeRaw`INSERT INTO "OutboxEvent"
+    (id,kind,"aggregateType","aggregateId",payload,"createdAt","nextAttemptAt")
+    VALUES (${randomUUID()}::uuid,'generation.requested','GenerationAttempt',${ref.generationId}::uuid,
+      ${JSON.stringify({ generationId: ref.generationId })}::jsonb,${now},${now})`;
   return ref;
 }
 

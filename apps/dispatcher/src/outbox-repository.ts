@@ -25,7 +25,8 @@ const lifecycle = `FROM "GenerationAttempt" g JOIN "Conversation" c ON c.id=g."c
   AND NOT EXISTS (SELECT 1 FROM "IdentityTombstone" t WHERE t."clerkInstanceId"=a."clerkInstanceId"
     AND t."subjectKey"=a."subjectKey" AND t."subjectKeyVersion"=a."subjectKeyVersion")
   AND NOT EXISTS (SELECT 1 FROM "DataOperation" d WHERE d."clerkInstanceId"=a."clerkInstanceId"
-    AND d.kind='DELETE_ACCOUNT' AND d."ownerSubjectKey"=a."subjectKey" AND d."subjectKeyVersion"=a."subjectKeyVersion")`;
+    AND d.kind='DELETE_ACCOUNT' AND d."ownerSubjectKey"=a."subjectKey" AND d."subjectKeyVersion"=a."subjectKeyVersion")
+  AND NOT EXISTS (SELECT 1 FROM "DataOperation" d WHERE d.kind='DELETE_IDEA' AND d."ideaId"=i.id)`;
 
 export function outboxRepository(pool: Pool, fixtureIds: readonly string[]) {
   if (!fixtureIds.length || !fixtureIds.every(isUuid) || new Set(fixtureIds).size !== fixtureIds.length) {
