@@ -25,10 +25,25 @@ export type Message = {
 export type Acceptance = { messageId: string; generationId: string; statusUrl: string; eventsUrl: string };
 export type MessageBody = Readonly<{ content: string; clientSubmissionId: string }>;
 export type MessageApi = {
+  generation?: GenerationApi;
   submit(id: string, body: MessageBody, key: string, signal: AbortSignal): Promise<
     { status: 202; data: Acceptance & { status: 'PENDING' } } | Extract<Reply<never>, { status: number; data?: never }>>;
   correlate(id: string, submissionId: string, signal: AbortSignal): Promise<Reply<Acceptance & { clientSubmissionId: string }>>;
   history(id: string, cursor: string | null, signal: AbortSignal): Promise<Reply<Page<Message>>>;
+};
+export type GenerationState = 'PENDING' | 'RUNNING' | 'CANCEL_REQUESTED' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+export type Generation = {
+  id: string; conversationId: string; triggerMessageId: string; status: GenerationState;
+  selected: boolean; createdAt: string; outputMessageId?: string; startedAt?: string; finishedAt?: string;
+  error?: { code: string; retryable: boolean };
+};
+type GenerationFailure = { status: 400 | 401 | 403 | 404 | 409 | 413 | 415 | 429 | 500 | 503;
+  retryAfterMs?: number; error?: { code: string; requestId: string; retryable: boolean } };
+export type GenerationReply = { status: 200 | 202; data: Generation } | GenerationFailure;
+export type GenerationApi = {
+  status(id: string, signal: AbortSignal): Promise<GenerationReply>;
+  cancel(id: string, key: string, signal: AbortSignal): Promise<GenerationReply>;
+  regenerate(conversationId: string, triggerMessageId: string, key: string, signal: AbortSignal): Promise<GenerationReply>;
 };
 export interface WorkspaceApi {
   ideas(cursor: string | null, signal: AbortSignal): Promise<Reply<Page<Idea>>>;

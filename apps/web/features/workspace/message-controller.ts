@@ -19,6 +19,7 @@ export function createMessageController(api: MessageApi, storage: RecoveryStorag
   let record: RecoveryRecord | undefined;
   let state: MessageState = 'editing';
   let initialized = false;
+  let acceptance: Acceptance | undefined;
 
   function restore() {
     if (initialized || !isCurrent(scope)) return state;
@@ -48,6 +49,7 @@ export function createMessageController(api: MessageApi, storage: RecoveryStorag
       return state = 'rejected';
     }
     state = 'sending';
+    acceptance = undefined;
     const body = Object.freeze({ content, clientSubmissionId: makeId() });
     record = storage.save(target, body.clientSubmissionId, makeId());
     try {
@@ -56,6 +58,7 @@ export function createMessageController(api: MessageApi, storage: RecoveryStorag
       // generations must still match before changing state or storage.
       if (!isCurrent(scope) || blocked(reply.status)) return;
       if (reply.status === 202 && reply.data.status === 'PENDING' && validAcceptance(reply.data)) {
+        acceptance = reply.data;
         resolveRecord();
         return state = 'accepted';
       }
@@ -83,6 +86,7 @@ export function createMessageController(api: MessageApi, storage: RecoveryStorag
       const reply = await api.correlate(conversationId, record.clientSubmissionId, scope.signal);
       if (!isCurrent(scope) || blocked(reply.status)) return;
       if (reply.status === 200 && reply.data.clientSubmissionId === record.clientSubmissionId && validAcceptance(reply.data)) {
+        acceptance = reply.data;
         resolveRecord();
         return state = 'accepted';
       }
@@ -93,5 +97,6 @@ export function createMessageController(api: MessageApi, storage: RecoveryStorag
     return state = 'unknown';
   }
 
-  return { restore, send, check, state: () => state };
+  return { restore, send, check, state: () => state,
+    acceptance: () => isCurrent(scope) ? acceptance : undefined };
 }

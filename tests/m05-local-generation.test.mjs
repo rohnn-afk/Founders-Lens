@@ -1,11 +1,15 @@
 // Opt-in HTTP integration composition. Owns disposable Docker resources and
 // joins the API, dispatcher and worker through their real persistence adapters.
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { readFile } from 'node:fs/promises';
+import { access, cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
+import { promisify } from 'node:util';
 import test from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Pool } from 'pg';
@@ -38,6 +42,240 @@ const roles = { api: 'fl_m05_t02_api', worker: 'fl_m05_t02_worker', fixture: 'fl
 const policy = { operationType: 'generation', unit: 'synthetic_unit', reservationUnits: 1,
   quotaUnits: 5, deadlineMs: 120_000, receiptTtlMs: 120_000 };
 const secret = () => randomBytes(32).toString('hex');
+const browserMode = process.argv.includes('--browser');
+const edge = process.env.WORKSPACE_EDGE ?? 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
+
+async function loopback(server) {
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  return server.address().port;
+}
+
+async function unusedPort() {
+  const server = createServer();
+  const port = await loopback(server);
+  await new Promise(resolve => server.close(resolve));
+  return port;
+}
+
+async function browserJourney({ account, idea, first, url, token, allowed, delivered, setFake, verifyUsage }) {
+  const temp = await realpath(tmpdir());
+  const root = await mkdtemp(join(temp, 'fl-m05-browser-'));
+  const children = [];
+  let proxy, socket;
+  function child(command, args, cwd) {
+    const result = spawn(command, args, { cwd, windowsHide: true, stdio: 'ignore',
+      env: { ...process.env, NEXT_TELEMETRY_DISABLED: '1' } });
+    result.on('error', () => {});
+    children.push(result);
+    return result;
+  }
+  try {
+    const web = join(root, 'apps', 'web');
+    await mkdir(web, { recursive: true });
+    await cp('tsconfig.base.json', join(root, 'tsconfig.base.json'));
+    for (const entry of ['app', 'features', 'package.json', 'tsconfig.json', 'next.config.ts', 'next-env.d.ts']) {
+      await cp(join('apps', 'web', entry), join(web, entry), { recursive: true });
+    }
+    await symlink(join(process.cwd(), 'node_modules'), join(root, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
+    const source = await readFile('tests/fixtures/m05-workspace-browser.tsx', 'utf8');
+    await writeFile(join(web, 'app', 'app', 'layout.tsx'), source.replace('__M05_FIXTURE_ACCOUNT__', account));
+    const next = require.resolve('next/dist/bin/next');
+    const nextPort = await unusedPort(), edgePort = await unusedPort();
+    await promisify(execFile)(process.execPath, [next, 'build', '--webpack'], {
+      cwd: web, windowsHide: true, timeout: 120_000, env: { ...process.env, NEXT_TELEMETRY_DISABLED: '1' }
+    });
+    child(process.execPath, [next, 'start', '--hostname', '127.0.0.1', '--port', String(nextPort)], web);
+    let loseSubmission = true, pauseStatus = false, archived = false, deny = false, dispatchFailure;
+    let nextGeneration;
+    const conversationPath = '/conversations/' + first;
+    const ideaPath = '/ideas/' + idea;
+    const metadata = () => {
+      const timestamp = new Date().toISOString();
+      const status = archived ? 'ARCHIVED' : 'ACTIVE';
+      return { idea: { id: idea, title: 'Synthetic idea', version: 1, status, createdAt: timestamp, updatedAt: timestamp },
+        conversation: { id: first, ideaId: idea, title: 'Synthetic conversation', version: 1, status, proactiveResearch: false } };
+    };
+    const json = (res, status, data) => res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+      .end(JSON.stringify(data));
+    proxy = createServer(async (req, res) => {
+      try {
+        const origin = 'http://127.0.0.1:' + proxy.address().port;
+        if (req.headers.host !== new URL(origin).host || req.headers['sec-fetch-site'] === 'cross-site' ||
+          (req.headers.origin && req.headers.origin !== origin)) return json(res, 403, {});
+        const target = new URL(req.url, origin);
+        if (target.origin !== origin) return json(res, 403, {});
+        if (!target.pathname.startsWith('/__m05/api/')) {
+          if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 405, {});
+          const next = await fetch('http://127.0.0.1:' + nextPort + target.pathname + target.search, { redirect: 'manual' });
+          res.writeHead(next.status, { 'Content-Type': next.headers.get('content-type') ?? 'application/octet-stream' });
+          return res.end(Buffer.from(await next.arrayBuffer()));
+        }
+        const path = target.pathname.slice('/__m05/api'.length);
+        const method = req.method;
+        const { idea: fixtureIdea, conversation } = metadata();
+        if (method === 'GET' && !target.search) {
+          if (path === ideaPath) return json(res, 200, fixtureIdea);
+          if (path === conversationPath) return json(res, 200, conversation);
+        }
+        const attempt = /^\/generations\/([a-f0-9-]{36})(\/cancel)?$/.exec(path);
+        const generationRead = attempt && allowed.has(attempt[1]) && !attempt[2] && method === 'GET';
+        const cancellation = attempt && allowed.has(attempt[1]) && attempt[2] === '/cancel' && method === 'POST';
+        const messages = path === conversationPath + '/messages';
+        const correlation = path.startsWith(conversationPath + '/submissions/') &&
+          /^[a-f0-9-]{36}$/.test(path.slice((conversationPath + '/submissions/').length));
+        const regeneration = path === conversationPath + '/regenerations' && method === 'POST';
+        if (!(generationRead || cancellation || (messages && ['GET', 'POST'].includes(method)) ||
+          (correlation && method === 'GET') || regeneration) ||
+          [...target.searchParams.keys()].some(key => !messages || method !== 'GET' || key !== 'cursor')) return json(res, 404, {});
+        if (deny) return json(res, 404, { error: { code: 'NOT_FOUND' } });
+        if (pauseStatus && generationRead) {
+          res.setHeader('Retry-After', '90');
+          return json(res, 429, { error: { code: 'RATE_LIMITED' } });
+        }
+        const chunks = [];
+        let length = 0;
+        for await (const chunk of req) {
+          length += chunk.length;
+          if (length > 128 * 1024) return json(res, 413, {});
+          chunks.push(chunk);
+        }
+        const reply = await fetch(url + path + target.search, { method,
+          headers: { Authorization: 'Bearer ' + token,
+            ...(req.headers['idempotency-key'] && { 'Idempotency-Key': req.headers['idempotency-key'] }),
+            ...(length && { 'Content-Type': 'application/json' }) },
+          body: length ? Buffer.concat(chunks) : undefined, redirect: 'error' });
+        const data = await reply.json();
+        if (reply.status === 202 && ((messages && method === 'POST') || regeneration)) {
+          nextGeneration = messages ? data.generationId : data.id;
+          allowed.add(nextGeneration);
+          if (messages && loseSubmission) {
+            loseSubmission = false;
+            return json(res, 500, { error: { code: 'FIXTURE_LOST_ACKNOWLEDGEMENT' } });
+          }
+        }
+        if (reply.headers.has('Retry-After')) res.setHeader('Retry-After', reply.headers.get('Retry-After'));
+        return json(res, reply.status, data);
+      } catch { return json(res, 503, { error: { code: 'DEPENDENCY_UNAVAILABLE' } }); }
+    });
+    const port = await loopback(proxy);
+    const origin = 'http://127.0.0.1:' + port;
+    const route = '/app/ideas/' + idea + '/conversations/' + first;
+    await until(async () => (await fetch('http://127.0.0.1:' + nextPort).catch(() => null))?.ok);
+    child(edge, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
+      '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=' + edgePort,
+      '--user-data-dir=' + join(root, 'profile'), 'about:blank']);
+    const endpoint = await until(async () => {
+      try { return (await (await fetch('http://127.0.0.1:' + edgePort + '/json/list')).json())
+        .find(page => page.type === 'page')?.webSocketDebuggerUrl; }
+      catch { return false; }
+    });
+    assert.equal(new URL(endpoint).hostname, '127.0.0.1');
+    socket = new WebSocket(endpoint);
+    await once(socket, 'open');
+    let sequence = 0;
+    async function cdp(method, params = {}) {
+      const id = ++sequence, result = Promise.withResolvers();
+      const timeout = setTimeout(() => result.reject(new Error('Browser command timed out: ' + method)), 6000);
+      const receive = event => {
+        const data = JSON.parse(event.data);
+        if (data.id !== id) return;
+        if (data.error) result.reject(new Error(method));
+        else result.resolve(data.result);
+      };
+      socket.addEventListener('message', receive);
+      try { socket.send(JSON.stringify({ id, method, params })); return await result.promise; }
+      finally { clearTimeout(timeout); socket.removeEventListener('message', receive); }
+    }
+    async function evaluate(expression) {
+      const result = await cdp('Runtime.evaluate', { expression, returnByValue: true });
+      if (result.exceptionDetails) throw new Error('Browser assertion could not evaluate');
+      return result.result.value;
+    }
+    const text = value => browserWait(() => evaluate('document.body.innerText.includes(' + JSON.stringify(value) + ')'), value);
+    async function browserWait(check, label) {
+      for (let attempt = 0; attempt < 160; attempt++) {
+        try { const result = await check(); if (result) return result; }
+        catch { /* Navigation can briefly replace the execution context. */ }
+        await sleep(125);
+      }
+      const page = await evaluate('document.querySelector("main")?.innerText ?? document.body.innerText');
+      throw new Error('Browser did not reach: ' + label + '. View: ' + page.slice(0, 500));
+    }
+    async function press(name) {
+      const selector = '[...document.querySelectorAll("button")].find(b=>b.textContent.trim()===' + JSON.stringify(name) + '&&!b.disabled)';
+      await browserWait(() => evaluate('Boolean(' + selector + ')'), name);
+      await evaluate(selector + '.focus()');
+      assert.equal(await evaluate('document.activeElement.textContent.trim()'), name);
+      const space = { key: ' ', code: 'Space', windowsVirtualKeyCode: 32, nativeVirtualKeyCode: 32 };
+      await cdp('Input.dispatchKeyEvent', { type: 'keyDown', ...space, text: ' ', unmodifiedText: ' ' });
+      await cdp('Input.dispatchKeyEvent', { type: 'keyUp', ...space });
+    }
+    await cdp('Page.bringToFront');
+    await cdp('Emulation.setFocusEmulationEnabled', { enabled: true });
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 375, height: 720, deviceScaleFactor: 1, mobile: true });
+    await cdp('Page.navigate', { url: origin + route });
+    await text('No saved messages.');
+    await evaluate(`(() => {
+      const field = document.querySelector('textarea');
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(field, 'Browser founder message');
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`);
+    await press('Send message');
+    await text('Acceptance is unknown.');
+    pauseStatus = true;
+    await press('Check Again');
+    await text('Status observation paused.');
+    assert.equal(await evaluate('document.body.innerText.includes("Synthetic assistant")'), false);
+    pauseStatus = false;
+    await press('Check status');
+    await text('Generation pending.');
+    const accepted = nextGeneration;
+    await delivered(accepted);
+    await text('Synthetic assistant');
+    await verifyUsage(accepted);
+    assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
+    let release, entered;
+    const running = new Promise(resolve => { entered = resolve; });
+    setFake(() => new Promise(resolve => { release = resolve; entered(); }));
+    await press('Regenerate');
+    const replacement = await browserWait(() => nextGeneration !== accepted && nextGeneration, 'regeneration acceptance');
+    void delivered(replacement).catch(error => { dispatchFailure = error; });
+    await Promise.race([running, sleep(4000).then(() => { throw dispatchFailure ?? new Error('Replacement did not start'); })]);
+    assert.equal(await evaluate('document.body.innerText.includes("Synthetic assistant")'), true);
+    try {
+      await press('Stop');
+      await text('Cancellation requested.');
+    } finally { release('Uncommitted replacement'); }
+    await text('Generation cancelled.');
+    await text('Synthetic assistant');
+    assert.equal(await evaluate('document.body.innerText.includes("Uncommitted replacement")'), false);
+    archived = true;
+    await cdp('Page.reload');
+    await text('Archived (read only)');
+    await text('Synthetic assistant');
+    assert.equal(await evaluate('Boolean(document.querySelector("textarea"))'), false);
+    deny = true;
+    await cdp('Page.reload');
+    await text('This workspace item is unavailable.');
+    assert.equal(await evaluate('document.body.innerText.includes("Synthetic assistant")'), false);
+  } finally {
+    socket?.close();
+    proxy?.closeAllConnections();
+    if (proxy) await new Promise(resolve => proxy.close(resolve));
+    for (const process of children.reverse()) {
+      if (process.exitCode === null && process.signalCode === null) {
+        const finished = once(process, 'exit').catch(() => {});
+        process.kill();
+        await finished;
+      }
+    }
+    const owned = await realpath(root);
+    assert.equal(dirname(owned), temp);
+    assert.match(basename(owned), /^fl-m05-browser-[a-zA-Z0-9]+$/);
+    await rm(owned, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+}
 
 function docker(args, input) {
   try {
@@ -143,7 +381,8 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, run, startServ
     const proof = evidence(suppressionScopeKey(scope), query);
     return proof && { ...proof, integrity: 'VERIFIED', coverage: 'COMPLETE', authority: 'INDEPENDENT', epoch: run };
   } };
-  const authenticate = async request => request.get('authorization') === 'Bearer test.only.token' ? principal : null;
+  const fixtureToken = 'test.' + secret() + '.fixture';
+  const authenticate = async request => request.get('authorization') === 'Bearer ' + fixtureToken ? principal : null;
   const app = express();
   app.use('/api/v1', submissionRoutes(createSubmissionService(createSubmissionRepository(prisma), apiAuthority,
     { clock: () => new Date(), policy, cursorSecret: randomBytes(32) }), authenticate));
@@ -153,7 +392,7 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, run, startServ
   await once(server, 'listening');
   const url = 'http://127.0.0.1:' + server.address().port + '/api/v1';
   async function request(path, expected, { method = 'GET', key, body } = {}) {
-    const response = await fetch(url + path, { method, headers: { Authorization: 'Bearer test.only.token',
+    const response = await fetch(url + path, { method, headers: { Authorization: 'Bearer ' + fixtureToken,
       ...(key && { 'Idempotency-Key': key }), ...(body && { 'Content-Type': 'application/json' }) },
     body: body && JSON.stringify(body) });
     const result = await response.json();
@@ -207,6 +446,17 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, run, startServ
       const value = await status(id);
       return value.status === state && value;
     });
+  }
+
+  if (browserMode) {
+    return browserJourney({ account, idea, first, url, token: fixtureToken, allowed, delivered,
+      setFake: next => { fake = next; },
+      async verifyUsage(id) {
+        const completed = await status(id);
+        assert.ok(completed.selected && completed.outputMessageId);
+        assert.deepEqual(await ledger(id), { reservationState: 'SETTLED', measuredUnits: '1.00000' });
+        assert.equal((await fixture.query('SELECT id FROM "Message" WHERE "conversationId"=$1', [first])).rowCount, 2);
+      } });
   }
 
   const key = randomUUID(), body = { clientSubmissionId: randomUUID(), content: 'Synthetic USER' };
@@ -336,8 +586,12 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, run, startServ
 }
 
 test('isolated HTTP submission through outbox, BullMQ and the fake generation worker', {
-  skip: !process.argv.includes('--live'), timeout: 120_000
-}, async () => {
+  skip: !process.argv.includes('--live'), timeout: browserMode ? 240_000 : 120_000
+}, async t => {
+  if (browserMode && !await access(edge).then(() => true, () => false)) {
+    t.skip('Edge executable is unavailable');
+    return;
+  }
   const run = randomUUID(), prefix = 'founders-lens-m05-e2e-' + run;
   const network = 'm05-e2e-' + run;
   const credentials = Object.fromEntries([...Object.keys(roles), 'bootstrap', 'redis'].map(name => [name, secret()]));

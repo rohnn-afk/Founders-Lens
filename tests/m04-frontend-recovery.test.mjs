@@ -51,12 +51,12 @@ function correlation(clientSubmissionId) {
 test('one send survives a lost acknowledgement, refresh and inconclusive GETs without another POST', async () => {
   const { controller, records, scope, stale, advance } = setup();
   const lost = Promise.withResolvers();
-  let posts = 0, checks = 0, sentId;
+  let posts = 0, checks = 0, sentId, confirmed;
   const api = {
     submit(_id, body) { posts++; sentId = body.clientSubmissionId; return lost.promise; },
     async correlate(_id, submissionId) {
       assert.equal(submissionId, sentId);
-      return ++checks < 3 ? { status: 404 } : { status: 200, data: correlation(submissionId) };
+      return ++checks < 3 ? { status: 404 } : { status: 200, data: (confirmed = correlation(submissionId)) };
     }
   };
   const first = controller(api);
@@ -75,9 +75,20 @@ test('one send survives a lost acknowledgement, refresh and inconclusive GETs wi
   assert.equal(await restored.check(), 'unknown');
   assert.deepEqual([...records.values()], [record]);
   assert.equal(await restored.check(), 'accepted');
+  assert.deepEqual(restored.acceptance(), confirmed);
   assert.equal(records.size, 0);
   assert.equal(posts, 1);
   assert.equal(checks, 3);
+});
+
+test('accepted generation reference is available only in the current route', async () => {
+  const { controller, stale } = setup();
+  const acceptance = { ...correlation(randomUUID()), status: 'PENDING' };
+  const current = controller({ async submit() { return { status: 202, data: acceptance }; } });
+  assert.equal(await current.send('fixture'), 'accepted');
+  assert.deepEqual(current.acceptance(), acceptance);
+  stale.enter(null);
+  assert.equal(current.acceptance(), undefined);
 });
 
 test('denied storage permits only in-memory GET recovery, and expired or tampered records are removed', async () => {
