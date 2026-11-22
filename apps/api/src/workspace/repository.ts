@@ -18,7 +18,9 @@ type ReceiptUpdate = Pick<Prisma.IdempotencyRecordUncheckedCreateInput,
 
 export class WorkspaceTransaction {
   constructor(private readonly tx: Prisma.TransactionClient) {}
-  idea(principal: Principal, id: string, access: IdeaAccess) { return lockIdea(this.tx, principal, id, access); }
+  idea(principal: Principal, id: string, access: IdeaAccess, beforeProjection?: () => void) {
+    return lockIdea(this.tx, principal, id, access, beforeProjection);
+  }
   createIdea(data: Prisma.IdeaUncheckedCreateInput) { return this.tx.idea.create({ data, select: ideaFields }); }
   updateIdea(id: string, version: number, data: Prisma.IdeaUpdateInput) {
     return this.tx.idea.update({ where: { id, version }, data, select: ideaFields });
@@ -90,8 +92,16 @@ export class WorkspaceRepository {
   }
 }
 
-export async function lockIdea(tx: Prisma.TransactionClient, principal: Principal, id: string, access: IdeaAccess) {
+/** Lock the owned idea and recheck deletion and any request deadline before projecting private fields. */
+export async function lockIdea(tx: Prisma.TransactionClient, principal: Principal, id: string, access: IdeaAccess,
+  beforeProjection?: () => void) {
   await tx.$queryRaw`SELECT id FROM "Idea" WHERE id = ${id}::uuid AND "ownerId" = ${principal.localUserId}::uuid FOR UPDATE`;
+  // A pending operation can precede the lifecycle field changing. Check it
+  // after locking the scoped row and before selecting founder content.
+  if (await tx.dataOperation.findFirst({ where: { kind: 'DELETE_IDEA', ideaId: id }, select: { id: true } })) {
+    throw new SecurityError('RESOURCE_NOT_FOUND');
+  }
+  beforeProjection?.();
   const idea = await tx.idea.findFirst({ where: { id, ...ideaScope(principal, access) }, select: ideaFields });
   if (!idea) throw new SecurityError('RESOURCE_NOT_FOUND');
   return idea;

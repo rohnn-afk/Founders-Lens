@@ -3,6 +3,7 @@
 
 import { z } from 'zod';
 import { createApp } from './app.js';
+import { localReadOnlyWorkspace } from './workspace/read-only-composition.js';
 
 const config = z.object({
   port: z.coerce.number().int().min(0).max(65535).default(3001)
@@ -12,7 +13,11 @@ if (!config.success) {
   console.error('API configuration invalid.');
   process.exitCode = 1;
 } else {
-  const server = createApp().listen(config.data.port, '127.0.0.1', () => {
+  const local = await localReadOnlyWorkspace(process.env).catch(() => {
+    console.error('Local workspace clearance unavailable.');
+    return undefined;
+  });
+  const server = createApp(local?.router).listen(config.data.port, '127.0.0.1', () => {
     const address = server.address();
     if (address && typeof address !== 'string') {
       console.log(`API shell listening on http://127.0.0.1:${address.port}`);
@@ -34,9 +39,10 @@ if (!config.success) {
       process.exitCode = 1;
     }, 5000);
     deadline.unref();
-    server.close((error) => {
+    server.close(async (error) => {
       clearTimeout(deadline);
-      process.exitCode = error ? 1 : 0;
+      const closed = await local?.close().then(() => true, () => false);
+      process.exitCode = error || closed === false ? 1 : 0;
       console.log('API shell stopped.');
     });
   };

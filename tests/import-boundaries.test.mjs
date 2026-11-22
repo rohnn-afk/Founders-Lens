@@ -83,7 +83,9 @@ function assertWebBoundary(file, { imports, processReferences, client }) {
       assert.ok(!authModules.has(target), `Authentication entry point imported by ${file}`);
     } else {
       const packageName = specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0];
-      assert.ok(browserPackages.has(packageName) || authImports?.includes(specifier), `Backend dependency ${specifier} in ${file}`);
+      const workspaceSession = client && file === 'features/workspace/read-only-ideas.tsx' && specifier === '@clerk/nextjs';
+      assert.ok(browserPackages.has(packageName) || authImports?.includes(specifier) || workspaceSession,
+        `Backend dependency ${specifier} in ${file}`);
     }
   }
 }

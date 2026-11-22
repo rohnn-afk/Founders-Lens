@@ -5,6 +5,7 @@ import { auth } from '@clerk/nextjs/server';
 import { redirect } from 'next/navigation';
 import { Suspense, type ReactNode } from 'react';
 import { WorkspaceProvider } from '../../features/workspace/workspace-provider';
+import { ReadOnlyIdeas } from '../../features/workspace/read-only-ideas';
 
 async function SignedInShell() {
   let signedIn: boolean;
@@ -21,7 +22,8 @@ async function SignedInShell() {
   return (
     <main style={{ maxWidth: '48rem', margin: '3rem auto', padding: '0 1.5rem' }}>
       <h1>Workspace</h1>
-      <p role="status">You are signed in. Workspace data is currently unavailable.</p>
+      <p>You are signed in.</p>
+      <ReadOnlyIdeas />
       <SignOutButton redirectUrl="/sign-in"><button type="button">Sign out</button></SignOutButton>
     </main>
   );

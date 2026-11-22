@@ -33,10 +33,10 @@ export class WorkspaceService {
   constructor(private readonly repo: WorkspaceRepository, private readonly cursor: WorkspaceCursor,
     private readonly authority: SuppressionAuthority = unavailableSuppressionAuthority()) {}
 
-  private async requireAccountClearance(principal: Principal) {
+  private async requireAccountClearance(principal: Principal, authority = this.authority) {
     if (principal.accountStatus !== 'ACTIVE') throw new SecurityError('ACCOUNT_UNAVAILABLE');
     if (principal.subjectKeys.length === 0) throw new SecurityError('DEPENDENCY_UNAVAILABLE');
-    for (const key of principal.subjectKeys) await requireClearance(this.authority, { kind: 'ACCOUNT',
+    for (const key of principal.subjectKeys) await requireClearance(authority, { kind: 'ACCOUNT',
       instanceId: principal.clerkInstanceId, subjectKeyVersion: key.version, subjectKey: key.digest, incarnation: 'ALL' });
   }
   private async authorizeIdeaAccess(principal: Principal, id: string, access: IdeaAccess) {
@@ -57,17 +57,31 @@ export class WorkspaceService {
     if (Buffer.byteLength(JSON.stringify(result)) > 4 * 1024 * 1024) throw new SecurityError('DEPENDENCY_UNAVAILABLE');
     return result;
   }
-  async ideas(principal: Principal, query: List) {
-    await this.requireAccountClearance(principal);
+  /** List one owner-scoped page, rejecting the entire response if any clearance expires. */
+  async ideas(principal: Principal, query: List, verifyBeforeResponse?: () => Promise<void>) {
+    let validUntil = Infinity;
+    // Keep the earliest deadline from the evidence that the existing policy
+    // validates. This wrapper never supplies or caches clearance.
+    const requestAuthority: SuppressionAuthority = { lookup: async (scope, request) => {
+      const evidence = await this.authority.lookup(scope, request);
+      if (evidence) validUntil = Math.min(validUntil, evidence.validUntil);
+      return evidence;
+    } };
+    const requireCurrentEvidence = () => {
+      if (Date.now() >= validUntil) throw new SecurityError('DEPENDENCY_UNAVAILABLE');
+    };
+    await this.requireAccountClearance(principal, requestAuthority);
     const scope = this.cursorScope(principal), limit = query.limit ?? 25;
     const candidates = await this.repo.ideaPageMetadata(principal, this.cursor.decode(scope, query.cursor), limit + 1);
-    for (const item of candidates.slice(0, limit)) await authorizeIdea(principal, item, this.authority, 'read');
-    return this.repo.transaction(principal, async tx => {
+    for (const item of candidates.slice(0, limit)) await authorizeIdea(principal, item, requestAuthority, 'read');
+    const page = await this.repo.transaction(principal, async tx => {
+      requireCurrentEvidence();
       const rows = [];
       for (const candidate of candidates.slice(0, limit)) {
         // Clearance applies to the candidates just checked. If a row changed
         // before we locked it, fail closed instead of returning a changed page.
-        const row = await tx.idea(principal, candidate.id, 'read');
+        const row = await tx.idea(principal, candidate.id, 'read', requireCurrentEvidence);
+        requireCurrentEvidence();
         if (row.updatedAt.getTime() !== candidate.updatedAt.getTime()) throw new SecurityError('DEPENDENCY_UNAVAILABLE');
         rows.push(row);
       }
@@ -76,6 +90,14 @@ export class WorkspaceService {
       if (last && candidates.length > limit) return { ...result, page: { hasMore: true, nextCursor: this.cursor.encode(scope, last) } };
       return result;
     });
+    requireCurrentEvidence();
+    if (verifyBeforeResponse) {
+      // Recovery verification performs I/O outside the transaction. Its wait
+      // must not let the page outlive the account and idea clearance used to read it.
+      await verifyBeforeResponse();
+      requireCurrentEvidence();
+    }
+    return page;
   }
   async idea(principal: Principal, id: string) {
     await this.authorizeIdeaAccess(principal, id, 'read');

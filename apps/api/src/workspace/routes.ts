@@ -34,14 +34,9 @@ function parseRequestBody(request: Request, response: Response): Promise<void> {
   }));
 }
 
-// Installed only by the isolated contract harness. The application router
-// remains closed until live identity and independent suppression are verified.
-export function workspaceRoutes(service: WorkspaceRouteOperations, authenticate: Authenticate): Router {
-  const router = Router();
-  router.use(attachRequestContext);
-  // Authenticate before route-specific validation. Handlers validate the inputs,
-  // delegate to the service, and use this shared boundary for sanitized errors.
-  const withAuthenticatedRequest = (action: Handler) => async (request: Request, response: Response) => {
+/** Authenticate before validation and keep private errors and responses out of caches. */
+function authenticatedRequest(authenticate: Authenticate, action: Handler) {
+  return async (request: Request, response: Response) => {
     response.set('Cache-Control', 'no-store');
     const requestId = requestContext(response).requestId;
     try {
@@ -56,7 +51,31 @@ export function workspaceRoutes(service: WorkspaceRouteOperations, authenticate:
       response.status(failure.status).json(failure.body);
     }
   };
-  router.get('/ideas', withAuthenticatedRequest(async (req, res, p) => { sendReadDto(res, await service.ideas(p, input(listQuery, req.query))); }));
+}
+
+/** Register only idea listing. The caller must supply a verified runtime admission boundary. */
+export function workspaceIdeaListRoutes(service: Pick<WorkspaceService, 'ideas'>, authenticate: Authenticate): Router {
+  const router = Router();
+  router.use(attachRequestContext);
+  // Express ordinarily treats HEAD as GET. The local slice admits only GET.
+  router.head('/ideas', (_request, response) => { response.set('Cache-Control', 'no-store').status(404).end(); });
+  router.get('/ideas', authenticatedRequest(authenticate, listIdeas(service)));
+  return router;
+}
+
+/** Share the query parser and response contract across workspace compositions. */
+function listIdeas(service: Pick<WorkspaceService, 'ideas'>): Handler {
+  return async (request, response, principal) => {
+    sendReadDto(response, await service.ideas(principal, input(listQuery, request.query)));
+  };
+}
+
+// The full workspace router is installed only by isolated contract harnesses.
+export function workspaceRoutes(service: WorkspaceRouteOperations, authenticate: Authenticate): Router {
+  const router = Router();
+  router.use(attachRequestContext);
+  const withAuthenticatedRequest = (action: Handler) => authenticatedRequest(authenticate, action);
+  router.get('/ideas', withAuthenticatedRequest(listIdeas(service)));
   router.post('/ideas', withAuthenticatedRequest(async (req, res, p) => {
     input(emptyQuery, req.query);
     const key = input(idempotencyKey, readSingleHeader(req, 'idempotency-key'));

@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -14,8 +14,99 @@ import { setTimeout as sleep } from 'node:timers/promises';
 const require = createRequire(import.meta.url);
 const browserLive = process.argv.includes('--clerk-browser-live');
 const reverificationLive = process.argv.includes('--clerk-reverification-live');
-const interactiveMode = browserLive || reverificationLive;
-if (browserLive && reverificationLive) throw new Error('Select exactly one interactive Clerk test mode.');
+const p6Bind = process.argv.includes('--p6-bind-account');
+const p6Sign = process.argv.includes('--p6-sign-clearance');
+const interactiveMode = browserLive || reverificationLive || p6Bind || p6Sign;
+if ([browserLive, reverificationLive, p6Bind, p6Sign].filter(Boolean).length > 1) throw new Error('Select exactly one Clerk test mode.');
+
+test('P6 operator signs local recovery clearance', { skip: !p6Sign, timeout: 25_000 }, async t => {
+  const { p6Operator, signP6Clearance } = await import('./fixtures/p6-local-operator.mjs');
+  const context = await p6Operator(t);
+  const values = await signP6Clearance(context, process.env.P6_OPERATOR_PRIVATE_KEY_FILE,
+    process.env.P6_OPERATOR_PUBLIC_KEY_FILE, process.env.P6_OPERATOR_CONFIRM);
+  await writeFile('.env.p6.decision.local', Object.entries(values)
+    .map(([key, value]) => `${key}='${value}'`).join('\n') + '\n', { flag: 'wx', mode: 0o600 });
+});
+
+/** Keep Clerk credentials in the same process as verification and provisioning. */
+test('P6 one-time Clerk binding', { skip: !p6Bind, timeout: 450_000 }, async t => {
+  const { p6Operator, verifyP6ProvisioningGrants, withP6Provisioning } = await import('./fixtures/p6-local-operator.mjs');
+  const { clerkConfig } = await import('../apps/api/dist/security/config.js');
+  const { createClerkBoundary } = await import('../apps/api/dist/security/clerk.js');
+  const { ClerkIdentityProvider } = await import('../apps/api/dist/security/identity-provider.js');
+  const { IdentityService } = await import('../apps/api/dist/security/identity-service.js');
+  const { PrismaIdentityRepository } = await import('../apps/api/dist/security/identity-repository.js');
+  const { PrismaClient } = await import('../apps/api/dist/generated/prisma/client.js');
+  const { PrismaPg } = createRequire(new URL('../apps/api/package.json', import.meta.url))('@prisma/adapter-pg');
+  const env = process.env;
+  const origin = 'http://127.0.0.1:3000';
+  const config = clerkConfig({ ...env, CLERK_PUBLISHABLE_KEY: env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY });
+  assert.ok(config.publishableKey.startsWith('pk_test_') && config.authorizedParties.includes(origin) &&
+    /^user_[A-Za-z0-9_-]+$/.test(env.CLERK_TEST_USER_ID ?? '') &&
+    (config.audience || env.CLERK_TEST_ALLOW_NO_AUDIENCE === '1'), 'Approved Clerk development identity required');
+  const context = await p6Operator(t);
+  await verifyP6ProvisioningGrants(context.primary);
+  const boundary = createClerkBoundary({ ...config, authorizedParties: [origin] });
+  const provider = new ClerkIdentityProvider(boundary.client);
+  const evaluate = await openEdge(t, origin + '/app', true);
+  const shell = `location.origin === ${JSON.stringify(origin)} && location.pathname === '/app' &&
+    document.body?.innerText.includes('You are signed in.') && window.Clerk?.session?.status === 'active'`;
+  console.info('Edge is ready for the approved P6 development account. Sign in within three minutes.');
+  await waitForBrowser(async () => await evaluate(shell) === true, manualSignInTimeout);
+  const token = await evaluate(`(${shell}) ? window.Clerk.session.getToken({ skipCache: true }) : null`, 10_000);
+  assert.ok(typeof token === 'string' && token.split('.').length === 3, 'Fresh Clerk session required');
+  const header = 'Bearer ' + token;
+  const identity = await boundary.authenticate({ authorization: header }, ['Authorization', header]);
+  assert.ok(identity.instanceId === config.instanceId && identity.subject === env.CLERK_TEST_USER_ID &&
+    (config.audience || !Object.hasOwn(JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()), 'aud')),
+  'Clerk identity or audience does not match the approved policy');
+  await provider.assertLive(identity);
+  const readCounts = async () => (await context.primary.query(`SELECT
+    (SELECT count(*)::int FROM "UserAccount") AS accounts,
+    (SELECT count(*)::int FROM "UserAccount" WHERE "clerkInstanceId"=$1 AND "clerkSubject"=$2
+      AND status='ACTIVE' AND "subjectKeyVersion"=$3 AND "subjectKey"=$4) AS matching,
+    (SELECT count(*)::int FROM "Idea") AS ideas, (SELECT count(*)::int FROM "Conversation") AS conversations,
+    (SELECT count(*)::int FROM "Message") AS messages, (SELECT count(*)::int FROM "DataOperation") AS operations,
+    (SELECT count(*)::int FROM "IdentityTombstone") AS tombstones`, [identity.instanceId, identity.subject, 1,
+    context.subjectKeys.derive(identity.instanceId, identity.subject)[0].digest])).rows[0];
+  const expected = { accounts: 1, matching: 1, ideas: 0, conversations: 0, messages: 0, operations: 0, tombstones: 0 };
+  const before = await readCounts();
+  if (before.accounts === 0) {
+    assert.deepEqual(before, { ...expected, accounts: 0, matching: 0 });
+    await withP6Provisioning(context, async pool => {
+      await verifyP6ProvisioningGrants(context.primary);
+      assert.deepEqual(await readCounts(), before);
+      const prisma = new PrismaClient({ adapter: new PrismaPg(pool), log: [], errorFormat: 'minimal' });
+      try {
+        const service = new IdentityService(config.instanceId, context.subjectKeys, provider,
+          new PrismaIdentityRepository(prisma), context.ledger.authority);
+        await service.resolve(identity, 'p6-one-time-binding');
+        assert.deepEqual(await readCounts(), expected);
+      } finally { await prisma.$disconnect(); }
+    });
+  } else {
+    // A prior committed binding is verified by read-back without re-opening the writer.
+    assert.deepEqual(before, expected);
+  }
+  await context.verify();
+  console.info('P6 binding verified. Accounts 1, ideas 0, conversations 0, messages 0.');
+  console.info('Start the P6 API with the separately signed decision, then use Retry in Edge.');
+  await waitForBrowser(async () => await evaluate(`(${shell}) && document.body.innerText.includes('You don’t have any ideas yet.')`) === true,
+    manualSignInTimeout, () => 'Authorized empty workspace was not observed.');
+  const activeToken = await evaluate(`(${shell}) ? window.Clerk.session.getToken({ skipCache: true }) : null`, 10_000);
+  assert.ok(typeof activeToken === 'string' && activeToken.split('.').length === 3, 'Fresh Clerk session required');
+  const headers = { Authorization: 'Bearer ' + activeToken };
+  const response = await fetch('http://127.0.0.1:3001/api/v1/ideas', { headers, signal: AbortSignal.timeout(10_000) });
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.ok(Array.isArray(result.items) && result.items.length === 0 &&
+    result.page?.nextCursor === null && result.page?.hasMore === false, 'Expected the authorized empty idea list');
+  await evaluate(`if (${shell}) window.Clerk.signOut({ redirectUrl: '/sign-in' })`);
+  await waitForBrowser(async () => await evaluate(`location.origin === ${JSON.stringify(origin)} && location.pathname.startsWith('/sign-in')`) === true);
+  const denied = await fetch('http://127.0.0.1:3001/api/v1/ideas', { headers, signal: AbortSignal.timeout(10_000) });
+  assert.equal(denied.status, 401);
+});
+
 
 async function waitForBrowser(check, timeout = 20_000, failure = () => 'Edge did not reach the expected sign-in state.') {
   const deadline = Date.now() + timeout;

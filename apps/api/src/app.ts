@@ -1,12 +1,12 @@
 // Express application layer. The startup module calls this factory to assemble
 // public health endpoints and request middleware without opening a listener.
 
-import express from 'express';
+import express, { type Router } from 'express';
 import helmet from 'helmet';
 import { attachRequestContext } from './security/request-context.js';
 import { securityErrorHandler } from './security/errors.js';
 
-export function createApp() {
+export function createApp(localIdeas?: Router) {
   const app = express();
   app.disable('x-powered-by');
   // Middleware runs in order before the route handler. Here it adds security
@@ -20,6 +20,7 @@ export function createApp() {
   app.get('/health/live', (_request, response) => { response.status(200).end(); });
   // No production dependency or safety gate has been configured or verified.
   app.get('/health/ready', (_request, response) => { response.status(503).end(); });
+  if (localIdeas) app.use('/api/v1', localIdeas);
   app.use((_request, response) => { response.status(404).end(); });
   app.use(securityErrorHandler);
   return app;
