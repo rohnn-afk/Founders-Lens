@@ -3,6 +3,7 @@
 // Application startup does not compose this proof adapter.
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { Pool } from 'pg';
+import type { VerifiedDeletionReverification } from './clerk.js';
 import { suppressionScopeKey, type SuppressionAuthority, type SuppressionScope } from './suppression-authority.js';
 
 /** Opaque deletion intent. The fingerprint binds the canonical request and its preconditions. */
@@ -32,11 +33,13 @@ interface IntentRow {
   fingerprint: string;
   policy_version: string;
   integrity: string;
+  challenge_key: string | null;
 }
 interface CoverageRow {
   epoch: string | null;
   subject_versions: number[] | null;
   coverage_integrity: string | null;
+  challenge_namespace: string | null;
   total: string;
   inventory: IntentRow[];
 }
@@ -51,6 +54,9 @@ export function createSuppressionLedger(pool: Pool, trusted: {
   epoch: string;
   integrityKey: Uint8Array;
   subjectVersions: readonly number[];
+  /** Writer-only derivation material. Readers can pin the public namespace identity instead. */
+  challengeKey?: Uint8Array;
+  challengeNamespace?: string;
 }) {
   const epoch = trusted.epoch;
   const key = Buffer.from(trusted.integrityKey);
@@ -60,10 +66,31 @@ export function createSuppressionLedger(pool: Pool, trusted: {
     throw new Error('Invalid suppression ledger configuration');
   }
   const mac = (data: unknown) => createHmac('sha256', key).update(JSON.stringify(data)).digest('hex');
+  const challengeSecret = trusted.challengeKey && Buffer.from(trusted.challengeKey);
+  if (challengeSecret && (challengeSecret.length < 32 || challengeSecret.equals(key))) {
+    throw new Error('An independent challenge derivation key is required');
+  }
+  function challengeMac(data: unknown) {
+    if (!challengeSecret) throw new Error('Challenge writer key unavailable');
+    return createHmac('sha256', challengeSecret).update(JSON.stringify(data)).digest('hex');
+  }
+  // V1 is a fixed namespace, not a per-record key choice. Replacing its key
+  // requires a migration that preserves the uniqueness of all reservations.
+  const derivedNamespace = challengeSecret ? 'hmac-sha256-v1:' + challengeMac(['deletion-challenge-namespace-v1']) : null;
+  if (trusted.challengeNamespace !== undefined &&
+    (!/^hmac-sha256-v1:[0-9a-f]{64}$/.test(trusted.challengeNamespace) ||
+      (derivedNamespace !== null && derivedNamespace !== trusted.challengeNamespace))) {
+    throw new Error('Invalid challenge namespace identity');
+  }
+  const namespace = derivedNamespace ?? trusted.challengeNamespace ?? null;
+  const coverageTag = mac(namespace === null ? ['suppression-coverage-v1', epoch, versions] :
+    ['suppression-coverage-v2', epoch, versions, namespace]);
   const authentic = (actual: string | null, expected: string) => typeof actual === 'string' && digest.test(actual) &&
     timingSafeEqual(Buffer.from(actual, 'hex'), Buffer.from(expected, 'hex'));
   const intentMac = (row: Omit<IntentRow, 'integrity'>) =>
-    mac(['suppression-intent-v1', row.operation_id, row.scope_key, row.fingerprint, row.policy_version]);
+    mac(row.challenge_key === null ?
+      ['suppression-intent-v1', row.operation_id, row.scope_key, row.fingerprint, row.policy_version] :
+      ['suppression-intent-v2', row.operation_id, row.scope_key, row.fingerprint, row.policy_version, row.challenge_key]);
   /** Return the stored row only when its domain-separated integrity tag matches. */
   function verifyIntent(row: IntentRow) {
     if (!authentic(row.integrity, intentMac(row))) throw new Error('Suppression intent integrity failure');
@@ -74,7 +101,7 @@ export function createSuppressionLedger(pool: Pool, trusted: {
     // The epoch is supplied outside this database. A restore must start with a
     // new expected epoch until an operator has reconciled and sealed coverage.
     if (!row || row.epoch !== epoch || JSON.stringify(row.subject_versions) !== JSON.stringify(versions) ||
-      !authentic(row.coverage_integrity, mac(['suppression-coverage-v1', epoch, versions]))) {
+      row.challenge_namespace !== namespace || !authentic(row.coverage_integrity, coverageTag)) {
       throw new Error('Suppression coverage unavailable');
     }
   }
@@ -86,7 +113,7 @@ export function createSuppressionLedger(pool: Pool, trusted: {
   async function snapshot() {
     // Slice 1 checks the entire small fixture inventory in one MVCC snapshot.
     // Bound the result and fail closed when this proof-sized limit is exceeded.
-    const row = (await query<CoverageRow>(`SELECT c.epoch,c.subject_versions,c.integrity AS coverage_integrity,
+    const row = (await query<CoverageRow>(`SELECT c.epoch,c.subject_versions,c.challenge_namespace,c.integrity AS coverage_integrity,
       n.total,COALESCE((SELECT json_agg(i) FROM
         (SELECT * FROM authority.intent ORDER BY scope_key LIMIT 257) i),'[]'::json) AS inventory
       FROM authority.inventory_count n LEFT JOIN authority.coverage c ON c.singleton WHERE n.singleton`)).rows[0];
@@ -143,15 +170,63 @@ export function createSuppressionLedger(pool: Pool, trusted: {
   return {
     authority,
     recover,
+    /** Refuse admission unless the configured ledger covers every retained subject key. */
+    assertSubjectVersions(retained: readonly number[]): void {
+      if (JSON.stringify([...retained].sort((a, b) => a - b)) !== JSON.stringify(versions)) {
+        throw new Error('Incomplete retained subject-key coverage');
+      }
+    },
     /** Conditionally append an intent and return its verified winning operation ID. */
     async admit(intent: SuppressionIntent): Promise<string> {
       const row = intentFields(intent);
+      if (namespace !== null) throw new Error('Challenge reservation required');
       // A separate read uses a new snapshot after a concurrent insert wins.
       // Errors remain uncertain until the caller recovers the same identity.
       await query(`INSERT INTO authority.intent(operation_id,scope_key,fingerprint,policy_version,integrity)
-        VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
-      [row.operation_id, row.scope_key, row.fingerprint, row.policy_version, intentMac(row)]);
+        SELECT $1::uuid,$2,$3,$4,$5 FROM authority.coverage
+        WHERE singleton AND challenge_namespace IS NULL
+        ON CONFLICT DO NOTHING`,
+      [row.operation_id, row.scope_key, row.fingerprint, row.policy_version, intentMac({ ...row, challenge_key: null })]);
       return recover(intent);
+    },
+    /** Reserve the verified challenge and intent together, then authenticate the winning snapshot. */
+    async reserve(intent: SuppressionIntent, evidence: VerifiedDeletionReverification) {
+      if (!namespace || !challengeSecret || evidence.identity.instanceId !== intent.scope.instanceId ||
+        !Number.isSafeInteger(evidence.validUntil) || evidence.validUntil <= Date.now()) {
+        throw new Error('Deletion challenge unavailable');
+      }
+      const expected = { ...intentFields(intent), challenge_key: challengeMac(['deletion-challenge-use-v1',
+        evidence.identity.instanceId, evidence.identity.subject, evidence.identity.sessionId, evidence.challengeId]) };
+      await snapshot();
+      try {
+        // The insert matches the authenticated seal. The database trigger locks
+        // and rechecks the epoch and namespace before accepting the reservation.
+        await query(`INSERT INTO authority.intent(operation_id,scope_key,fingerprint,policy_version,integrity,
+          challenge_key,reservation_epoch,reservation_namespace)
+          SELECT $1::uuid,$2,$3,$4,$5,$6,$7::uuid,$8 FROM authority.coverage
+          WHERE singleton AND epoch=$7 AND challenge_namespace=$8 AND integrity=$9
+            AND clock_timestamp() < to_timestamp($10::double precision/1000)
+          ON CONFLICT DO NOTHING`,
+        [expected.operation_id, expected.scope_key, expected.fingerprint, expected.policy_version,
+          intentMac(expected), expected.challenge_key, epoch, namespace, coverageTag, String(evidence.validUntil)]);
+      } catch {
+        // A failed reply is ambiguous. Only a matching authenticated read-back can resolve it.
+      }
+      const winner = (await snapshot()).find(row => row.challenge_key === expected.challenge_key);
+      if (!winner || winner.scope_key !== expected.scope_key || winner.fingerprint !== expected.fingerprint ||
+        winner.policy_version !== expected.policy_version || evidence.validUntil <= Date.now()) {
+        throw new Error('Conflicting or unresolved challenge reservation');
+      }
+      return { operationId: winner.operation_id, challengeKey: expected.challenge_key };
+    },
+    /** Verify an already committed receipt against current authenticated authority coverage. */
+    async verifyReservation(intent: SuppressionIntent, challengeKey: string): Promise<void> {
+      const expected = intentFields(intent);
+      if (!namespace || !(await snapshot()).some(row => row.challenge_key === challengeKey &&
+        row.operation_id === expected.operation_id && row.scope_key === expected.scope_key &&
+        row.fingerprint === expected.fingerprint && row.policy_version === expected.policy_version)) {
+        throw new Error('Committed suppression reservation unavailable');
+      }
     },
     inventory: snapshot
   };

@@ -16,7 +16,8 @@ CREATE TABLE authority.coverage (
   singleton boolean PRIMARY KEY CHECK (singleton),
   epoch uuid NOT NULL,
   integrity text NOT NULL CHECK (integrity ~ '^[0-9a-f]{64}$'),
-  subject_versions integer[] NOT NULL CHECK (cardinality(subject_versions) BETWEEN 1 AND 16)
+  subject_versions integer[] NOT NULL CHECK (cardinality(subject_versions) BETWEEN 1 AND 16),
+  challenge_namespace text CHECK (challenge_namespace ~ '^hmac-sha256-v1:[0-9a-f]{64}$')
 );
 -- Independent uniqueness constraints arbitrate competing operations and scopes.
 CREATE TABLE authority.intent (
@@ -24,7 +25,11 @@ CREATE TABLE authority.intent (
   scope_key text NOT NULL UNIQUE CHECK (length(scope_key) BETWEEN 1 AND 512),
   fingerprint text NOT NULL CHECK (fingerprint ~ '^[0-9a-f]{64}$'),
   policy_version text NOT NULL CHECK (policy_version ~ '^[a-zA-Z0-9_-]{1,60}$'),
-  integrity text NOT NULL CHECK (integrity ~ '^[0-9a-f]{64}$')
+  integrity text NOT NULL CHECK (integrity ~ '^[0-9a-f]{64}$'),
+  -- NULL is reserved for the unsealed Slice 1 fixture.
+  challenge_key text UNIQUE CHECK (challenge_key ~ '^[0-9a-f]{64}$'),
+  reservation_epoch uuid,
+  reservation_namespace text
 );
 CREATE TABLE authority.inventory_count (
   singleton boolean PRIMARY KEY CHECK (singleton),
@@ -36,7 +41,19 @@ INSERT INTO authority.inventory_count VALUES (true, 0);
 CREATE FUNCTION authority.count_intent() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 BEGIN
-  UPDATE authority.inventory_count SET total = total + 1 WHERE singleton;
+  IF NOT EXISTS (
+    SELECT 1 FROM authority.coverage c WHERE c.singleton
+      AND ((NEW.challenge_key IS NULL AND c.challenge_namespace IS NULL)
+        OR (NEW.challenge_key IS NOT NULL AND c.epoch = NEW.reservation_epoch
+          AND c.challenge_namespace = NEW.reservation_namespace))
+    FOR SHARE
+  ) THEN
+    RAISE EXCEPTION 'Suppression reservation coverage unavailable';
+  END IF;
+  UPDATE authority.inventory_count SET total = total + 1 WHERE singleton AND total < 256;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Suppression proof inventory limit reached';
+  END IF;
   RETURN NULL;
 END;
 $$;
