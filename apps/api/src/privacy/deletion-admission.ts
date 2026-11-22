@@ -56,7 +56,7 @@ export function createDeletionAdmission(deps: {
       )).digest('hex');
       const target: DeletionTarget = { identity, accountId, ideaId: command.ideaId, subjectKeys, subjectKey,
         scopeKey, fingerprint, idempotencyKey: command.idempotencyKey, policyVersion: command.policyVersion };
-      const intent = { scope, fingerprint, policyVersion: command.policyVersion };
+      const intent = { scope, fingerprint, policyVersion: command.policyVersion, accountId };
       const receipt = await deps.repository.replay(target);
       if (receipt) {
         await deps.ledger.verifyReservation({ ...intent, operationId: receipt.operationId }, receipt.challengeKey);

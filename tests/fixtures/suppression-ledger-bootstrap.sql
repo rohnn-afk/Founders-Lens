@@ -8,6 +8,7 @@ REVOKE ALL ON SCHEMA public FROM PUBLIC;
 CREATE ROLE ledger_owner NOLOGIN NOINHERIT;
 CREATE ROLE ledger_reader LOGIN NOINHERIT PASSWORD :'reader_password';
 CREATE ROLE ledger_writer LOGIN NOINHERIT PASSWORD :'writer_password';
+CREATE ROLE ledger_reconciler NOLOGIN;
 GRANT CONNECT ON DATABASE suppression_proof TO ledger_reader, ledger_writer;
 CREATE SCHEMA authority AUTHORIZATION ledger_owner;
 SET LOCAL ROLE ledger_owner;
@@ -17,7 +18,12 @@ CREATE TABLE authority.coverage (
   epoch uuid NOT NULL,
   integrity text NOT NULL CHECK (integrity ~ '^[0-9a-f]{64}$'),
   subject_versions integer[] NOT NULL CHECK (cardinality(subject_versions) BETWEEN 1 AND 16),
-  challenge_namespace text CHECK (challenge_namespace ~ '^hmac-sha256-v1:[0-9a-f]{64}$')
+  challenge_namespace text CHECK (challenge_namespace ~ '^hmac-sha256-v1:[0-9a-f]{64}$'),
+  -- The operator seals all three fields under the exclusive coverage lock.
+  recovery_run uuid,
+  recovery_target text CHECK (recovery_target ~ '^[0-9]+:[0-9]+$'),
+  recovery_seal text CHECK (recovery_seal ~ '^[0-9a-f]{64}$'),
+  CHECK (pg_catalog.num_nonnulls(recovery_run, recovery_target, recovery_seal) IN (0, 3))
 );
 -- Independent uniqueness constraints arbitrate competing operations and scopes.
 CREATE TABLE authority.intent (
@@ -29,7 +35,15 @@ CREATE TABLE authority.intent (
   -- NULL is reserved for the unsealed Slice 1 fixture.
   challenge_key text UNIQUE CHECK (challenge_key ~ '^[0-9a-f]{64}$'),
   reservation_epoch uuid,
-  reservation_namespace text
+  reservation_namespace text,
+  incarnation_binding text CHECK (incarnation_binding ~ '^[0-9a-f]{64}$')
+);
+-- Recovery appends proof for a target and cutoff without updating intent history.
+CREATE TABLE authority.recovery_progress (
+  run_id uuid NOT NULL,
+  operation_id uuid NOT NULL REFERENCES authority.intent(operation_id),
+  proof text NOT NULL CHECK (proof ~ '^[0-9a-f]{64}$'),
+  PRIMARY KEY (run_id, operation_id)
 );
 CREATE TABLE authority.inventory_count (
   singleton boolean PRIMARY KEY CHECK (singleton),
@@ -41,8 +55,12 @@ INSERT INTO authority.inventory_count VALUES (true, 0);
 CREATE FUNCTION authority.count_intent() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 BEGIN
+  IF NEW.challenge_key IS NOT NULL AND NEW.scope_key::jsonb->>0 = 'ACCOUNT'
+    AND NEW.incarnation_binding IS NULL THEN
+    RAISE EXCEPTION 'Account incarnation binding required';
+  END IF;
   IF NOT EXISTS (
-    SELECT 1 FROM authority.coverage c WHERE c.singleton
+    SELECT 1 FROM authority.coverage c WHERE c.singleton AND c.recovery_run IS NULL
       AND ((NEW.challenge_key IS NULL AND c.challenge_namespace IS NULL)
         OR (NEW.challenge_key IS NOT NULL AND c.epoch = NEW.reservation_epoch
           AND c.challenge_namespace = NEW.reservation_namespace))
@@ -65,4 +83,8 @@ GRANT USAGE ON SCHEMA authority TO ledger_reader, ledger_writer;
 -- append; neither can alter coverage, the count, or existing history.
 GRANT SELECT ON authority.coverage, authority.intent, authority.inventory_count TO ledger_reader, ledger_writer;
 GRANT INSERT ON authority.intent TO ledger_writer;
+GRANT USAGE ON SCHEMA authority TO ledger_reconciler;
+GRANT SELECT ON authority.coverage, authority.intent, authority.inventory_count,
+  authority.recovery_progress TO ledger_reconciler;
+GRANT INSERT ON authority.recovery_progress TO ledger_reconciler;
 COMMIT;

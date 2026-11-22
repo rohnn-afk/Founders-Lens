@@ -12,6 +12,8 @@ export interface SuppressionIntent {
   readonly scope: SuppressionScope;
   readonly fingerprint: string;
   readonly policyVersion: string;
+  /** Original local UUID. The ledger persists only its operation-bound HMAC. */
+  readonly accountId?: string;
 }
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -27,6 +29,7 @@ function scopeKey(scope: SuppressionScope): string {
   throw new Error('Invalid suppression scope');
 }
 
+/** Authenticated storage projection. Only the recovery and ledger boundaries consume it. */
 interface IntentRow {
   operation_id: string;
   scope_key: string;
@@ -34,7 +37,9 @@ interface IntentRow {
   policy_version: string;
   integrity: string;
   challenge_key: string | null;
+  incarnation_binding: string | null;
 }
+/** One MVCC snapshot of operator coverage and the bounded intent inventory. */
 interface CoverageRow {
   epoch: string | null;
   subject_versions: number[] | null;
@@ -42,6 +47,15 @@ interface CoverageRow {
   challenge_namespace: string | null;
   total: string;
   inventory: IntentRow[];
+  recovery_run: string | null;
+  recovery_target: string | null;
+  recovery_seal: string | null;
+}
+
+/** Externally pinned recovery identity, independent of restored primary data. */
+export interface RecoveryCutoff {
+  readonly runId: string;
+  readonly target: string;
 }
 
 /**
@@ -88,7 +102,9 @@ export function createSuppressionLedger(pool: Pool, trusted: {
   const authentic = (actual: string | null, expected: string) => typeof actual === 'string' && digest.test(actual) &&
     timingSafeEqual(Buffer.from(actual, 'hex'), Buffer.from(expected, 'hex'));
   const intentMac = (row: Omit<IntentRow, 'integrity'>) =>
-    mac(row.challenge_key === null ?
+    mac(row.incarnation_binding !== null ?
+      ['suppression-intent-v3', row.operation_id, row.scope_key, row.fingerprint, row.policy_version,
+        row.challenge_key, row.incarnation_binding] : row.challenge_key === null ?
       ['suppression-intent-v1', row.operation_id, row.scope_key, row.fingerprint, row.policy_version] :
       ['suppression-intent-v2', row.operation_id, row.scope_key, row.fingerprint, row.policy_version, row.challenge_key]);
   /** Return the stored row only when its domain-separated integrity tag matches. */
@@ -105,15 +121,16 @@ export function createSuppressionLedger(pool: Pool, trusted: {
       throw new Error('Suppression coverage unavailable');
     }
   }
-  async function query<Row extends IntentRow | CoverageRow>(text: string, values: string[] = []) {
+  async function query<Row extends IntentRow | CoverageRow | { proof: string }>(text: string, values: (string | null)[] = []) {
     const options = { text, values, query_timeout: 1500 };
     return pool.query<Row>(options);
   }
   /** Return the complete authenticated proof inventory or reject without a partial result. */
-  async function snapshot() {
+  async function snapshot(cutoff?: RecoveryCutoff) {
     // Slice 1 checks the entire small fixture inventory in one MVCC snapshot.
     // Bound the result and fail closed when this proof-sized limit is exceeded.
     const row = (await query<CoverageRow>(`SELECT c.epoch,c.subject_versions,c.challenge_namespace,c.integrity AS coverage_integrity,
+      c.recovery_run,c.recovery_target,c.recovery_seal,
       n.total,COALESCE((SELECT json_agg(i) FROM
         (SELECT * FROM authority.intent ORDER BY scope_key LIMIT 257) i),'[]'::json) AS inventory
       FROM authority.inventory_count n LEFT JOIN authority.coverage c ON c.singleton WHERE n.singleton`)).rows[0];
@@ -121,7 +138,15 @@ export function createSuppressionLedger(pool: Pool, trusted: {
     if (!row || row.inventory.length > 256 || String(row.inventory.length) !== row.total) {
       throw new Error('Suppression inventory incomplete');
     }
-    return row.inventory.map(verifyIntent);
+    const inventory = row.inventory.map(verifyIntent);
+    if (!cutoff && row.recovery_run !== null) throw new Error('Suppression authority is frozen for recovery');
+    if (cutoff && (!uuid.test(cutoff.runId) || row.recovery_run !== cutoff.runId ||
+      row.recovery_target !== cutoff.target ||
+      !authentic(row.recovery_seal, mac(['suppression-recovery-freeze-v1', epoch, namespace, cutoff.runId,
+        cutoff.target, inventory.map(intent => intent.integrity)])))) {
+      throw new Error('Suppression recovery cutoff unavailable');
+    }
+    return inventory;
   }
 
   const authority: SuppressionAuthority = {
@@ -155,6 +180,19 @@ export function createSuppressionLedger(pool: Pool, trusted: {
       policy_version: intent.policyVersion };
   }
 
+  /** Bind a local incarnation without persisting its UUID or requiring the original receipt. */
+  function bindIncarnation(row: Pick<IntentRow, 'operation_id' | 'scope_key' | 'fingerprint' | 'policy_version'>,
+    accountId: string) {
+    return mac(['suppression-account-incarnation-v1', row.operation_id, row.scope_key, row.fingerprint,
+      row.policy_version, accountId]);
+  }
+
+  /** Authenticate a run-specific progress entry without treating it as a user receipt. */
+  function recoveryProof(cutoff: RecoveryCutoff, inventoryDigest: string, row: IntentRow) {
+    return mac(['suppression-recovery-progress-v1', epoch, cutoff.runId, cutoff.target,
+      inventoryDigest, row.operation_id, row.scope_key, row.integrity]);
+  }
+
   /** Read back the winning operation ID without writing, or reject missing or conflicting intent. */
   async function recover(intent: SuppressionIntent): Promise<string> {
     const expected = intentFields(intent);
@@ -186,7 +224,8 @@ export function createSuppressionLedger(pool: Pool, trusted: {
         SELECT $1::uuid,$2,$3,$4,$5 FROM authority.coverage
         WHERE singleton AND challenge_namespace IS NULL
         ON CONFLICT DO NOTHING`,
-      [row.operation_id, row.scope_key, row.fingerprint, row.policy_version, intentMac({ ...row, challenge_key: null })]);
+      [row.operation_id, row.scope_key, row.fingerprint, row.policy_version,
+        intentMac({ ...row, challenge_key: null, incarnation_binding: null })]);
       return recover(intent);
     },
     /** Reserve the verified challenge and intent together, then authenticate the winning snapshot. */
@@ -197,24 +236,31 @@ export function createSuppressionLedger(pool: Pool, trusted: {
       }
       const expected = { ...intentFields(intent), challenge_key: challengeMac(['deletion-challenge-use-v1',
         evidence.identity.instanceId, evidence.identity.subject, evidence.identity.sessionId, evidence.challengeId]) };
+      if (intent.scope.kind === 'ACCOUNT' && (!intent.accountId || !uuid.test(intent.accountId))) {
+        throw new Error('Account incarnation binding required');
+      }
+      const incarnation = intent.scope.kind === 'ACCOUNT' ? bindIncarnation(expected, intent.accountId!) : null;
       await snapshot();
       try {
         // The insert matches the authenticated seal. The database trigger locks
         // and rechecks the epoch and namespace before accepting the reservation.
         await query(`INSERT INTO authority.intent(operation_id,scope_key,fingerprint,policy_version,integrity,
-          challenge_key,reservation_epoch,reservation_namespace)
-          SELECT $1::uuid,$2,$3,$4,$5,$6,$7::uuid,$8 FROM authority.coverage
+          challenge_key,reservation_epoch,reservation_namespace,incarnation_binding)
+          SELECT $1::uuid,$2,$3,$4,$5,$6,$7::uuid,$8,$11 FROM authority.coverage
           WHERE singleton AND epoch=$7 AND challenge_namespace=$8 AND integrity=$9
+            AND recovery_run IS NULL
             AND clock_timestamp() < to_timestamp($10::double precision/1000)
           ON CONFLICT DO NOTHING`,
         [expected.operation_id, expected.scope_key, expected.fingerprint, expected.policy_version,
-          intentMac(expected), expected.challenge_key, epoch, namespace, coverageTag, String(evidence.validUntil)]);
+          intentMac({ ...expected, incarnation_binding: incarnation }), expected.challenge_key, epoch, namespace,
+          coverageTag, String(evidence.validUntil), incarnation]);
       } catch {
         // A failed reply is ambiguous. Only a matching authenticated read-back can resolve it.
       }
       const winner = (await snapshot()).find(row => row.challenge_key === expected.challenge_key);
       if (!winner || winner.scope_key !== expected.scope_key || winner.fingerprint !== expected.fingerprint ||
-        winner.policy_version !== expected.policy_version || evidence.validUntil <= Date.now()) {
+        winner.policy_version !== expected.policy_version || evidence.validUntil <= Date.now() ||
+        (intent.scope.kind === 'ACCOUNT' && !authentic(winner.incarnation_binding, bindIncarnation(winner, intent.accountId!)))) {
         throw new Error('Conflicting or unresolved challenge reservation');
       }
       return { operationId: winner.operation_id, challengeKey: expected.challenge_key };
@@ -228,6 +274,35 @@ export function createSuppressionLedger(pool: Pool, trusted: {
         throw new Error('Committed suppression reservation unavailable');
       }
     },
-    inventory: snapshot
+    inventory: () => snapshot(),
+    /** Read all authenticated intents from the frozen authority for this restore target. */
+    async recoveryInventory(cutoff: RecoveryCutoff) {
+      const entries = await snapshot(cutoff);
+      return { entries, digest: mac(['suppression-recovery-inventory-v1', epoch, namespace,
+        cutoff.runId, cutoff.target, entries.map(row => row.integrity)]) };
+    },
+    /** Verify a candidate restored account against the immutable original-incarnation binding. */
+    matchesIncarnation(row: IntentRow, accountId: string): boolean {
+      return uuid.test(accountId) && authentic(row.incarnation_binding, bindIncarnation(row, accountId));
+    },
+    /** Append or verify progress for this exact frozen inventory and original intent. */
+    async recordRecovery(cutoff: RecoveryCutoff, inventoryDigest: string, row: IntentRow) {
+      const proof = recoveryProof(cutoff, inventoryDigest, row);
+      await query(`INSERT INTO authority.recovery_progress(run_id,operation_id,proof)
+        VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, [cutoff.runId, row.operation_id, proof]);
+      const stored = (await query<{ proof: string }>(`SELECT proof FROM authority.recovery_progress
+        WHERE run_id=$1 AND operation_id=$2`, [cutoff.runId, row.operation_id])).rows[0];
+      if (!stored || !authentic(stored.proof, proof)) throw new Error('Conflicting recovery progress');
+    },
+    /** Verify every frozen intent has an exact, authenticated progress entry for this run. */
+    async verifyRecoveryProgress(cutoff: RecoveryCutoff, inventoryDigest: string, entries: readonly IntentRow[]) {
+      const stored = await query<{ operation_id: string; proof: string }>(
+        'SELECT operation_id,proof FROM authority.recovery_progress WHERE run_id=$1 LIMIT 257', [cutoff.runId]);
+      const proofs = new Map(stored.rows.map(row => [row.operation_id, row.proof]));
+      if (proofs.size !== entries.length || entries.some(row =>
+        !authentic(proofs.get(row.operation_id) ?? null, recoveryProof(cutoff, inventoryDigest, row)))) {
+        throw new Error('Incomplete or corrupt recovery progress');
+      }
+    }
   };
 }
