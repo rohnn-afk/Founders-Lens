@@ -11,6 +11,8 @@ import { createDatabaseClient } from '../apps/api/dist/persistence/client.js';
 import { IdentityService } from '../apps/api/dist/security/identity-service.js';
 import { PrismaIdentityRepository } from '../apps/api/dist/security/identity-repository.js';
 import { ClerkIdentityProvider } from '../apps/api/dist/security/identity-provider.js';
+import { clerkConfig } from '../apps/api/dist/security/config.js';
+import { createClerkBoundary } from '../apps/api/dist/security/clerk.js';
 import { SubjectKeys, subjectLock } from '../apps/api/dist/security/subject-key.js';
 import { PrismaAuthorization, authorizeChild } from '../apps/api/dist/security/authorization.js';
 import { securityFailure } from '../apps/api/dist/security/errors.js';
@@ -38,6 +40,39 @@ const liveProvider = { async assertLive(value) {
   assert.ok(value.sessionId.startsWith('sess_m02test_'));
 } };
 const denied = code => error => error?.code === code;
+
+test('approved Clerk development session passes the Express verifier and live provider checks', {
+  skip: !process.argv.includes('--clerk-live'), timeout: 15_000
+}, async () => {
+  const env = process.env;
+  const token = env.CLERK_TEST_SESSION_TOKEN;
+  const subject = env.CLERK_TEST_USER_ID;
+  const config = clerkConfig(env);
+  assert.ok(config.publishableKey.startsWith('pk_test_') && config.secretKey.startsWith('sk_test_'),
+    'Use an approved Clerk development instance.');
+  assert.ok(token && subject && /^user_[A-Za-z0-9_-]+$/.test(subject),
+    'Supply an approved test user ID and a fresh session token.');
+  assert.ok(env.CLERK_AUDIENCE || env.CLERK_TEST_ALLOW_NO_AUDIENCE === '1',
+    'Set the expected audience or explicitly opt into the instance’s no-audience contract.');
+  const boundary = createClerkBoundary(config);
+  const verify = value => {
+    const bearer = 'Bearer ' + value;
+    return boundary.authenticate({ authorization: bearer }, ['Authorization', bearer]);
+  };
+  const verified = await verify(token);
+  assert.ok(verified.subject === subject, 'Session must belong to the approved test user.');
+  await new ClerkIdentityProvider(boundary.client).assertLive(verified);
+
+  const [header, payload, signature] = token.split('.');
+  // Inspect the exact token only after SDK verification. Keep claims out of
+  // test output and compare only the approved audience policy.
+  if (!config.audience) {
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    assert.ok(!Object.hasOwn(claims, 'aud'), 'Verified token must match the approved no-audience contract.');
+  }
+  const invalidSignature = (signature[0] === 'A' ? 'B' : 'A') + signature.slice(1);
+  await assert.rejects(verify([header, payload, invalidSignature].join('.')), denied('UNAUTHENTICATED'));
+});
 async function scenario(t, name, action) {
   let failure;
   await t.test(name, async () => { try { await action(); } catch (error) { failure = error; throw error; } });
