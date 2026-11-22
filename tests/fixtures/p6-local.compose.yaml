@@ -1,0 +1,36 @@
+# Persistent P6 development stores. This project never mounts an existing volume.
+name: fl-p6-local
+services:
+  primary:
+    image: docker.io/library/postgres:17.12-bookworm@sha256:40865bc877a289da75963d97d72b59633f639fc5af7a4e856bfa3714cae5b536
+    environment:
+      POSTGRES_DB: founders_lens_p6_local
+      POSTGRES_PASSWORD: ${FL_P6_PRIMARY_ADMIN_PASSWORD:?Required}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    ports: ["127.0.0.1:55437:5432"]
+    volumes: ["primary-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -d founders_lens_p6_local"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+  authority:
+    image: docker.io/library/postgres:17.12-bookworm@sha256:40865bc877a289da75963d97d72b59633f639fc5af7a4e856bfa3714cae5b536
+    environment:
+      POSTGRES_DB: suppression_proof
+      POSTGRES_PASSWORD: ${FL_SUPPRESSION_ADMIN_PASSWORD:?Required}
+      FL_SUPPRESSION_READER_PASSWORD: ${FL_SUPPRESSION_READER_PASSWORD:?Required}
+      FL_SUPPRESSION_WRITER_PASSWORD: ${FL_SUPPRESSION_WRITER_PASSWORD:?Required}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    ports: ["127.0.0.1:55436:5432"]
+    volumes:
+      - authority-data:/var/lib/postgresql/data
+      - ./suppression-ledger-bootstrap.sql:/docker-entrypoint-initdb.d/01-ledger.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -d suppression_proof"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+volumes:
+  primary-data:
+  authority-data:

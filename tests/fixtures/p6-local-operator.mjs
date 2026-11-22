@@ -1,0 +1,164 @@
+// Operator-only helpers for the two fixed P6 targets. Express never imports this module.
+import assert from 'node:assert/strict';
+import { createHash, createHmac, createPrivateKey, createPublicKey, pbkdf2Sync, randomBytes, randomUUID, sign } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { parseEnv } from 'node:util';
+import pg from 'pg';
+import { createSuppressionLedger } from '../../apps/api/dist/security/suppression-ledger.js';
+import { SubjectKeys } from '../../apps/api/dist/security/subject-key.js';
+
+/** Verify the isolated role inventory before altering any login. Administrators are trusted. */
+async function audit(pool, expected) {
+  const { rows } = await pool.query(`SELECT rolname FROM pg_roles WHERE rolcanlogin AND left(rolname,3) <> 'pg_'`);
+  assert.ok(rows.every(row => expected.includes(row.rolname)) && rows.some(row => row.rolname === 'postgres'),
+    'Unexpected P6 login');
+  const { rows: [state] } = await pool.query(`SELECT NOT EXISTS (SELECT FROM pg_auth_members m
+    JOIN pg_roles member ON member.oid = m.member WHERE left(member.rolname,3) <> 'pg_') AS isolated,
+    NOT EXISTS (SELECT FROM pg_roles WHERE left(rolname,3) <> 'pg_' AND rolname <> 'postgres'
+      AND (rolsuper OR rolcreaterole OR rolcreatedb OR rolreplication OR rolbypassrls)) AS restricted,
+    NOT EXISTS (SELECT FROM pg_prepared_xacts) AS clean,
+    NOT EXISTS (SELECT FROM pg_stat_activity WHERE usename='postgres' AND pid <> pg_backend_pid()
+      AND state <> 'idle') AS sole_operator`);
+  assert.ok(state.isolated && state.restricted && state.clean && state.sole_operator, 'Unexpected P6 role or prepared transaction');
+}
+
+/** Recheck effective grants, including implicit PUBLIC grants, before admitting a P6 write. */
+export async function verifyP6ProvisioningGrants(primary) {
+  const { rows } = await primary.query(`SELECT c.relname, a.attname FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace JOIN pg_attribute a ON a.attrelid = c.oid
+    WHERE n.nspname = 'public' AND c.relkind IN ('r','p') AND a.attnum > 0 AND NOT a.attisdropped
+      AND has_column_privilege('fl_p6_provision', c.oid, a.attnum, 'INSERT')`);
+  assert.ok(rows.every(row => row.relname === 'UserAccount') && rows.map(row => row.attname).sort().join(',') ===
+    'clerkInstanceId,clerkSubject,id,subjectKey,subjectKeyVersion,updatedAt', 'Unexpected provisioning insert grants');
+  const { rows: [state] } = await primary.query(`SELECT
+    has_schema_privilege('fl_p6_provision', 'public', 'CREATE') AS ddl,
+    has_database_privilege('fl_p6_provision', current_database(), 'CREATE,TEMPORARY') AS database_write,
+    EXISTS (SELECT FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+      WHERE n.nspname='public' AND c.relkind IN ('r','p') AND
+      (has_any_column_privilege('fl_p6_provision',c.oid,'UPDATE') OR
+      has_table_privilege('fl_p6_provision',c.oid,'DELETE,TRUNCATE,TRIGGER'))) AS table_write`);
+  assert.ok(!state.ddl && !state.database_write && !state.table_write, 'Unexpected provisioning write privileges');
+}
+
+async function drain(pool, role) {
+  await pool.query('SELECT pg_terminate_backend(pid, 3000) FROM pg_stat_activity WHERE usename = $1', [role]);
+  const { rows: [state] } = await pool.query('SELECT count(*)::int AS sessions FROM pg_stat_activity WHERE usename = $1', [role]);
+  assert.ok(state.sessions === 0, 'P6 writer did not drain');
+}
+
+/** Admit one restricted backend. On uncertainty, leave ordinary writers disabled for inspection. */
+export async function withP6Provisioning(context, bind) {
+  const { primary, authority } = context;
+  await context.verify();
+  await audit(primary, ['postgres', 'fl_p6_provision', 'fl_p6_workspace']);
+  await audit(authority, ['postgres', 'ledger_reader', 'ledger_writer']);
+  const login = async (pool, role) => (await pool.query('SELECT rolcanlogin FROM pg_roles WHERE rolname = $1', [role])).rows[0]?.rolcanlogin;
+  const workspaceLogin = await login(primary, 'fl_p6_workspace');
+  const writerLogin = await login(authority, 'ledger_writer');
+  assert.ok(workspaceLogin && writerLogin, 'Interrupted maintenance requires operator inspection');
+  let clean = false;
+  const exclusion = await authority.connect();
+  try {
+    await authority.query('ALTER ROLE ledger_writer NOLOGIN');
+    await primary.query('ALTER ROLE fl_p6_workspace NOLOGIN; ALTER ROLE fl_p6_provision NOLOGIN PASSWORD NULL');
+    await drain(authority, 'ledger_writer');
+    await drain(primary, 'fl_p6_workspace');
+    await drain(primary, 'fl_p6_provision');
+    // SHARE locks block DML while ordinary clearance reads remain available.
+    await exclusion.query('BEGIN; LOCK TABLE authority.intent, authority.coverage, authority.inventory_count, authority.recovery_progress IN SHARE MODE');
+    await context.verify();
+    const password = randomBytes(32).toString('hex');
+    const salt = randomBytes(16);
+    const salted = pbkdf2Sync(password, salt, 4096, 32, 'sha256');
+    const stored = createHash('sha256').update(createHmac('sha256', salted).update('Client Key').digest()).digest('base64');
+    const server = createHmac('sha256', salted).update('Server Key').digest('base64');
+    const verifier = `SCRAM-SHA-256$4096:${salt.toString('base64')}$${stored}:${server}`;
+    const expiry = new Date(Date.now() + 30_000).toISOString();
+    // Only the SCRAM verifier reaches SQL. Close new authentication as soon as
+    // the pool has its sole backend, before Prisma performs any write.
+    await primary.query(`ALTER ROLE fl_p6_provision LOGIN CONNECTION LIMIT 1 PASSWORD '${verifier}' VALID UNTIL '${expiry}'`);
+    const pool = context.provision(password);
+    await pool.query('SELECT 1');
+    await primary.query('ALTER ROLE fl_p6_provision NOLOGIN PASSWORD NULL');
+    const { rows: [sessions] } = await primary.query(`SELECT count(*)::int AS total FROM pg_stat_activity
+      WHERE usename = 'fl_p6_provision' AND datname=current_database()`);
+    assert.ok(sessions.total === 1 && !await login(primary, 'fl_p6_provision') &&
+      !await login(primary, 'fl_p6_workspace') && !await login(authority, 'ledger_writer'), 'Writer exclusion unavailable');
+    await bind(pool);
+    await exclusion.query('SELECT 1');
+    await context.verify();
+    await drain(primary, 'fl_p6_provision');
+    clean = true;
+  } finally {
+    try {
+      await primary.query('ALTER ROLE fl_p6_provision NOLOGIN PASSWORD NULL');
+      await drain(primary, 'fl_p6_provision');
+    } finally {
+      try { await exclusion.query('ROLLBACK'); } finally { exclusion.release(); }
+    }
+    if (clean) {
+      await primary.query('ALTER ROLE fl_p6_workspace LOGIN');
+      await authority.query('ALTER ROLE ledger_writer LOGIN');
+    }
+  }
+}
+
+export async function p6Operator(t) {
+  const local = parseEnv(await readFile('.env.p6.runtime.local', 'utf8'));
+  const operator = parseEnv(await readFile('.env.p6.operator.local', 'utf8'));
+  const { record, integrity } = JSON.parse(Buffer.from(local.FL_P6_GENESIS, 'base64url').toString('utf8'));
+  assert.ok(integrity === createHmac('sha256', Buffer.from(operator.FL_P6_GENESIS_KEY, 'hex'))
+    .update(JSON.stringify(['p6-fresh-genesis-v1', record])).digest('hex'), 'Genesis could not be authenticated');
+  assert.ok(record.version === 1 && record.subjectVersions.length === 1 && record.subjectVersions[0] === 1 &&
+    record.primary.cluster !== record.authority.cluster, 'Unexpected genesis policy');
+  const pool = (port, database, user, password, max = 1) => {
+    assert.ok(/^[a-f0-9]{64}$/.test(password ?? ''), 'Required P6 credential unavailable');
+    const result = new pg.Pool({ host: '127.0.0.1', port, database, user, password, max,
+      connectionTimeoutMillis: 1500, statement_timeout: 4000, query_timeout: 5000 });
+    result.on('error', () => {});
+    t.after(() => result.end());
+    return result;
+  };
+  const primary = pool(55437, 'founders_lens_p6_local', 'postgres', operator.FL_P6_PRIMARY_ADMIN_PASSWORD);
+  const authority = pool(55436, 'suppression_proof', 'postgres', operator.FL_SUPPRESSION_ADMIN_PASSWORD, 2);
+  const reader = pool(55436, 'suppression_proof', 'ledger_reader', local.FL_SUPPRESSION_READER_PASSWORD);
+  const subjectKeys = new SubjectKeys(1, new Map([[1, Buffer.from(local.FL_P6_SUBJECT_KEY_V1, 'hex')]]));
+  assert.ok(local.FL_P6_SUBJECT_KEY_V1 === operator.FL_P6_SUBJECT_KEY_V1, 'Retained key mismatch');
+  const ledger = createSuppressionLedger(reader, { epoch: record.epoch, challengeNamespace: record.namespace,
+    subjectVersions: [1], integrityKey: Buffer.from(local.FL_P6_INTEGRITY_KEY, 'hex') });
+  async function verify() {
+    const target = async client => (await client.query(`SELECT system_identifier::text || ':' || oid::text AS target
+      FROM pg_catalog.pg_control_system(), pg_catalog.pg_database WHERE datname=current_database()`)).rows[0].target;
+    const snapshot = await ledger.runtimeSnapshot();
+    const primaryTarget = await target(primary);
+    assert.ok(primaryTarget === record.primary.cluster + ':' + record.primary.oid &&
+      await target(authority) === record.authority.cluster + ':' + record.authority.oid &&
+      snapshot.authorityIdentity === record.authority.cluster + ':' + record.authority.oid &&
+      snapshot.epoch === record.epoch && snapshot.namespace === record.namespace &&
+      snapshot.subjectVersions.length === 1 && snapshot.subjectVersions[0] === 1 &&
+      snapshot.inventoryDigest === record.inventoryDigest, 'P6 state differs from authenticated genesis');
+    return { primaryTarget, snapshot };
+  }
+  await verify();
+  return { primary, authority, ledger, subjectKeys, verify,
+    provision: password => pool(55437, 'founders_lens_p6_local', 'fl_p6_provision', password) };
+}
+
+/** Issue a five-minute decision only after the operator explicitly invokes signing. */
+export async function signP6Clearance(context, privateKeyPath, publicKeyPath, confirmation) {
+  assert.ok(confirmation === 'approve-p6-genesis-read-only', 'Explicit operator approval required');
+  const privateKey = createPrivateKey(await readFile(privateKeyPath));
+  const publicKey = createPublicKey(await readFile(publicKeyPath));
+  const pinned = publicKey.export({ type: 'spki', format: 'der' });
+  assert.ok(privateKey.asymmetricKeyType === 'ed25519' && pinned.equals(createPublicKey(privateKey)
+    .export({ type: 'spki', format: 'der' })), 'Operator key does not match the pinned public key');
+  const { primaryTarget, snapshot } = await context.verify();
+  const issuedAt = Date.now();
+  const bytes = Buffer.from(JSON.stringify({ version: 1, purpose: 'founders-lens:local-workspace:read-only',
+    primaryTarget, authorityIdentity: snapshot.authorityIdentity, namespace: snapshot.namespace, epoch: snapshot.epoch,
+    recoveryRun: randomUUID(), inventoryDigest: snapshot.inventoryDigest, subjectVersions: snapshot.subjectVersions,
+    issuedAt, expiresAt: issuedAt + 300_000 }));
+  return { FL_P6_RECOVERY_DECISION: JSON.stringify({ payload: bytes.toString('base64url'),
+    signature: sign(null, bytes, privateKey).toString('base64url') }), FL_P6_OPERATOR_PUBLIC_KEY: pinned.toString('base64'),
+  FL_P6_CURSOR_KEY: randomBytes(32).toString('hex') };
+}

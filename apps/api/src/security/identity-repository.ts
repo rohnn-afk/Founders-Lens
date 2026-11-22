@@ -15,6 +15,17 @@ export interface IdentityRepository {
 export class PrismaIdentityRepository implements IdentityRepository {
   constructor(private readonly client: PrismaClient) {}
   async resolve(identity: VerifiedIdentity, keys: readonly SubjectKey[], currentVersion: number): Promise<LocalIdentity> {
+    return this.resolveAccount(identity, keys, currentVersion, true);
+  }
+
+  /** Resolve an existing active binding without provisioning or digest rotation. */
+  async resolveExisting(identity: VerifiedIdentity, keys: readonly SubjectKey[], currentVersion: number): Promise<LocalIdentity> {
+    return this.resolveAccount(identity, keys, currentVersion, false);
+  }
+
+  /** Serialize lookup with deletion and apply writes only for existing provisioning callers. */
+  private async resolveAccount(identity: VerifiedIdentity, keys: readonly SubjectKey[], currentVersion: number,
+    allowProvisioning: boolean): Promise<LocalIdentity> {
     const current = keys.find(key => key.version === currentVersion);
     if (!current || keys.length === 0) throw new SecurityError('DEPENDENCY_UNAVAILABLE');
     try {
@@ -38,12 +49,17 @@ export class PrismaIdentityRepository implements IdentityRepository {
           if (!keys.some(key => key.version === account.subjectKeyVersion && key.digest === account.subjectKey)) {
             throw new SecurityError('DEPENDENCY_UNAVAILABLE');
           }
-          if (account.subjectKeyVersion !== currentVersion) await tx.userAccount.update({ where: { id: account.id },
+          if (allowProvisioning && account.subjectKeyVersion !== currentVersion) await tx.userAccount.update({ where: { id: account.id },
             data: { subjectKey: current.digest, subjectKeyVersion: currentVersion } });
           return { id: account.id, status: 'ACTIVE' };
         }
-        const created = await tx.userAccount.create({ data: { id: randomUUID(), clerkSubject: identity.subject,
-          clerkInstanceId: identity.instanceId, subjectKey: current.digest, subjectKeyVersion: currentVersion }, select: { id: true } });
+        if (!allowProvisioning) throw new SecurityError('ACCOUNT_UNAVAILABLE');
+        // Let PostgreSQL apply account defaults so restricted provisioning needs only these columns.
+        const [created] = await tx.$queryRaw<{ id: string }[]>`
+          INSERT INTO "UserAccount" (id, "clerkSubject", "clerkInstanceId", "subjectKey", "subjectKeyVersion", "updatedAt")
+          VALUES (${randomUUID()}::uuid, ${identity.subject}, ${identity.instanceId}, ${current.digest}, ${currentVersion}, ${new Date()})
+          RETURNING id`;
+        if (!created) throw new SecurityError('DEPENDENCY_UNAVAILABLE');
         return { id: created.id, status: 'ACTIVE' };
       });
     } catch (error) {

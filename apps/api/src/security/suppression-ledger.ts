@@ -50,6 +50,7 @@ interface CoverageRow {
   recovery_run: string | null;
   recovery_target: string | null;
   recovery_seal: string | null;
+  authority_identity: string | null;
 }
 
 /** Externally pinned recovery identity, independent of restored primary data. */
@@ -126,11 +127,13 @@ export function createSuppressionLedger(pool: Pool, trusted: {
     return pool.query<Row>(options);
   }
   /** Return the complete authenticated proof inventory or reject without a partial result. */
-  async function snapshot(cutoff?: RecoveryCutoff) {
+  async function readSnapshot(cutoff?: RecoveryCutoff, identifyAuthority = false) {
     // Slice 1 checks the entire small fixture inventory in one MVCC snapshot.
     // Bound the result and fail closed when this proof-sized limit is exceeded.
     const row = (await query<CoverageRow>(`SELECT c.epoch,c.subject_versions,c.challenge_namespace,c.integrity AS coverage_integrity,
       c.recovery_run,c.recovery_target,c.recovery_seal,
+      ${identifyAuthority ? `(SELECT system_identifier::text || ':' || d.oid::text
+        FROM pg_catalog.pg_control_system(), pg_catalog.pg_database d WHERE d.datname=current_database())` : 'NULL'} AS authority_identity,
       n.total,COALESCE((SELECT json_agg(i) FROM
         (SELECT * FROM authority.intent ORDER BY scope_key LIMIT 257) i),'[]'::json) AS inventory
       FROM authority.inventory_count n LEFT JOIN authority.coverage c ON c.singleton WHERE n.singleton`)).rows[0];
@@ -146,8 +149,10 @@ export function createSuppressionLedger(pool: Pool, trusted: {
         cutoff.target, inventory.map(intent => intent.integrity)])))) {
       throw new Error('Suppression recovery cutoff unavailable');
     }
-    return inventory;
+    return { inventory, authorityIdentity: row.authority_identity };
   }
+
+  const snapshot = async (cutoff?: RecoveryCutoff) => (await readSnapshot(cutoff)).inventory;
 
   const authority: SuppressionAuthority = {
     async lookup(scope, request) {
@@ -275,6 +280,20 @@ export function createSuppressionLedger(pool: Pool, trusted: {
       }
     },
     inventory: () => snapshot(),
+    /**
+     * Authenticate the live, unfrozen authority and its entire bounded inventory.
+     * The read role needs EXECUTE on pg_control_system to bind this same snapshot
+     * to the PostgreSQL cluster and database actually serving it.
+     */
+    async runtimeSnapshot() {
+      if (!namespace || !pool.options.connectionTimeoutMillis ||
+        pool.options.connectionTimeoutMillis > 5000) throw new Error('Runtime authority is not configured');
+      const { inventory, authorityIdentity } = await readSnapshot(undefined, true);
+      if (!authorityIdentity || !/^[0-9]+:[0-9]+$/.test(authorityIdentity)) throw new Error('Authority identity unavailable');
+      return { authorityIdentity, namespace, epoch, subjectVersions: [...versions],
+        inventoryDigest: mac(['suppression-runtime-inventory-v1', authorityIdentity, epoch, namespace,
+          versions, inventory.map(row => row.integrity)]) };
+    },
     /** Read all authenticated intents from the frozen authority for this restore target. */
     async recoveryInventory(cutoff: RecoveryCutoff) {
       const entries = await snapshot(cutoff);

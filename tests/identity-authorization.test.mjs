@@ -219,9 +219,14 @@ test('real PostgreSQL identity and authorization foundation', { skip: !live, tim
     });
     await scenario(t, 'failure after account INSERT rolls back the real transaction', async () => {
       const sub = await subject(); let insertExecuted = false;
-      const interrupted = runtime.$extends({ query: { userAccount: { async create({ args, query }) {
-        await query(args); insertExecuted = true; throw new Error('synthetic failure after insertion');
-      } } } });
+      let rawQueries = 0;
+      const interrupted = runtime.$extends({ query: { async $queryRaw({ args, query }) {
+        const result = await query(args);
+        // The first raw query takes the subject lock. Fail after the subsequent INSERT.
+        if (++rawQueries === 1) return result;
+        insertExecuted = true;
+        throw new Error('synthetic failure after insertion');
+      } } });
       await assert.rejects(service(liveProvider, keys, new PrismaIdentityRepository(interrupted)).resolve(identity(sub), 'request'), denied('DEPENDENCY_UNAVAILABLE'));
       assert.equal(insertExecuted, true);
       assert.equal((await owner.query('SELECT count(*)::int AS count FROM "UserAccount" WHERE "clerkSubject"=$1', [sub])).rows[0].count, 0);
