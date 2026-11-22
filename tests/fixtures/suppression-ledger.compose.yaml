@@ -1,0 +1,41 @@
+# Opt-in, same-host proof. The test harness supplies a unique project name and
+# ephemeral credentials. Only the authority retains data across service restart.
+name: founders-lens-suppression-proof
+services:
+  authority:
+    image: docker.io/library/postgres:17.12-bookworm@sha256:40865bc877a289da75963d97d72b59633f639fc5af7a4e856bfa3714cae5b536
+    environment:
+      POSTGRES_DB: suppression_proof
+      POSTGRES_PASSWORD: ${FL_SUPPRESSION_ADMIN_PASSWORD:?Required}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+      FL_SUPPRESSION_READER_PASSWORD: ${FL_SUPPRESSION_READER_PASSWORD:?Required}
+      FL_SUPPRESSION_WRITER_PASSWORD: ${FL_SUPPRESSION_WRITER_PASSWORD:?Required}
+    ports:
+      - "127.0.0.1:${FL_SUPPRESSION_PORT:-55436}:5432"
+    volumes:
+      - authority-data:/var/lib/postgresql/data
+      - ./suppression-ledger-bootstrap.sql:/docker-entrypoint-initdb.d/01-ledger.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -d suppression_proof"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+  primary-proof:
+    # This disposable rollback target never connects to the application cluster.
+    profiles: [rollback]
+    image: docker.io/library/postgres:17.12-bookworm@sha256:40865bc877a289da75963d97d72b59633f639fc5af7a4e856bfa3714cae5b536
+    environment:
+      POSTGRES_DB: primary_proof
+      POSTGRES_PASSWORD: ${FL_SUPPRESSION_PRIMARY_PASSWORD:?Required}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    ports:
+      - "127.0.0.1:${FL_SUPPRESSION_PRIMARY_PORT:-55437}:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -d primary_proof"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+volumes:
+  authority-data:
