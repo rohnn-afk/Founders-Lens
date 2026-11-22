@@ -1,7 +1,7 @@
 // Operator-only helpers for the two fixed P6 targets. Express never imports this module.
 import assert from 'node:assert/strict';
 import { createHash, createHmac, createPrivateKey, createPublicKey, pbkdf2Sync, randomBytes, randomUUID, sign } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { parseEnv } from 'node:util';
 import pg from 'pg';
 import { createSuppressionLedger } from '../../apps/api/dist/security/suppression-ledger.js';
@@ -46,6 +46,15 @@ async function drain(pool, role) {
   assert.ok(state.sessions === 0, 'P6 writer did not drain');
 }
 
+// Send only the SCRAM verifier to PostgreSQL, never the login password in SQL.
+function scramVerifier(password) {
+  const salt = randomBytes(16);
+  const salted = pbkdf2Sync(password, salt, 4096, 32, 'sha256');
+  const stored = createHash('sha256').update(createHmac('sha256', salted).update('Client Key').digest()).digest('base64');
+  const server = createHmac('sha256', salted).update('Server Key').digest('base64');
+  return `SCRAM-SHA-256$4096:${salt.toString('base64')}$${stored}:${server}`;
+}
+
 /** Admit one restricted backend. On uncertainty, leave ordinary writers disabled for inspection. */
 export async function withP6Provisioning(context, bind) {
   const { primary, authority } = context;
@@ -68,11 +77,7 @@ export async function withP6Provisioning(context, bind) {
     await exclusion.query('BEGIN; LOCK TABLE authority.intent, authority.coverage, authority.inventory_count, authority.recovery_progress IN SHARE MODE');
     await context.verify();
     const password = randomBytes(32).toString('hex');
-    const salt = randomBytes(16);
-    const salted = pbkdf2Sync(password, salt, 4096, 32, 'sha256');
-    const stored = createHash('sha256').update(createHmac('sha256', salted).update('Client Key').digest()).digest('base64');
-    const server = createHmac('sha256', salted).update('Server Key').digest('base64');
-    const verifier = `SCRAM-SHA-256$4096:${salt.toString('base64')}$${stored}:${server}`;
+    const verifier = scramVerifier(password);
     const expiry = new Date(Date.now() + 30_000).toISOString();
     // Only the SCRAM verifier reaches SQL. Close new authentication as soon as
     // the pool has its sole backend, before Prisma performs any write.
@@ -100,6 +105,29 @@ export async function withP6Provisioning(context, bind) {
       await primary.query('ALTER ROLE fl_p6_workspace LOGIN');
       await authority.query('ALTER ROLE ledger_writer LOGIN');
     }
+  }
+}
+
+/** Install only the local idea writer. An interrupted setup requires operator inspection. */
+export async function prepareP7IdeaWriter(context, confirmation) {
+  assert.ok(confirmation === 'prepare-p7-idea-writer', 'Explicit operator approval required');
+  await context.verify();
+  const { rows: [state] } = await context.primary.query(`SELECT
+    (SELECT count(*)::int FROM "UserAccount" WHERE status='ACTIVE') AS active,
+    NOT EXISTS (SELECT FROM pg_roles WHERE rolname='fl_p7_idea_create') AS absent,
+    (SELECT NOT rolcanlogin FROM pg_roles WHERE rolname='fl_p6_provision') AS provision_closed`);
+  assert.ok(state.active === 1 && state.absent && state.provision_closed, 'P7 writer requires a bound P6 workspace and fresh setup');
+  const password = randomBytes(32).toString('hex');
+  const grants = await readFile(new URL('./p7-idea-create-grants.sql', import.meta.url), 'utf8');
+  await writeFile('.env.p7.writer.local', `FL_P7_IDEA_CREATE_PASSWORD=${password}\n`, { flag: 'wx', mode: 0o600 });
+  const client = await context.primary.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`CREATE ROLE fl_p7_idea_create LOGIN NOINHERIT PASSWORD '${scramVerifier(password)}'`);
+    await client.query(grants);
+    await client.query('COMMIT');
+  } finally {
+    try { await client.query('ROLLBACK'); } finally { client.release(); }
   }
 }
 
@@ -145,8 +173,8 @@ export async function p6Operator(t) {
 }
 
 /** Issue a five-minute decision only after the operator explicitly invokes signing. */
-export async function signP6Clearance(context, privateKeyPath, publicKeyPath, confirmation) {
-  assert.ok(confirmation === 'approve-p6-genesis-read-only', 'Explicit operator approval required');
+export async function signP6Clearance(context, privateKeyPath, publicKeyPath, confirmation, createIdea = false) {
+  assert.ok(confirmation === (createIdea ? 'approve-p7-create-idea' : 'approve-p6-genesis-read-only'), 'Explicit operator approval required');
   const privateKey = createPrivateKey(await readFile(privateKeyPath));
   const publicKey = createPublicKey(await readFile(publicKeyPath));
   const pinned = publicKey.export({ type: 'spki', format: 'der' });
@@ -154,11 +182,13 @@ export async function signP6Clearance(context, privateKeyPath, publicKeyPath, co
     .export({ type: 'spki', format: 'der' })), 'Operator key does not match the pinned public key');
   const { primaryTarget, snapshot } = await context.verify();
   const issuedAt = Date.now();
-  const bytes = Buffer.from(JSON.stringify({ version: 1, purpose: 'founders-lens:local-workspace:read-only',
+  const bytes = Buffer.from(JSON.stringify({ version: 1, purpose: createIdea
+    ? 'founders-lens:local-workspace:create-idea' : 'founders-lens:local-workspace:read-only',
     primaryTarget, authorityIdentity: snapshot.authorityIdentity, namespace: snapshot.namespace, epoch: snapshot.epoch,
     recoveryRun: randomUUID(), inventoryDigest: snapshot.inventoryDigest, subjectVersions: snapshot.subjectVersions,
     issuedAt, expiresAt: issuedAt + 300_000 }));
-  return { FL_P6_RECOVERY_DECISION: JSON.stringify({ payload: bytes.toString('base64url'),
-    signature: sign(null, bytes, privateKey).toString('base64url') }), FL_P6_OPERATOR_PUBLIC_KEY: pinned.toString('base64'),
+  const envelope = JSON.stringify({ payload: bytes.toString('base64url'), signature: sign(null, bytes, privateKey).toString('base64url') });
+  if (createIdea) return { FL_P7_CREATE_IDEA_DECISION: envelope };
+  return { FL_P6_RECOVERY_DECISION: envelope, FL_P6_OPERATOR_PUBLIC_KEY: pinned.toString('base64'),
   FL_P6_CURSOR_KEY: randomBytes(32).toString('hex') };
 }

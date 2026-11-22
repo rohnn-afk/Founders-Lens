@@ -54,13 +54,25 @@ function authenticatedRequest(authenticate: Authenticate, action: Handler) {
 }
 
 /** Register only idea listing. The caller must supply a verified runtime admission boundary. */
-export function workspaceIdeaListRoutes(service: Pick<WorkspaceService, 'ideas'>, authenticate: Authenticate): Router {
+export function workspaceIdeaListRoutes(service: Pick<WorkspaceService, 'ideas'>, authenticate: Authenticate,
+  create?: Pick<WorkspaceService, 'createIdea'>): Router {
   const router = Router();
   router.use(attachRequestContext);
   // Express ordinarily treats HEAD as GET. The local slice admits only GET.
   router.head('/ideas', (_request, response) => { response.set('Cache-Control', 'no-store').status(404).end(); });
   router.get('/ideas', authenticatedRequest(authenticate, listIdeas(service)));
+  if (create) router.post('/ideas', authenticatedRequest(authenticate, createIdea(create)));
   return router;
+}
+
+function createIdea(service: Pick<WorkspaceService, 'createIdea'>): Handler {
+  return async (req, res, principal) => {
+    input(emptyQuery, req.query);
+    const key = input(idempotencyKey, readSingleHeader(req, 'idempotency-key'));
+    await parseRequestBody(req, res);
+    const result = await service.createIdea(principal, key, input(ideaCreate, req.body));
+    res.status(201).set('ETag', etag(result.version)).location('/api/v1/ideas/' + result.id).json(result);
+  };
 }
 
 /** Share the query parser and response contract across workspace compositions. */
@@ -76,13 +88,7 @@ export function workspaceRoutes(service: WorkspaceRouteOperations, authenticate:
   router.use(attachRequestContext);
   const withAuthenticatedRequest = (action: Handler) => authenticatedRequest(authenticate, action);
   router.get('/ideas', withAuthenticatedRequest(listIdeas(service)));
-  router.post('/ideas', withAuthenticatedRequest(async (req, res, p) => {
-    input(emptyQuery, req.query);
-    const key = input(idempotencyKey, readSingleHeader(req, 'idempotency-key'));
-    await parseRequestBody(req, res);
-    const result = await service.createIdea(p, key, input(ideaCreate, req.body));
-    res.status(201).set('ETag', etag(result.version)).location('/api/v1/ideas/' + result.id).json(result);
-  }));
+  router.post('/ideas', withAuthenticatedRequest(createIdea(service)));
   router.get('/ideas/:ideaId', withAuthenticatedRequest(async (req, res, p) => {
     input(emptyQuery, req.query);
     const result = await service.idea(p, input(uuid, req.params['ideaId']));

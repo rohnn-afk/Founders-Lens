@@ -16,15 +16,91 @@ const browserLive = process.argv.includes('--clerk-browser-live');
 const reverificationLive = process.argv.includes('--clerk-reverification-live');
 const p6Bind = process.argv.includes('--p6-bind-account');
 const p6Sign = process.argv.includes('--p6-sign-clearance');
-const interactiveMode = browserLive || reverificationLive || p6Bind || p6Sign;
-if ([browserLive, reverificationLive, p6Bind, p6Sign].filter(Boolean).length > 1) throw new Error('Select exactly one Clerk test mode.');
+const p7Sign = process.argv.includes('--p7-sign-create');
+const p7Prepare = process.argv.includes('--p7-prepare-writer');
+const workspaceCreateLive = process.argv.includes('--p7-create-browser-live');
+const modes = [browserLive, reverificationLive, p6Bind, p6Sign, p7Sign, p7Prepare, workspaceCreateLive];
+const interactiveMode = modes.some(Boolean);
+if (modes.filter(Boolean).length > 1) throw new Error('Select exactly one Clerk test mode.');
 
-test('P6 operator signs local recovery clearance', { skip: !p6Sign, timeout: 25_000 }, async t => {
+test('P7 operator prepares restricted idea writer', { skip: !p7Prepare, timeout: 25_000 }, async t => {
+  const { p6Operator, prepareP7IdeaWriter } = await import('./fixtures/p6-local-operator.mjs');
+  await prepareP7IdeaWriter(await p6Operator(t), process.env.P6_OPERATOR_CONFIRM);
+});
+
+/** Capture only the approved POST's idempotency key and body, never its bearer header. */
+test('P7 interactive Clerk creates and replays one idea', { skip: !workspaceCreateLive, timeout: 420_000 }, async t => {
+  const { p6Operator } = await import('./fixtures/p6-local-operator.mjs');
+  const { clerkConfig } = await import('../apps/api/dist/security/config.js');
+  const { createClerkBoundary } = await import('../apps/api/dist/security/clerk.js');
+  const { ClerkIdentityProvider } = await import('../apps/api/dist/security/identity-provider.js');
+  const context = await p6Operator(t);
+  const origin = 'http://127.0.0.1:3000', endpoint = 'http://127.0.0.1:3001/api/v1/ideas';
+  const env = process.env;
+  const config = clerkConfig({ ...env, CLERK_PUBLISHABLE_KEY: env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY });
+  assert.ok(config.publishableKey.startsWith('pk_test_') && config.authorizedParties.includes(origin) &&
+    /^user_[A-Za-z0-9_-]+$/.test(env.CLERK_TEST_USER_ID ?? ''), 'Approved development identity required');
+  const boundary = createClerkBoundary({ ...config, authorizedParties: [origin] });
+  const provider = new ClerkIdentityProvider(boundary.client);
+  const evaluate = await openEdge(t, origin + '/app', true);
+  const shell = `location.origin === ${JSON.stringify(origin)} && location.pathname === '/app' &&
+    window.Clerk?.session?.status === 'active' && !!document.querySelector('#idea-title')`;
+  console.info('Sign in with the approved P7 development account. Wait for the prompt before saving.');
+  await waitForBrowser(async () => await evaluate(shell) === true, manualSignInTimeout);
+  const bearer = async () => {
+    const token = await evaluate(`(${shell}) ? window.Clerk.session.getToken({ skipCache: true }) : null`, 10_000);
+    assert.ok(typeof token === 'string' && token.split('.').length === 3, 'Fresh Clerk session required');
+    return 'Bearer ' + token;
+  };
+  const authorization = await bearer();
+  const identity = await boundary.authenticate({ authorization }, ['Authorization', authorization]);
+  assert.ok(identity.instanceId === config.instanceId && identity.subject === env.CLERK_TEST_USER_ID, 'Unexpected Clerk identity');
+  await provider.assertLive(identity);
+  const matching = await context.primary.query(`SELECT id FROM "UserAccount"
+    WHERE "clerkInstanceId"=$1 AND "clerkSubject"=$2 AND status='ACTIVE'`, [identity.instanceId, identity.subject]);
+  assert.equal(matching.rowCount, 1);
+  const count = async () => (await context.primary.query('SELECT count(*)::int AS total FROM "Idea" WHERE "ownerId"=$1',
+    [matching.rows[0].id])).rows[0].total;
+  const before = await count();
+  await evaluate(`(() => {
+    const original = window.fetch;
+    window.fetch = async (input, init) => {
+      const response = await original(input, init);
+      if (String(input) === ${JSON.stringify(endpoint)} && init?.method === 'POST' && response.status === 201) {
+        const idea = await response.clone().json();
+        window.p7Accepted = { id: idea.id, key: new Headers(init.headers).get('Idempotency-Key'), body: init.body };
+        window.fetch = original;
+      }
+      return response;
+    };
+  })()`);
+  console.info('Save one approved development idea in Edge now. The harness will replay that exact request.');
+  const accepted = await waitForBrowser(() => evaluate('window.p7Accepted ?? null'), manualSignInTimeout);
+  assert.ok(typeof accepted.key === 'string' && typeof accepted.body === 'string' && typeof accepted.id === 'string');
+  const title = JSON.parse(accepted.body).title;
+  await waitForBrowser(async () => await evaluate(`(${shell}) && [...document.querySelectorAll('#owned-ideas ~ ul strong')]
+    .some(item => item.textContent === ${JSON.stringify(title)})`) === true);
+  const active = await bearer();
+  const read = await fetch(endpoint, { headers: { Authorization: active }, signal: AbortSignal.timeout(10_000) });
+  assert.equal(read.status, 200);
+  assert.ok((await read.json()).items.some(idea => idea.id === accepted.id), 'Created idea missing from authorized list');
+  const replay = await fetch(endpoint, { method: 'POST', headers: { Authorization: active,
+    'Content-Type':'application/json', 'Idempotency-Key': accepted.key }, body: accepted.body, signal: AbortSignal.timeout(10_000) });
+  assert.equal(replay.status, 201);
+  assert.ok((await replay.json()).id === accepted.id, 'Replay did not return the original idea');
+  assert.equal(await count(), before + 1);
+  await evaluate(`window.Clerk.signOut({ redirectUrl: '/sign-in' })`);
+  await waitForBrowser(async () => await evaluate(`location.origin === ${JSON.stringify(origin)} && location.pathname.startsWith('/sign-in')`) === true);
+  assert.equal((await fetch(endpoint, { headers: { Authorization: active }, signal: AbortSignal.timeout(10_000) })).status, 401);
+});
+
+test(p7Sign ? 'P7 operator signs idea creation clearance' : 'P6 operator signs local recovery clearance',
+  { skip: !p6Sign && !p7Sign, timeout: 25_000 }, async t => {
   const { p6Operator, signP6Clearance } = await import('./fixtures/p6-local-operator.mjs');
   const context = await p6Operator(t);
   const values = await signP6Clearance(context, process.env.P6_OPERATOR_PRIVATE_KEY_FILE,
-    process.env.P6_OPERATOR_PUBLIC_KEY_FILE, process.env.P6_OPERATOR_CONFIRM);
-  await writeFile('.env.p6.decision.local', Object.entries(values)
+    process.env.P6_OPERATOR_PUBLIC_KEY_FILE, process.env.P6_OPERATOR_CONFIRM, p7Sign);
+  await writeFile(p7Sign ? '.env.p7.decision.local' : '.env.p6.decision.local', Object.entries(values)
     .map(([key, value]) => `${key}='${value}'`).join('\n') + '\n', { flag: 'wx', mode: 0o600 });
 });
 

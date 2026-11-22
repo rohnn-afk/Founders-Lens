@@ -68,10 +68,16 @@ test('runtime recovery rejects unsigned, malformed, expired and noncanonical dec
   await assert.rejects(guard(signed(decision), operator.privateKey).assertClearance(), denied);
   assert.equal(reads, 0);
   const verifier = guard(signed(decision));
-  assert.deepEqual(Object.keys(verifier), ['assertClearance']);
+  assert.deepEqual(Object.keys(verifier), ['assertClearance', 'verifiedDeadline']);
   await verifier.assertClearance();
   await verifier.assertClearance();
   assert.equal(reads, 2);
+  const create = 'founders-lens:local-workspace:create-idea';
+  const writeGuard = encoded => createRuntimeRecoveryClearance({ decision: encoded, operatorPublicKey: operator.publicKey,
+    primary, authority, subjectKeys, purpose: create });
+  await assert.rejects(writeGuard(signed(decision)).assertClearance(), denied);
+  await assert.rejects(guard(signed({ ...decision, purpose: create })).assertClearance(), denied);
+  assert.equal(await writeGuard(signed({ ...decision, purpose: create })).verifiedDeadline(), decision.expiresAt);
 });
 
 test('normal startup has no private idea route', async t => {
@@ -285,6 +291,89 @@ test('runtime decision is invalidated by live PostgreSQL target and authority ch
       assert.deepEqual((await service.ideas(foreign, {})).items.map(idea => idea.title), ['foreign']);
       assert.deepEqual(await service.ideas(empty, {}), { items: [], page: { hasMore: false, nextCursor: null } });
       await assert.rejects(service.ideas(foreign, { cursor: first.page.nextCursor }), { status: 400 });
+      await workspaceTest.test('P7 restricted writer creates atomically and replays through the same account lock', async () => {
+        const password = randomBytes(32).toString('hex');
+        await primary.query(`CREATE ROLE fl_p7_idea_create LOGIN NOINHERIT PASSWORD '${password}'`);
+        const rules = await readFile('tests/fixtures/p7-idea-create-grants.sql', 'utf8');
+        await primary.query(rules.replaceAll('founders_lens_p6_local', 'primary_proof'));
+        const writer = pool(primaryPort, 'primary_proof', 'fl_p7_idea_create', password);
+        const writeClient = new PrismaClient({ adapter: new PrismaPg(writer), log: [{ emit: 'event', level: 'query' }], errorFormat: 'minimal' });
+        const insertColumns = new Map();
+        writeClient.$on('query', ({ query }) => {
+          const insert = /INSERT INTO (?:"public"\.)?"(Idea|IdempotencyRecord)"\s*\(([^)]+)\)/.exec(query);
+          if (insert) insertColumns.set(insert[1], insert[2].replaceAll('"', '').split(',').map(value => value.trim()).sort());
+        });
+        const writeService = new WorkspaceService(new WorkspaceRepository(writeClient), new WorkspaceCursor(randomBytes(32)), authority.authority);
+        try {
+          const input = { title: 'Disposable P7 idea', summary: 'Fixture text' };
+          const verify = async () => Date.now() + 30_000;
+          const [created, replay] = await Promise.all([1, 2].map(() => writeService.createIdea(owner, 'same-create-key', input, verify)));
+          assert.deepEqual(created, replay);
+          assert.deepEqual(insertColumns.get('Idea'), ['id','ownerId','title','summary','contextEpoch','status','version','createdAt','updatedAt'].sort());
+          assert.deepEqual(insertColumns.get('IdempotencyRecord'), ['id','accountId','operationType','targetScope','key','requestFingerprint',
+            'algorithmVersion','status','responseStatus','responseRef','createdAt','expiresAt'].sort());
+          assert.ok((await service.ideas(owner, {})).items.some(idea => idea.id === created.id));
+          assert.ok(!(await service.ideas(foreign, {})).items.some(idea => idea.id === created.id));
+          await assert.rejects(writeService.createIdea(owner, 'same-create-key', { title: 'Changed' }, verify), { status: 409 });
+          let checks = 0;
+          await assert.rejects(writeService.createIdea(owner, 'lost-reply-key', input, async () => {
+            if (++checks === 2) throw new Error('simulated clearance outage after commit');
+            return verify();
+          }), /outage after commit/);
+          const recovered = await writeService.createIdea(owner, 'lost-reply-key', input, verify);
+          assert.notEqual(recovered.id, created.id);
+          await primary.query('UPDATE "IdempotencyRecord" SET "expiresAt"=now() WHERE key=$1', ['same-create-key']);
+          const replacement = await writeService.createIdea(owner, 'same-create-key', input, verify);
+          assert.notEqual(replacement.id, created.id);
+          const { rows: [totals] } = await primary.query(`SELECT
+            (SELECT count(*)::int FROM "Idea" WHERE "ownerId"=$1 AND title=$2) AS ideas,
+            (SELECT count(*)::int FROM "IdempotencyRecord" WHERE "accountId"=$1) AS receipts`, [owner.localUserId, input.title]);
+          assert.deepEqual(totals, { ideas: 3, receipts: 2 });
+          await assert.rejects(writer.query('SELECT content FROM "Message"'), { code: '42501' });
+          await assert.rejects(writer.query('UPDATE "Idea" SET title=title WHERE id=$1', [created.id]), { code: '42501' });
+          await assert.rejects(writer.query('DELETE FROM "Idea" WHERE id=$1', [created.id]), { code: '42501' });
+          await assert.rejects(writer.query('CREATE TABLE forbidden_p7 (id integer)'), { code: '42501' });
+          await assert.rejects(new PrismaIdentityRepository(writeClient).resolveExisting({ instanceId: 'ins_fixture',
+            subject: 'user_unbound' }, subjectKeys.derive('ins_fixture', 'user_unbound'), 1), { code: 'ACCOUNT_UNAVAILABLE' });
+          await assert.rejects(writeService.createIdea({ ...owner, localUserId: foreign.localUserId }, 'foreign-owner-key', input, verify),
+            { code: 'ACCOUNT_UNAVAILABLE' });
+          const interrupted = writeClient.$extends({ query: { idempotencyRecord: { create() { throw new Error('receipt fault'); } } } });
+          const interruptedService = new WorkspaceService(new WorkspaceRepository(interrupted), new WorkspaceCursor(randomBytes(32)), authority.authority);
+          await assert.rejects(interruptedService.createIdea(owner, 'atomic-fault-key', { title: 'Uncommitted P7' }, verify), /receipt fault/);
+          assert.equal((await primary.query('SELECT count(*)::int AS total FROM "Idea" WHERE title=$1', ['Uncommitted P7'])).rows[0].total, 0);
+          const locker = await primary.connect();
+          let expired;
+          try {
+            await locker.query('BEGIN');
+            await locker.query('SELECT id FROM "UserAccount" WHERE id=$1 FOR UPDATE', [owner.localUserId]);
+            let deadline;
+            expired = assert.rejects(writeService.createIdea(owner, 'expires-under-lock', { title: 'Expired P7' },
+              async () => (deadline = Date.now() + 200)), { code: 'DEPENDENCY_UNAVAILABLE' });
+            void expired.catch(() => {});
+            let waiting = false;
+            for (let attempt = 0; attempt < 40 && !waiting; attempt++) {
+              waiting = (await primary.query(`SELECT EXISTS (SELECT FROM pg_stat_activity
+                WHERE usename='fl_p7_idea_create' AND cardinality(pg_blocking_pids(pid)) > 0) AS waiting`)).rows[0].waiting;
+              if (!waiting) await new Promise(resolve => setTimeout(resolve, 10));
+            }
+            assert.ok(waiting && deadline, 'P7 creation did not wait on the account lock');
+            await new Promise(resolve => setTimeout(resolve, Math.max(0, deadline - Date.now()) + 10));
+            await locker.query('COMMIT');
+            await expired;
+          } finally {
+            try { await locker.query('ROLLBACK'); } finally { locker.release(); }
+          }
+          assert.equal((await primary.query('SELECT count(*)::int AS total FROM "Idea" WHERE title=$1', ['Expired P7'])).rows[0].total, 0);
+          await primary.query(`INSERT INTO "IdentityTombstone" (id,"clerkInstanceId","subjectKey","subjectKeyVersion","requestedAt")
+            VALUES ($1,$2,$3,$4,now())`, [randomUUID(), foreign.clerkInstanceId, foreign.subjectKeys[0].digest, foreign.subjectKeys[0].version]);
+          await assert.rejects(writeService.createIdea(foreign, 'tombstoned-create-key', input, verify), { code: 'ACCOUNT_UNAVAILABLE' });
+          await primary.query(`INSERT INTO "DataOperation" (id,kind,"deadlineAt","clerkInstanceId","ownerSubjectKey",
+            "subjectKeyVersion","deletionScopeKey","deletionState","policyVersion")
+            VALUES ($1,'DELETE_ACCOUNT',now()+interval '1 minute',$2,$3,$4,$5,'DELETION_REQUESTED','p7-fixture')`,
+          [randomUUID(), owner.clerkInstanceId, owner.subjectKeys[0].digest, owner.subjectKeys[0].version, `account:${randomUUID()}`]);
+          await assert.rejects(writeService.createIdea(owner, 'same-create-key', input, verify), { code: 'ACCOUNT_UNAVAILABLE' });
+        } finally { await writeClient.$disconnect(); }
+      });
     } finally { await prisma.$disconnect(); }
   });
 

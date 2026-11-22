@@ -103,6 +103,7 @@ test('idea retry preserves the frozen body and key and is explicit', async () =>
   const commands = createCommandController(api({ createIdea: async (body, key) => {
     calls.push({ body, key });
     if (calls.length === 1) throw Error('Synthetic reply lost');
+    if (calls.length === 2) return { status: 403 };
     return created(idea('new'));
   } }), reads.isCurrent, () => 'synthetic-key');
   const body = { title: 'Original' };
@@ -110,8 +111,10 @@ test('idea retry preserves the frozen body and key and is explicit', async () =>
   body.title = 'Edited';
   assert.equal((await commands.submitIdea(scope, body)).kind, 'uncertain');
   assert.equal(calls.length, 1);
+  assert.equal((await commands.submitIdea(scope)).kind, 'blocked');
+  assert.equal(commands.ideaUncertain(), true);
   assert.equal((await commands.submitIdea(scope)).kind, 'created');
-  assert.deepEqual(calls.map(call => [call.body.title, call.key]), [['Original', 'synthetic-key'], ['Original', 'synthetic-key']]);
+  assert.deepEqual(calls.map(call => [call.body.title, call.key]), Array.from({ length: 3 }, () => ['Original', 'synthetic-key']));
   assert.equal(Object.isFrozen(calls[0].body), true);
 });
 

@@ -1,8 +1,8 @@
-// Local-only composition for one private read route. Runtime uses restricted
+// Local-only composition for idea listing and optionally creation. Runtime uses restricted
 // database logins and a public verification key supplied by the operator.
 import { createPublicKey, randomUUID } from 'node:crypto';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { Router } from 'express';
+import { Router, type RequestHandler } from 'express';
 import pg from 'pg';
 import { PrismaClient } from '../generated/prisma/client.js';
 import { createRuntimeRecoveryClearance } from '../privacy/runtime-recovery-clearance.js';
@@ -19,6 +19,32 @@ import { WorkspaceRepository } from './repository.js';
 import { workspaceIdeaListRoutes } from './routes.js';
 import { WorkspaceService } from './service.js';
 
+const origin = 'http://127.0.0.1:3000';
+
+/** Limit local browser access to the exact configured ideas endpoint and methods. */
+export function workspaceIdeasCors(allowCreate: boolean): RequestHandler {
+  return (request, response, next) => {
+    if (request.baseUrl !== '/api/v1' || request.path !== '/ideas') { response.status(404).end(); return; }
+    response.vary('Origin');
+    const caller = request.get('Origin');
+    if (caller && caller !== origin) { response.status(403).end(); return; }
+    if (caller === origin) response.set({ 'Access-Control-Allow-Origin': origin,
+      'Access-Control-Expose-Headers': 'X-Workspace-Idea-Creation' });
+    if (request.method === 'GET' && allowCreate) response.set('X-Workspace-Idea-Creation', 'enabled');
+    const method = request.get('Access-Control-Request-Method');
+    const headers = request.get('Access-Control-Request-Headers')?.toLowerCase().split(',').map(value => value.trim()).sort().join(',');
+    if (request.method === 'OPTIONS') {
+      response.vary('Access-Control-Request-Method').vary('Access-Control-Request-Headers');
+      if (caller === origin && ((method === 'GET' && headers === 'authorization') ||
+        (allowCreate && method === 'POST' && headers === 'authorization,content-type,idempotency-key'))) {
+        response.set({ 'Access-Control-Allow-Methods': method, 'Access-Control-Allow-Headers': headers }).status(204).end();
+      } else response.status(404).end();
+      return;
+    }
+    next();
+  };
+}
+
 /** Open the fixed P6 read endpoints and validate signed clearance before mounting. */
 export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
   if (env['FL_P6_READ_ONLY'] !== '1' || env['NODE_ENV'] === 'production') return;
@@ -32,7 +58,6 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
     if (!/^[0-9a-f]{64}$/.test(value)) throw new Error('Invalid local workspace configuration');
     return Buffer.from(value, 'hex');
   };
-  const origin = 'http://127.0.0.1:3000';
   const config = clerkConfig({ ...env, CLERK_PUBLISHABLE_KEY: env['CLERK_PUBLISHABLE_KEY'] ?? env['NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY'] });
   if (!config.publishableKey.startsWith('pk_test_') || !config.authorizedParties.includes(origin) ||
     (!config.audience && env['CLERK_TEST_ALLOW_NO_AUDIENCE'] !== '1')) throw new Error('Local Clerk policy unavailable');
@@ -48,36 +73,46 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
   primary.on('error', () => {});
   authorityPool.on('error', () => {});
   const prisma = new PrismaClient({ adapter: new PrismaPg(primary), log: [], errorFormat: 'minimal' });
+  let writePool: pg.Pool | undefined;
+  let writeClient: PrismaClient | undefined;
   const close = async () => {
     await prisma.$disconnect();
+    await writeClient?.$disconnect();
+    await writePool?.end();
     await Promise.all([primary.end(), authorityPool.end()]);
   };
   try {
     const authority = createSuppressionLedger(authorityPool, { epoch: required('FL_P6_AUTHORITY_EPOCH'),
       challengeNamespace: required('FL_P6_AUTHORITY_NAMESPACE'), subjectVersions: [1], integrityKey: key('FL_P6_INTEGRITY_KEY') });
+    const operatorPublicKey = createPublicKey({ key: Buffer.from(required('FL_P6_OPERATOR_PUBLIC_KEY'), 'base64'),
+      type: 'spki', format: 'der' });
     const clearance = createRuntimeRecoveryClearance({ decision: required('FL_P6_RECOVERY_DECISION'),
-      operatorPublicKey: createPublicKey({ key: Buffer.from(required('FL_P6_OPERATOR_PUBLIC_KEY'), 'base64'),
-        type: 'spki', format: 'der' }), primary, authority, subjectKeys });
+      operatorPublicKey, primary, authority, subjectKeys });
     await clearance.assertClearance();
     const repo = new PrismaIdentityRepository(prisma);
     const identity = new IdentityService(config.instanceId, subjectKeys, new ClerkIdentityProvider(clerk.client),
       { resolve: repo.resolveExisting.bind(repo) }, authority.authority);
-    const workspace = new WorkspaceService(new WorkspaceRepository(prisma), new WorkspaceCursor(key('FL_P6_CURSOR_KEY')), authority.authority);
-    const router = Router();
-    router.use((request, response, next) => {
-      if (request.baseUrl !== '/api/v1' || request.path !== '/ideas') { response.status(404).end(); return; }
-      response.vary('Origin');
-      const caller = request.get('Origin');
-      if (caller && caller !== origin) { response.status(403).end(); return; }
-      if (caller === origin) response.set('Access-Control-Allow-Origin', origin);
-      if (request.method === 'OPTIONS' && caller === origin && request.get('Access-Control-Request-Method') === 'GET' &&
-        request.get('Access-Control-Request-Headers')?.toLowerCase() === 'authorization') {
-        response.vary('Access-Control-Request-Method').vary('Access-Control-Request-Headers');
-        response.set({ 'Access-Control-Allow-Methods': 'GET', 'Access-Control-Allow-Headers': 'Authorization' }).status(204).end();
-        return;
+    const cursor = new WorkspaceCursor(key('FL_P6_CURSOR_KEY'));
+    const workspace = new WorkspaceService(new WorkspaceRepository(prisma), cursor, authority.authority);
+    let create: Pick<WorkspaceService, 'createIdea'> | undefined;
+    if (env['FL_P7_CREATE_IDEA'] === '1') {
+      try {
+        const decision = required('FL_P7_CREATE_IDEA_DECISION');
+        writePool = pool(55437, 'founders_lens_p6_local', 'fl_p7_idea_create', required('FL_P7_IDEA_CREATE_PASSWORD'));
+        writePool.on('error', () => {});
+        const writeClearance = createRuntimeRecoveryClearance({ decision, operatorPublicKey,
+          primary: writePool, authority, subjectKeys, purpose: 'founders-lens:local-workspace:create-idea' });
+        await writeClearance.assertClearance();
+        writeClient = new PrismaClient({ adapter: new PrismaPg(writePool), log: [], errorFormat: 'minimal' });
+        const writer = new WorkspaceService(new WorkspaceRepository(writeClient), cursor, authority.authority);
+        create = { createIdea: (principal, key, body) => writer.createIdea(principal, key, body, writeClearance.verifiedDeadline) };
+      } catch {
+        await writePool?.end();
+        writePool = undefined;
       }
-      next();
-    });
+    }
+    const router = Router();
+    router.use(workspaceIdeasCors(Boolean(create)));
     router.use(workspaceIdeaListRoutes({ ideas(principal, query) {
       return workspace.ideas(principal, query, clearance.assertClearance);
     } }, async request => {
@@ -87,7 +122,7 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
       }
       await clearance.assertClearance();
       return identity.resolve(verified, randomUUID());
-    }));
+    }, create));
     return { router, close };
   } catch (error) {
     await close();

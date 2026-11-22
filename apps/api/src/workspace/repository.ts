@@ -15,6 +15,9 @@ export type ConversationRow = Prisma.ConversationGetPayload<{ select: typeof con
 type LedgerScope = Prisma.IdempotencyRecordAccountIdOperationTypeTargetScopeKeyCompoundUniqueInput;
 type ReceiptUpdate = Pick<Prisma.IdempotencyRecordUncheckedCreateInput,
   'requestFingerprint' | 'responseRef' | 'status' | 'responseStatus' | 'expiresAt'>;
+const receiptFields = { id: true, expiresAt: true, algorithmVersion: true, responseStatus: true,
+  status: true, responseRef: true, requestFingerprint: true } as const;
+export type WorkspaceReceipt = Prisma.IdempotencyRecordGetPayload<{ select: typeof receiptFields }>;
 
 export class WorkspaceTransaction {
   constructor(private readonly tx: Prisma.TransactionClient) {}
@@ -26,11 +29,11 @@ export class WorkspaceTransaction {
     return this.tx.idea.update({ where: { id, version }, data, select: ideaFields });
   }
   ledger(scope: LedgerScope) {
-    return this.tx.idempotencyRecord.findUnique({ where: { accountId_operationType_targetScope_key: scope } });
+    return this.tx.idempotencyRecord.findUnique({ where: { accountId_operationType_targetScope_key: scope }, select: receiptFields });
   }
   async saveReceipt(scope: LedgerScope, previousId: string | undefined, data: ReceiptUpdate) {
-    if (previousId) await this.tx.idempotencyRecord.update({ where: { id: previousId }, data });
-    else await this.tx.idempotencyRecord.create({ data: { ...scope, ...data } });
+    if (previousId) await this.tx.idempotencyRecord.update({ where: { id: previousId }, data, select: { id: true } });
+    else await this.tx.idempotencyRecord.create({ data: { ...scope, ...data }, select: { id: true } });
   }
   conversations(ideaId: string, anchor: Anchor | undefined, take: number) {
     return this.tx.conversation.findMany({ where: { ideaId, ...after(anchor) }, orderBy: [...pageOrder], take, select: conversationFields });

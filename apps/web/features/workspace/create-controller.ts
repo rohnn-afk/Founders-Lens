@@ -3,20 +3,19 @@
 import type { Conversation, ConversationCreate, Idea, IdeaCreate, Reply, Scope, WorkspaceApi } from './contracts';
 
 export type CreateResult<T> = { kind: 'created'; data: T } |
-  { kind: 'pending' | 'uncertain' | 'rejected' | 'signed-out' | 'blocked' | 'stale' };
+  { kind: 'pending' | 'uncertain' | 'rejected' | 'conflict' | 'signed-out' | 'blocked' | 'stale' };
 
-export function createCommandController(api: WorkspaceApi, isCurrent: (scope: Scope) => boolean,
+/** Keep one create intent in memory until its result is definitive or its session ends. */
+export function createIdeaCommandController(api: Pick<WorkspaceApi, 'createIdea'>, isCurrent: (scope: Scope) => boolean,
   makeKey = () => crypto.randomUUID()) {
   let ideaIntent: { session: number; account: string; body: Readonly<IdeaCreate>; key: string } | undefined;
   let ideaPending = false;
-  const conversationAttempts = new Map<string, 'pending' | 'uncertain'>();
   let generation = 0;
 
   function clear() {
     generation++;
     ideaIntent = undefined;
     ideaPending = false;
-    conversationAttempts.clear();
   }
 
   async function submitIdea(scope: Scope, body?: IdeaCreate): Promise<CreateResult<Idea>> {
@@ -37,9 +36,25 @@ export function createCommandController(api: WorkspaceApi, isCurrent: (scope: Sc
     if (attemptGeneration !== generation) return { kind: 'stale' };
     ideaPending = false;
     if (!isCurrent(scope)) return { kind: 'stale' };
-    const result = creationResult(reply);
-    if (result.kind !== 'uncertain') ideaIntent = undefined;
+    const result = reply.status === 409 ? { kind: 'conflict' as const } : creationResult(reply);
+    // Authorization denial on an explicit retry says nothing about the earlier commit.
+    if (result.kind !== 'uncertain' && (body || result.kind !== 'blocked')) ideaIntent = undefined;
     return result;
+  }
+
+  return { clear, submitIdea, ideaUncertain: () => Boolean(ideaIntent && !ideaPending) };
+}
+
+export function createCommandController(api: WorkspaceApi, isCurrent: (scope: Scope) => boolean,
+  makeKey = () => crypto.randomUUID()) {
+  const idea = createIdeaCommandController(api, isCurrent, makeKey);
+  const conversationAttempts = new Map<string, 'pending' | 'uncertain'>();
+  let generation = 0;
+
+  function clear() {
+    generation++;
+    idea.clear();
+    conversationAttempts.clear();
   }
 
   async function submitConversation(scope: Scope, ideaId: string, body: ConversationCreate): Promise<CreateResult<Conversation>> {
@@ -59,8 +74,7 @@ export function createCommandController(api: WorkspaceApi, isCurrent: (scope: Sc
     return isCurrent(scope) ? result : { kind: 'stale' };
   }
 
-  return { clear, submitIdea, submitConversation,
-    ideaUncertain: () => Boolean(ideaIntent && !ideaPending),
+  return { ...idea, clear, submitConversation,
     conversationState: (ideaId: string) => conversationAttempts.get(ideaId) };
 }
 

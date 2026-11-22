@@ -11,7 +11,7 @@ import { WorkspaceCursor } from '../apps/api/dist/workspace/contracts.js';
 import { workspaceIdeaListRoutes } from '../apps/api/dist/workspace/routes.js';
 import { WorkspaceService } from '../apps/api/dist/workspace/service.js';
 import { lockIdea } from '../apps/api/dist/workspace/repository.js';
-import { localReadOnlyWorkspace } from '../apps/api/dist/workspace/read-only-composition.js';
+import { localReadOnlyWorkspace, workspaceIdeasCors } from '../apps/api/dist/workspace/read-only-composition.js';
 
 test('local composition requires opt-in, rejects production and fails closed with incomplete configuration', async () => {
   assert.equal(await localReadOnlyWorkspace({}), undefined);
@@ -89,6 +89,71 @@ test('idea listing denies evidence that expires during locks, transaction return
   }
   expiryBoundary = 'none';
   await assert.rejects(service.ideas(principal, {}, async () => { now += 100; }), { code: 'DEPENDENCY_UNAVAILABLE' });
+});
+
+test('P7 denies suppressed, expired and blocked creation before inserting a row', async t => {
+  let now = 1000;
+  t.mock.method(Date, 'now', () => now);
+  let scenario = 'account suppression';
+  let transaction = 0;
+  const authority = { async lookup(scope, request) {
+    const suppressed = scenario === 'account suppression' && scope.kind === 'ACCOUNT' ||
+      scenario === 'idea suppression' && scope.kind === 'IDEA';
+    return { verdict: suppressed ? 'SUPPRESSED' : 'CLEAR', scope: suppressionScopeKey(scope), nonce: request.nonce,
+      observedAt: now, validUntil: now + 100, integrity: 'VERIFIED', coverage: 'COMPLETE', authority: 'INDEPENDENT', epoch: 'fixture' };
+  } };
+  const repo = { async transaction(_principal, action) {
+    transaction++;
+    if (transaction === 2 && (scenario === 'authority lock expiry' || scenario === 'decision lock expiry')) {
+      now += scenario === 'decision lock expiry' ? 50 : 100;
+    }
+    return action({ ledger: async () => null, createIdea: () => assert.fail('Denied create reached the write') });
+  } };
+  const service = new WorkspaceService(repo, new WorkspaceCursor(randomBytes(32)), authority);
+  for (const expected of ['account suppression', 'idea suppression', 'authority lock expiry', 'decision lock expiry']) {
+    scenario = expected;
+    transaction = 0;
+    await assert.rejects(service.createIdea(principal, 'fixture-key', { title: 'Synthetic' }, async () =>
+      now + (scenario === 'decision lock expiry' ? 50 : 500)), { code: 'DEPENDENCY_UNAVAILABLE' });
+  }
+});
+
+test('P7 ideas composition restricts POST and preflights to the enabled local slice', async t => {
+  for (const enabled of [false, true]) {
+    const app = express();
+    const created = { id: randomUUID(), version: 1 };
+    app.use('/api/v1', workspaceIdeasCors(enabled), workspaceIdeaListRoutes({ ideas: async () => ({ items: [] }) },
+      async req => req.get('authorization') === 'Bearer fixture' ? principal : null,
+      enabled ? { createIdea: async (caller, key, body) => {
+        assert.equal(caller.localUserId, accountId);
+        assert.equal(key, 'fixture-key');
+        assert.deepEqual(body, { title: 'Synthetic' });
+        return created;
+      } } : undefined));
+    const server = app.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    t.after(() => new Promise(resolve => server.close(resolve)));
+    const url = 'http://127.0.0.1:' + server.address().port + '/api/v1/ideas';
+    const origin = 'http://127.0.0.1:3000';
+    const preflight = (caller, headers) => fetch(url, { method: 'OPTIONS', headers: { Origin: caller,
+      'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': headers } });
+    const allowed = 'content-type,idempotency-key,authorization';
+    assert.equal((await preflight(origin, allowed)).status, enabled ? 204 : 404);
+    assert.equal((await preflight(origin, allowed + ',x-extra')).status, 404);
+    assert.equal((await preflight('http://localhost:3000', allowed)).status, 403);
+    const send = (body, headers = {}) => fetch(url, { method: 'POST', body: JSON.stringify(body), headers: {
+      Origin: origin, 'Content-Type': 'application/json', 'Idempotency-Key': 'fixture-key', ...headers } });
+    assert.equal((await send({ title: 'Synthetic' })).status, enabled ? 401 : 404);
+    const response = await send({ title: 'Synthetic' }, { Authorization: 'Bearer fixture' });
+    assert.equal(response.status, enabled ? 201 : 404);
+    if (enabled) {
+      assert.equal(response.headers.get('cache-control'), 'no-store');
+      assert.equal(response.headers.get('location'), '/api/v1/ideas/' + created.id);
+      assert.equal((await send({ title: 'Synthetic', ownerId: accountId }, { Authorization: 'Bearer fixture' })).status, 400);
+    }
+    assert.equal((await fetch(url + '/' + created.id)).status, 404);
+    assert.equal((await fetch(url, { method: 'DELETE' })).status, 404);
+  }
 });
 
 test('local idea deletion blocks founder field selection even while the row is active', async () => {

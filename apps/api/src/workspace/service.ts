@@ -1,7 +1,7 @@
 // Coordinates authorization, workspace commands, replay and response projection.
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import type { IdempotencyRecord, Prisma } from '../generated/prisma/client.js';
+import type { Prisma } from '../generated/prisma/client.js';
 import { authorizeIdea, type IdeaAccess } from '../security/authorization.js';
 import { SecurityError } from '../security/errors.js';
 import type { Principal } from '../security/principal.js';
@@ -9,7 +9,7 @@ import { requireClearance, type SuppressionAuthority } from '../security/suppres
 import { unavailableSuppressionAuthority } from '../security/suppression-unavailable.js';
 import { accountDto, conversationDto, etag, ideaDto, output, uuid, WorkspaceCursor, WorkspaceError,
   type ideaCreate, type ideaPatch, type conversationCreate, type preferencesPatch, type listQuery } from './contracts.js';
-import { type IdeaRow, type ConversationRow, WorkspaceRepository } from './repository.js';
+import { type IdeaRow, type ConversationRow, type WorkspaceReceipt, WorkspaceRepository } from './repository.js';
 
 type List = z.infer<typeof listQuery>;
 
@@ -21,7 +21,7 @@ function projectConversation(row: ConversationRow) {
 const receipt = z.strictObject({ id: uuid, createdAt: z.iso.datetime(), updatedAt: z.iso.datetime(),
   version: z.literal(1), status: z.literal('ACTIVE') });
 
-function readActiveReceipt(record: IdempotencyRecord | null) {
+function readActiveReceipt(record: WorkspaceReceipt | null) {
   if (!record || record.expiresAt <= new Date()) return undefined;
   if (record.algorithmVersion !== 1 || record.responseStatus !== 201 || record.status !== 'SUCCEEDED') {
     throw new SecurityError('DEPENDENCY_UNAVAILABLE');
@@ -39,12 +39,12 @@ export class WorkspaceService {
     for (const key of principal.subjectKeys) await requireClearance(authority, { kind: 'ACCOUNT',
       instanceId: principal.clerkInstanceId, subjectKeyVersion: key.version, subjectKey: key.digest, incarnation: 'ALL' });
   }
-  private async authorizeIdeaAccess(principal: Principal, id: string, access: IdeaAccess) {
+  private async authorizeIdeaAccess(principal: Principal, id: string, access: IdeaAccess, authority = this.authority) {
     // Clear the account before querying owner-scoped metadata. The idea gate
     // then obtains fresh evidence before the transaction reads private fields.
-    await this.requireAccountClearance(principal);
+    await this.requireAccountClearance(principal, authority);
     const metadata = await this.repo.ideaMetadata(principal, id);
-    await authorizeIdea(principal, metadata, this.authority, access);
+    await authorizeIdea(principal, metadata, authority, access);
   }
   private cursorScope(principal: Principal, parent?: string) {
     // A cursor marks where to resume a sorted list. Bind it to the caller,
@@ -103,45 +103,68 @@ export class WorkspaceService {
     await this.authorizeIdeaAccess(principal, id, 'read');
     return this.repo.transaction(principal, async tx => projectIdea(await tx.idea(principal, id, 'read')));
   }
-  async createIdea(principal: Principal, key: string, body: z.infer<typeof ideaCreate>) {
-    await this.requireAccountClearance(principal);
+  /** Create or replay under the account lock, with authority I/O outside primary transactions. */
+  async createIdea(principal: Principal, key: string, body: z.infer<typeof ideaCreate>, verifyWrite?: () => Promise<number>) {
+    let validUntil = verifyWrite ? await verifyWrite() : Infinity;
+    const authority: SuppressionAuthority = { lookup: async (scope, request) => {
+      const evidence = await this.authority.lookup(scope, request);
+      if (evidence) validUntil = Math.min(validUntil, evidence.validUntil);
+      return evidence;
+    } };
+    const requireFresh = () => {
+      if (Date.now() >= validUntil) throw new SecurityError('DEPENDENCY_UNAVAILABLE');
+    };
+    const finish = async <T>(result: T): Promise<T> => {
+      // Failure here may follow commit. Keep the key replayable under the existing 503 contract.
+      if (verifyWrite) await verifyWrite();
+      requireFresh();
+      return result;
+    };
+    await this.requireAccountClearance(principal, authority);
     const targetScope = 'ideas', operationType = 'postIdeas';
     const fingerprint = createHash('sha256').update(JSON.stringify([operationType, body.title, body.summary ?? null])).digest('hex');
     const lookup = { accountId: principal.localUserId, operationType, targetScope, key };
     // An idempotency receipt ties a retry key to one committed result. Determine its scope before
     // calling the suppression authority, which must run outside database locks.
-    let replay = await this.repo.transaction(principal, async tx => readActiveReceipt(await tx.ledger(lookup)));
+    let replay = await this.repo.transaction(principal, async tx => {
+      requireFresh();
+      return readActiveReceipt(await tx.ledger(lookup));
+    });
     if (!replay) {
       const id = randomUUID();
-      await requireClearance(this.authority, { kind: 'IDEA', instanceId: principal.clerkInstanceId,
+      await requireClearance(authority, { kind: 'IDEA', instanceId: principal.clerkInstanceId,
         accountId: principal.localUserId, ideaId: id });
       const result = await this.repo.transaction(principal, async tx => {
         // Another same-key request may have committed during the authority call.
         // The account lock serializes this check with idea and receipt creation.
         const previous = await tx.ledger(lookup);
         const concurrent = readActiveReceipt(previous);
+        requireFresh();
         if (concurrent) return { replay: concurrent };
         const row = await tx.createIdea({ id, ownerId: principal.localUserId, title: body.title, summary: body.summary ?? null });
         const dto = projectIdea(row);
         const responseRef = output(receipt, { id, createdAt: dto.createdAt, updatedAt: dto.updatedAt, version: dto.version, status: dto.status });
         await tx.saveReceipt(lookup, previous?.id, { requestFingerprint: fingerprint, responseRef,
           status: 'SUCCEEDED', responseStatus: 201, expiresAt: new Date(Date.now() + 14 * 86400_000) });
+        requireFresh();
         return { created: dto };
       });
-      if (result.created) return result.created;
+      if (result.created) return finish(result.created);
       replay = result.replay;
     }
     const originalId = replay.dto.id;
-    await this.authorizeIdeaAccess(principal, originalId, 'read');
-    return this.repo.transaction(principal, async tx => {
+    await this.authorizeIdeaAccess(principal, originalId, 'read', authority);
+    const result = await this.repo.transaction(principal, async tx => {
       const current = readActiveReceipt(await tx.ledger(lookup));
       if (!current || current.dto.id !== originalId) throw new SecurityError('DEPENDENCY_UNAVAILABLE');
-      await tx.idea(principal, originalId, 'read');
+      await tx.idea(principal, originalId, 'read', requireFresh);
+      requireFresh();
       if (current.fingerprint !== fingerprint) throw new WorkspaceError(409, 'IDEMPOTENCY_KEY_REUSED');
       // Rebuild the original text from the matched retry without storing a copy
       // in the receipt or substituting text from the current idea.
       return output(ideaDto, { ...current.dto, title: body.title, summary: body.summary ?? null });
     });
+    return finish(result);
   }
   async patchIdea(principal: Principal, id: string, match: string, patch: z.infer<typeof ideaPatch>) {
     await this.authorizeIdeaAccess(principal, id, 'write');
