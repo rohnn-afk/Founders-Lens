@@ -4,7 +4,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { MessageApi } from './contracts';
+import type { MessageApi, SavedMessageApi } from './contracts';
 import { createGenerationController, isTerminal, type GenerationView } from './generation-controller';
 import { createMessageController } from './message-controller';
 import { readConversation } from './read-controller';
@@ -14,6 +14,7 @@ import styles from './workspace.module.css';
 
 export function ConversationView({ ideaId, conversationId }: { ideaId: string; conversationId: string }) {
   const [revision, setRevision] = useState(0);
+  const { savedMessages } = useWorkspace();
   const load = useCallback(({ reads, api, scope, recovery }: ReturnType<typeof useWorkspace>) => {
     void revision;
     return readConversation(reads, { ...api, async idea(id, signal) {
@@ -24,6 +25,9 @@ export function ConversationView({ ideaId, conversationId }: { ideaId: string; c
     } }, scope, ideaId, conversationId);
   }, [conversationId, ideaId, revision]);
   const result = useWorkspaceRead(load);
+  useEffect(() => {
+    if (result.kind === 'missing') savedMessages?.clear(conversationId);
+  }, [result.kind, savedMessages, conversationId]);
   if (result.kind !== 'ready') return <><h1>Conversation</h1>{readNotice(result.kind, () => setRevision(value => value + 1))}</>;
   const { idea, conversation } = result.data;
   const archived = idea.status === 'ARCHIVED' || conversation.status === 'ARCHIVED';
@@ -39,9 +43,82 @@ export function ConversationView({ ideaId, conversationId }: { ideaId: string; c
 function ConversationMessages({ ideaId, conversationId, archived }: {
   ideaId: string; conversationId: string; archived: boolean;
 }) {
-  const { messageApi, recovery } = useWorkspace();
+  const { messageApi, recovery, savedMessages } = useWorkspace();
+  if (savedMessages) return <SavedTranscript api={savedMessages} conversationId={conversationId} archived={archived} />;
   if (!messageApi || !recovery) return null;
   return <MessagePanel api={messageApi} recovery={recovery} ideaId={ideaId} conversationId={conversationId} archived={archived} />;
+}
+
+/** Show committed turns and retain only the in-memory intent for an uncertain save. */
+function SavedTranscript({ api, conversationId, archived }: { api: SavedMessageApi; conversationId: string; archived: boolean }) {
+  const { scope, reads, invalidateSession } = useWorkspace();
+  const [draft, setDraft] = useState(() => api.pending(conversationId) ?? '');
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [revision, refresh] = useState(0);
+  const [cursors, setCursors] = useState<(string | null)[]>([null]);
+  const writerLifetime = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const active = new AbortController();
+    writerLifetime.current = active;
+    return () => active.abort();
+  }, []);
+  const cursor = cursors.at(-1) ?? null;
+  const load = useCallback((workspace: ReturnType<typeof useWorkspace>) => {
+    void revision;
+    return workspace.reads.read(workspace.scope, ['saved-messages', conversationId, cursor],
+      signal => api.history(conversationId, cursor, signal));
+  }, [api, conversationId, cursor, revision]);
+  const history = useWorkspaceRead(load);
+  const pending = api.pending(conversationId) !== undefined;
+  useEffect(() => {
+    if (history.kind !== 'missing') return;
+    invalidateSession();
+  }, [invalidateSession, history.kind]);
+
+  async function save(retry: boolean) {
+    const lifetime = writerLifetime.current;
+    if (!lifetime || lifetime.signal.aborted || saving || archived || history.kind !== 'ready') return;
+    if (!retry && (!draft.trim() || Array.from(draft).length > 10_000)) {
+      setNotice('Enter a message up to 10,000 characters.');
+      return;
+    }
+    setSaving(true);
+    setNotice('');
+    const signal = AbortSignal.any([scope.signal, lifetime.signal]);
+    const reply = await api.save(conversationId, retry ? undefined : draft, signal);
+    if (signal.aborted || !reads.isCurrent(scope)) return;
+    setSaving(false);
+    if (reply.status === 401 || reply.status === 403 || reply.status === 404) { invalidateSession(); return; }
+    if (reply.status === 201) {
+      setDraft('');
+      setNotice('Message saved.');
+      setCursors([null]);
+      refresh(value => value + 1);
+    } else if (reply.status === 409) setNotice('This save conflicts with an earlier request. Refresh the transcript before sending again.');
+    else if (!api.pending(conversationId)) setNotice('The message could not be saved. Check the message and try again.');
+  }
+
+  return <section aria-label="Saved messages">
+    {history.kind === 'ready' ? <>
+      {history.data.items.length === 0 ? <p role="status">No saved messages yet.</p> : <ol className={styles['list']}>
+        {history.data.items.map(item => <li key={item.id}><strong>{item.role === 'USER' ? 'You' : 'Assistant'}</strong>
+          <p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{item.content}</p></li>)}
+      </ol>}
+      <nav aria-label="Transcript pages">
+        {cursors.length > 1 && <button onClick={() => setCursors(cursors.slice(0, -1))}>Previous messages</button>}
+        {history.data.page.nextCursor && <button onClick={() => setCursors([...cursors, history.data.page.nextCursor])}>Next messages</button>}
+      </nav>
+      {!archived && <form className={styles['form']} onSubmit={event => { event.preventDefault(); void save(false); }}>
+        <label htmlFor="save-message">Message</label>
+        <textarea id="save-message" value={draft} required disabled={saving || pending} onChange={event => setDraft(event.target.value)} />
+        {pending ? <button type="button" disabled={saving} onClick={() => void save(true)}>Retry original message</button>
+          : <button type="submit" disabled={saving}>Save message</button>}
+      </form>}
+    </> : readNotice(history.kind, () => refresh(value => value + 1))}
+    {saving ? <p role="status">Saving message…</p> : pending && history.kind === 'ready' && <p role="status">Save could not be confirmed.</p>}
+    {notice && <p role="status">{notice}</p>}
+  </section>;
 }
 
 function MessagePanel({ api, recovery, ideaId, conversationId, archived }: {

@@ -1,12 +1,16 @@
 'use client';
 
 import { useAuth } from '@clerk/nextjs';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Idea, IdeaCreate, Page, Reply } from './contracts';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import type { Idea, IdeaCreate, Page, Reply, SessionSource } from './contracts';
 import { createIdeaCommandController } from './create-controller';
+import { createLocalConversationApi } from './local-conversation-api';
+import { WorkspaceProvider } from './workspace-provider';
 
 const endpoint = 'http://127.0.0.1:3001/api/v1/ideas';
-type View = { kind: 'loading' | 'unavailable' } | { kind: 'ready'; ideas: Idea[]; cursor: string | null };
+type View = { kind: 'loading' | 'unavailable' } | { kind: 'ready'; ideas: Idea[]; cursor: string | null; conversations: boolean };
 
 /** Decode the list projection before rendering any private values. */
 function ideaPage(value: unknown): Page<Idea> {
@@ -45,6 +49,28 @@ export function ReadOnlyIdeas() {
     return <p role="status">Workspace data is unavailable.</p>;
   }
   return <IdeasForSession key={JSON.stringify([userId, sessionId])} account={userId} getToken={getToken} />;
+}
+
+/** Bind the existing nested workspace views to one Clerk session lifetime. */
+export function LocalWorkspace({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  const { isLoaded, userId, sessionId, getToken } = useAuth();
+  if (pathname === '/app') return <ReadOnlyIdeas />;
+  if (!isLoaded || !userId || !sessionId) return <p role="status">Workspace data is unavailable.</p>;
+  return <LocalConversationSession key={JSON.stringify([userId, sessionId])} account={userId} getToken={getToken}>
+    {children}
+  </LocalConversationSession>;
+}
+
+function LocalConversationSession({ account, getToken, children }: {
+  account: string; getToken: () => Promise<string | null>; children: ReactNode;
+}) {
+  const tokenSource = useRef(getToken);
+  useEffect(() => { tokenSource.current = getToken; }, [getToken]);
+  const adapters = useMemo(() => createLocalConversationApi(() => tokenSource.current()), []);
+  const session = useMemo<SessionSource>(() => ({ getSnapshot: () => ({ localAccountId: account }), subscribe: () => () => {},
+    async revalidate() { if (!await tokenSource.current()) throw new Error('Session unavailable'); } }), [account]);
+  return <WorkspaceProvider session={session} api={adapters.api} savedMessages={adapters.savedMessages}>{children}</WorkspaceProvider>;
 }
 
 function IdeasForSession({ account, getToken }: { account: string; getToken: () => Promise<string | null> }) {
@@ -94,7 +120,8 @@ function IdeasForSession({ account, getToken }: { account: string; getToken: () 
         const data = ideaPage(await response.json());
         controller.signal.throwIfAborted();
         setCanCreate(response.headers.get('X-Workspace-Idea-Creation') === 'enabled');
-        setView({ kind: 'ready', ideas: [...previousPage.current, ...data.items], cursor: data.page.nextCursor });
+        setView({ kind: 'ready', ideas: [...previousPage.current, ...data.items], cursor: data.page.nextCursor,
+          conversations: response.headers.get('X-Workspace-Conversations') === 'enabled' });
         previousPage.current = [];
       } catch {
         if (!controller.signal.aborted) {
@@ -161,7 +188,9 @@ function IdeasForSession({ account, getToken }: { account: string; getToken: () 
       <button type="button" onClick={() => load(null)}>Retry</button></>}
     {creation === 'blocked' && <p role="alert">You do not currently have access to save ideas.</p>}
     {view.kind === 'ready' && (view.ideas.length === 0 ? <p role="status">You don’t have any ideas yet.</p> :
-      <ul>{view.ideas.map(idea => <li key={idea.id}><strong>{idea.title}</strong>{idea.summary && <p>{idea.summary}</p>}</li>)}</ul>)}
+      <ul>{view.ideas.map(idea => <li key={idea.id}><strong>{idea.title}</strong>{idea.summary && <p>{idea.summary}</p>}
+        {view.conversations && idea.status === 'ACTIVE' && <Link prefetch={false} aria-label={`Open conversations for ${idea.title}`}
+          href={'/app/ideas/' + encodeURIComponent(idea.id) + '/think'}>Open conversations</Link>}</li>)}</ul>)}
     {view.kind === 'ready' && view.cursor && <button type="button" onClick={() => load(view.cursor, view.ideas)}>
       Load more ideas
     </button>}

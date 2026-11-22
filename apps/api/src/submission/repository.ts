@@ -149,7 +149,7 @@ async function persistAcceptance(tx: Tx, scope: ReceiptKey, command: SubmissionC
 
 export function createSubmissionRepository(client: PrismaClient): SubmissionRepository {
   async function read<T>(principal: Principal, scope: SubmissionScope, activeOnly: boolean,
-    select: (tx: Tx) => Promise<T>): Promise<T> {
+    select: (tx: Tx) => Promise<T>, localReadGuard?: () => void): Promise<T> {
     try {
       return await client.$transaction(async tx => {
         // Match submission's lock order so lifecycle cannot change between
@@ -161,8 +161,14 @@ export function createSubmissionRepository(client: PrismaClient): SubmissionRepo
         if (!idea.length) throw new SecurityError('RESOURCE_NOT_FOUND');
         const conversation = await tx.$queryRaw<{ id: string }[]>`
           SELECT id FROM "Conversation" WHERE id = ${scope.id}::uuid AND "ideaId" = ${scope.ideaId}::uuid
-          AND status IN ('ACTIVE', 'ARCHIVED') FOR SHARE`;
+          AND (status = 'ACTIVE' OR (NOT ${Boolean(localReadGuard)} AND status = 'ARCHIVED')) FOR SHARE`;
         if (!conversation.length) throw new SecurityError('RESOURCE_NOT_FOUND');
+        if (localReadGuard) {
+          if (await tx.dataOperation.findFirst({ where: { kind: 'DELETE_IDEA', ideaId: scope.ideaId }, select: { id: true } })) {
+            throw new SecurityError('RESOURCE_NOT_FOUND');
+          }
+          localReadGuard();
+        }
         return select(tx);
       }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
     } catch (error) {
@@ -194,8 +200,8 @@ export function createSubmissionRepository(client: PrismaClient): SubmissionRepo
         return result.data;
       });
     },
-    history(principal, scope, limit, after) {
-      return read(principal, scope, false, tx => {
+    history(principal, scope, limit, after, localReadGuard) {
+      return read(principal, scope, Boolean(localReadGuard), tx => {
         const [turn, slot] = after ?? [0, 0];
         // Regenerated answers may be appended much later. Place the selected
         // answer immediately after its own USER turn, including across pages.
@@ -212,7 +218,7 @@ export function createSubmissionRepository(client: PrismaClient): SubmissionRepo
           WHERE u."conversationId" = ${scope.id}::uuid AND u."ideaId" = ${scope.ideaId}::uuid AND u.role = 'USER'
             AND (u.sequence, slots.slot) > (${turn}::int, ${slot}::int)
           ORDER BY u.sequence, slots.slot LIMIT ${limit}`;
-      });
+      }, localReadGuard);
     },
     async accept(principal, command, clock, policy) {
       try {

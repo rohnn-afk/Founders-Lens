@@ -5,9 +5,9 @@ import { auth } from '@clerk/nextjs/server';
 import { redirect } from 'next/navigation';
 import { Suspense, type ReactNode } from 'react';
 import { WorkspaceProvider } from '../../features/workspace/workspace-provider';
-import { ReadOnlyIdeas } from '../../features/workspace/read-only-ideas';
+import { LocalWorkspace } from '../../features/workspace/read-only-ideas';
 
-async function SignedInShell() {
+async function SignedInShell({ children }: { children: ReactNode }) {
   let signedIn: boolean;
   try {
     const { userId, sessionId } = await auth({ treatPendingAsSignedOut: true });
@@ -20,12 +20,12 @@ async function SignedInShell() {
   // A Clerk session grants access to this shell. Private workspace access
   // requires the separate Express identity, suppression and admission gates.
   return (
-    <main style={{ maxWidth: '48rem', margin: '3rem auto', padding: '0 1.5rem' }}>
+    <div style={{ maxWidth: '48rem', margin: '3rem auto', padding: '0 1.5rem' }}>
       <h1>Workspace</h1>
       <p>You are signed in.</p>
-      <ReadOnlyIdeas />
+      <LocalWorkspace>{children}</LocalWorkspace>
       <SignOutButton redirectUrl="/sign-in"><button type="button">Sign out</button></SignOutButton>
-    </main>
+    </div>
   );
 }
 
@@ -35,7 +35,7 @@ export default function WorkspaceLayout({ children }: { children: ReactNode }) {
   }
   return (
     <Suspense fallback={<p role="status">Checking your session…</p>}>
-      <SignedInShell />
+      <SignedInShell>{children}</SignedInShell>
     </Suspense>
   );
 }

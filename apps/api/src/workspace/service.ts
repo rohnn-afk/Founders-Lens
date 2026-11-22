@@ -99,9 +99,10 @@ export class WorkspaceService {
     }
     return page;
   }
-  async idea(principal: Principal, id: string) {
-    await this.authorizeIdeaAccess(principal, id, 'read');
-    return this.repo.transaction(principal, async tx => projectIdea(await tx.idea(principal, id, 'read')));
+  async idea(principal: Principal, id: string, localGuard?: () => void) {
+    const access = localGuard ? 'write' : 'read';
+    await this.authorizeIdeaAccess(principal, id, access);
+    return this.repo.transaction(principal, async tx => projectIdea(await tx.idea(principal, id, access, localGuard)));
   }
   /** Create or replay under the account lock, with authority I/O outside primary transactions. */
   async createIdea(principal: Principal, key: string, body: z.infer<typeof ideaCreate>, verifyWrite?: () => Promise<number>) {
@@ -178,35 +179,40 @@ export class WorkspaceService {
           ...(patch.summary === undefined ? {} : { summary: patch.summary }), ...(patch.status === undefined ? {} : { status: patch.status }) }));
     });
   }
-  async conversations(principal: Principal, id: string, query: List) {
-    await this.authorizeIdeaAccess(principal, id, 'read');
+  async conversations(principal: Principal, id: string, query: List, localGuard?: () => void) {
+    const access = localGuard ? 'write' : 'read';
+    await this.authorizeIdeaAccess(principal, id, access);
     const scope = this.cursorScope(principal, id), limit = query.limit ?? 25;
     const anchor = this.cursor.decode(scope, query.cursor);
     return this.repo.transaction(principal, async tx => {
-      await tx.idea(principal, id, 'read');
-      const rows = await tx.conversations(id, anchor, limit + 1);
+      await tx.idea(principal, id, access, localGuard);
+      const rows = await tx.conversations(id, anchor, limit + 1, Boolean(localGuard));
       return this.projectPage(rows, limit, scope, projectConversation);
     });
   }
-  async createConversation(principal: Principal, id: string, body: z.infer<typeof conversationCreate>) {
+  async createConversation(principal: Principal, id: string, body: z.infer<typeof conversationCreate>, localGuard?: () => void) {
     // This POST has no idempotency receipt. If the reply is lost, the caller
     // reconciles by listing conversations before deciding whether to create again.
     await this.authorizeIdeaAccess(principal, id, 'write');
     return this.repo.transaction(principal, async tx => {
-      await tx.idea(principal, id, 'write');
-      return projectConversation(await tx.createConversation({ ideaId: id, title: body.title ?? null,
-        ...(body.proactiveResearch === undefined ? {} : { proactiveResearch: body.proactiveResearch }) }));
+      await tx.idea(principal, id, 'write', localGuard);
+      localGuard?.();
+      const row = await tx.createConversation({ ideaId: id, title: body.title ?? null,
+        ...(body.proactiveResearch === undefined ? {} : { proactiveResearch: body.proactiveResearch }) });
+      localGuard?.();
+      return projectConversation(row);
     });
   }
-  async conversation(principal: Principal, id: string) {
+  async conversation(principal: Principal, id: string, localGuard?: () => void) {
     await this.requireAccountClearance(principal);
     const child = await this.repo.conversationParent(principal, id);
     if (!child) throw new SecurityError('RESOURCE_NOT_FOUND');
-    await this.authorizeIdeaAccess(principal, child.ideaId, 'read');
+    const access = localGuard ? 'write' : 'read';
+    await this.authorizeIdeaAccess(principal, child.ideaId, access);
     return this.repo.transaction(principal, async tx => {
-      await tx.idea(principal, child.ideaId, 'read');
+      await tx.idea(principal, child.ideaId, access, localGuard);
       const row = await tx.conversation(id, child.ideaId);
-      if (!row) throw new SecurityError('RESOURCE_NOT_FOUND');
+      if (!row || (localGuard && row.status !== 'ACTIVE')) throw new SecurityError('RESOURCE_NOT_FOUND');
       return projectConversation(row);
     });
   }

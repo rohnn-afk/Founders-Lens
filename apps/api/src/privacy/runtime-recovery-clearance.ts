@@ -13,7 +13,9 @@ const versions = z.array(z.number().int().min(1).max(2147483647)).min(1).max(16)
   .refine(value => value.every((version, index) => index === 0 || version > value[index - 1]!));
 const decisionSchema = z.strictObject({
   version: z.literal(1),
-  purpose: z.enum(['founders-lens:local-workspace:read-only', 'founders-lens:local-workspace:create-idea']),
+  purpose: z.enum(['founders-lens:local-workspace:read-only', 'founders-lens:local-workspace:create-idea',
+    'founders-lens:local-workspace:read-conversations', 'founders-lens:local-workspace:create-conversation',
+    'founders-lens:local-workspace:save-user-message']),
   primaryTarget: target,
   authorityIdentity: target,
   namespace: z.string().regex(/^hmac-sha256-v1:[0-9a-f]{64}$/),

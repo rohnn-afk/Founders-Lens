@@ -24,6 +24,13 @@ export type Message = {
 };
 export type Acceptance = { messageId: string; generationId: string; statusUrl: string; eventsUrl: string };
 export type MessageBody = Readonly<{ content: string; clientSubmissionId: string }>;
+/** Save-only transport has no generation ID, status or event channel. */
+export type SavedMessageApi = {
+  history(id: string, cursor: string | null, signal: AbortSignal): Promise<Reply<Page<Message>>>;
+  save(id: string, content: string | undefined, signal: AbortSignal): Promise<Reply<Message>>;
+  pending(id: string): string | undefined;
+  clear(id?: string): void;
+};
 export type MessageApi = {
   generation?: GenerationApi;
   submit(id: string, body: MessageBody, key: string, signal: AbortSignal): Promise<

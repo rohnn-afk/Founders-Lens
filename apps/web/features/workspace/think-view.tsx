@@ -38,6 +38,7 @@ export function ThinkView({ ideaId }: { ideaId: string }) {
     if (!reads.isCurrent(scope)) return;
     if (outcome.kind === 'signed-out' || outcome.kind === 'blocked') return invalidateSession();
     setCreation(outcome.kind);
+    if (outcome.kind === 'uncertain' && workspace.savedMessages) { setCursors([null]); retry(); }
     if (outcome.kind === 'created' && outcome.data.ideaId === ideaId) {
       router.push(base + '/conversations/' + encodeURIComponent(outcome.data.id));
     }
@@ -66,7 +67,7 @@ export function ThinkView({ ideaId }: { ideaId: string }) {
         : <form onSubmit={create} className={styles['form']}>
           <label htmlFor="conversation-title">Conversation title (optional)</label>
           <input id="conversation-title" value={title} onChange={event => setTitle(event.target.value)} />
-          <button disabled={commandState === 'pending'}>Create conversation</button>
+          <button disabled={commandState === 'pending'}>{workspace.savedMessages ? 'Start conversation' : 'Create conversation'}</button>
         </form>}
     </>}
   </>;

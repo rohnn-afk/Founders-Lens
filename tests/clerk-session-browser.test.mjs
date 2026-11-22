@@ -19,9 +19,84 @@ const p6Sign = process.argv.includes('--p6-sign-clearance');
 const p7Sign = process.argv.includes('--p7-sign-create');
 const p7Prepare = process.argv.includes('--p7-prepare-writer');
 const workspaceCreateLive = process.argv.includes('--p7-create-browser-live');
-const modes = [browserLive, reverificationLive, p6Bind, p6Sign, p7Sign, p7Prepare, workspaceCreateLive];
+const p8Prepare = process.argv.includes('--p8-prepare-role');
+const p8Sign = process.argv.includes('--p8-sign-conversations');
+const p8Live = process.argv.includes('--p8-conversations-browser-live');
+const modes = [browserLive, reverificationLive, p6Bind, p6Sign, p7Sign, p7Prepare, workspaceCreateLive, p8Prepare, p8Sign, p8Live];
 const interactiveMode = modes.some(Boolean);
 if (modes.filter(Boolean).length > 1) throw new Error('Select exactly one Clerk test mode.');
+
+test('P8 operator prepares restricted conversation role', { skip: !p8Prepare, timeout: 25_000 }, async t => {
+  const { p6Operator, prepareP8Conversations } = await import('./fixtures/p6-local-operator.mjs');
+  await prepareP8Conversations(await p6Operator(t), process.env.P6_OPERATOR_CONFIRM);
+});
+
+test('P8 operator signs conversation permissions', { skip: !p8Sign, timeout: 25_000 }, async t => {
+  const { p6Operator, signP8Clearances } = await import('./fixtures/p6-local-operator.mjs');
+  const values = await signP8Clearances(await p6Operator(t), process.env.P6_OPERATOR_PRIVATE_KEY_FILE,
+    process.env.P6_OPERATOR_PUBLIC_KEY_FILE, process.env.P6_OPERATOR_CONFIRM);
+  await writeFile('.env.p8.decisions.local', Object.entries(values).map(([key,value]) => `${key}='${value}'`).join('\n') + '\n',
+    { flag: 'wx', mode: 0o600 });
+});
+
+/** Observe the owner's one conversation and message, then check persistence after a full refresh. */
+test('P8 interactive Clerk saves a conversation message without generation', { skip: !p8Live, timeout: 420_000 }, async t => {
+  const { p6Operator } = await import('./fixtures/p6-local-operator.mjs');
+  const { clerkConfig } = await import('../apps/api/dist/security/config.js');
+  const { createClerkBoundary } = await import('../apps/api/dist/security/clerk.js');
+  const { ClerkIdentityProvider } = await import('../apps/api/dist/security/identity-provider.js');
+  const env = process.env;
+  const origin = 'http://127.0.0.1:3000';
+  const config = clerkConfig({ ...env, CLERK_PUBLISHABLE_KEY: env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY });
+  assert.ok(config.publishableKey.startsWith('pk_test_') && config.authorizedParties.includes(origin) &&
+    /^user_[A-Za-z0-9_-]+$/.test(env.CLERK_TEST_USER_ID ?? ''), 'Approved development identity required');
+  const boundary = createClerkBoundary({ ...config, authorizedParties: [origin] });
+  const provider = new ClerkIdentityProvider(boundary.client);
+  const context = await p6Operator(t);
+  const counts = async () => (await context.primary.query(`SELECT
+    (SELECT count(*)::int FROM "Conversation") AS conversations, (SELECT count(*)::int FROM "Message") AS messages,
+    (SELECT count(*)::int FROM "GenerationAttempt") AS attempts, (SELECT count(*)::int FROM "UsageLedger") AS usage,
+    (SELECT count(*)::int FROM "OutboxEvent") AS outbox`)).rows[0];
+  const before = await counts();
+  const evaluate = await openEdge(t, origin + '/app', true);
+  const local = `location.origin === ${JSON.stringify(origin)}`;
+  const ready = `${local} && window.Clerk?.session?.status === 'active'`;
+  console.info('Sign in with the approved development account. Wait for the prompt before starting a conversation.');
+  await waitForBrowser(async () => await evaluate(`${ready} && location.pathname === '/app' &&
+    [...document.querySelectorAll('a')].some(a => a.textContent === 'Open conversations')`) === true, manualSignInTimeout);
+  const bearer = async () => {
+    const token = await evaluate(`(${ready}) ? window.Clerk.session.getToken({ skipCache: true }) : null`, 10_000);
+    assert.ok(typeof token === 'string' && token.split('.').length === 3, 'Fresh Clerk session required');
+    return 'Bearer ' + token;
+  };
+  const authorization = await bearer();
+  const identity = await boundary.authenticate({ authorization }, ['Authorization', authorization]);
+  assert.ok(identity.instanceId === config.instanceId && identity.subject === env.CLERK_TEST_USER_ID, 'Unexpected Clerk identity');
+  await provider.assertLive(identity);
+  console.info('Open the owned test idea, start one conversation, and save one clearly labeled test message.');
+  const saved = await waitForBrowser(async () => {
+    const path = await evaluate(`(${ready}) && /\\/conversations\\//.test(location.pathname) ? location.pathname : null`);
+    const id = typeof path === 'string' && /^\/app\/ideas\/[0-9a-f-]+\/conversations\/([0-9a-f-]+)$/.exec(path)?.[1];
+    if (!id) return null;
+    const { rows } = await context.primary.query(`SELECT m.content->>'text' AS text FROM "Message" m JOIN "Idea" i ON i.id=m."ideaId"
+      JOIN "UserAccount" a ON a.id=i."ownerId" WHERE m."conversationId"=$1 AND m.role='USER'
+      AND a."clerkInstanceId"=$2 AND a."clerkSubject"=$3`, [id, identity.instanceId, identity.subject]);
+    return rows.length === 1 && { id, path, text: rows[0].text };
+  }, manualSignInTimeout);
+  const displayed = `(${ready}) && location.pathname === ${JSON.stringify(saved.path)} &&
+    [...document.querySelectorAll('[aria-label="Saved messages"] li p')].some(row => row.textContent === ${JSON.stringify(saved.text)})`;
+  await waitForBrowser(async () => await evaluate(displayed) === true);
+  const firstLoad = await evaluate('performance.timeOrigin');
+  await evaluate(`if (${local}) location.reload()`);
+  await waitForBrowser(async () => await evaluate(`(${displayed}) && performance.timeOrigin !== ${firstLoad}`) === true);
+  assert.deepEqual(await counts(), { ...before, conversations: before.conversations + 1, messages: before.messages + 1 });
+  const active = await bearer();
+  await evaluate(`window.Clerk.signOut({ redirectUrl: '/sign-in' })`);
+  await waitForBrowser(async () => await evaluate(`${local} && location.pathname.startsWith('/sign-in')`) === true);
+  const denied = await fetch('http://127.0.0.1:3001/api/v1/conversations/' + saved.id + '/messages',
+    { headers: { Authorization: active }, signal: AbortSignal.timeout(10_000) });
+  assert.equal(denied.status, 401);
+});
 
 test('P7 operator prepares restricted idea writer', { skip: !p7Prepare, timeout: 25_000 }, async t => {
   const { p6Operator, prepareP7IdeaWriter } = await import('./fixtures/p6-local-operator.mjs');

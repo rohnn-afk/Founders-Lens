@@ -35,8 +35,9 @@ export class WorkspaceTransaction {
     if (previousId) await this.tx.idempotencyRecord.update({ where: { id: previousId }, data, select: { id: true } });
     else await this.tx.idempotencyRecord.create({ data: { ...scope, ...data }, select: { id: true } });
   }
-  conversations(ideaId: string, anchor: Anchor | undefined, take: number) {
-    return this.tx.conversation.findMany({ where: { ideaId, ...after(anchor) }, orderBy: [...pageOrder], take, select: conversationFields });
+  conversations(ideaId: string, anchor: Anchor | undefined, take: number, activeOnly = false) {
+    return this.tx.conversation.findMany({ where: { ideaId, ...(activeOnly ? { status: 'ACTIVE' } : {}), ...after(anchor) },
+      orderBy: [...pageOrder], take, select: conversationFields });
   }
   createConversation(data: Prisma.ConversationUncheckedCreateInput) {
     return this.tx.conversation.create({ data, select: conversationFields });

@@ -111,19 +111,32 @@ export async function withP6Provisioning(context, bind) {
 /** Install only the local idea writer. An interrupted setup requires operator inspection. */
 export async function prepareP7IdeaWriter(context, confirmation) {
   assert.ok(confirmation === 'prepare-p7-idea-writer', 'Explicit operator approval required');
+  await prepareWorkspaceRole(context, 'fl_p7_idea_create', './p7-idea-create-grants.sql',
+    '.env.p7.writer.local', 'FL_P7_IDEA_CREATE_PASSWORD');
+}
+
+/** Provision only the P8 role on the verified local primary, without inserting application data. */
+export async function prepareP8Conversations(context, confirmation) {
+  assert.ok(confirmation === 'prepare-p8-conversations', 'Explicit operator approval required');
+  await prepareWorkspaceRole(context, 'fl_p8_conversations', './p8-conversation-grants.sql',
+    '.env.p8.role.local', 'FL_P8_CONVERSATIONS_PASSWORD');
+}
+
+async function prepareWorkspaceRole(context, role, grantFile, environmentFile, passwordName) {
   await context.verify();
   const { rows: [state] } = await context.primary.query(`SELECT
     (SELECT count(*)::int FROM "UserAccount" WHERE status='ACTIVE') AS active,
-    NOT EXISTS (SELECT FROM pg_roles WHERE rolname='fl_p7_idea_create') AS absent,
-    (SELECT NOT rolcanlogin FROM pg_roles WHERE rolname='fl_p6_provision') AS provision_closed`);
-  assert.ok(state.active === 1 && state.absent && state.provision_closed, 'P7 writer requires a bound P6 workspace and fresh setup');
+    NOT EXISTS (SELECT FROM pg_roles WHERE rolname=$1) AS absent,
+    (SELECT NOT rolcanlogin FROM pg_roles WHERE rolname='fl_p6_provision') AS provision_closed`, [role]);
+  assert.ok(state.active === 1 && state.absent && state.provision_closed, 'Local role requires a bound workspace and fresh setup');
   const password = randomBytes(32).toString('hex');
-  const grants = await readFile(new URL('./p7-idea-create-grants.sql', import.meta.url), 'utf8');
-  await writeFile('.env.p7.writer.local', `FL_P7_IDEA_CREATE_PASSWORD=${password}\n`, { flag: 'wx', mode: 0o600 });
+  const grants = await readFile(new URL(grantFile, import.meta.url), 'utf8');
+  await writeFile(environmentFile, `${passwordName}=${password}\n`, { flag: 'wx', mode: 0o600 });
   const client = await context.primary.connect();
   try {
     await client.query('BEGIN');
-    await client.query(`CREATE ROLE fl_p7_idea_create LOGIN NOINHERIT PASSWORD '${scramVerifier(password)}'`);
+    // The role identifier comes only from a fixed operator entry point.
+    await client.query(`CREATE ROLE ${role} LOGIN NOINHERIT PASSWORD '${scramVerifier(password)}'`);
     await client.query(grants);
     await client.query('COMMIT');
   } finally {
@@ -175,6 +188,23 @@ export async function p6Operator(t) {
 /** Issue a five-minute decision only after the operator explicitly invokes signing. */
 export async function signP6Clearance(context, privateKeyPath, publicKeyPath, confirmation, createIdea = false) {
   assert.ok(confirmation === (createIdea ? 'approve-p7-create-idea' : 'approve-p6-genesis-read-only'), 'Explicit operator approval required');
+  const purpose = createIdea ? 'create-idea' : 'read-only';
+  const { pinned, envelope } = await signWorkspaceDecision(context, privateKeyPath, publicKeyPath, purpose);
+  if (createIdea) return { FL_P7_CREATE_IDEA_DECISION: envelope };
+  return { FL_P6_RECOVERY_DECISION: envelope, FL_P6_OPERATOR_PUBLIC_KEY: pinned.toString('base64'),
+    FL_P6_CURSOR_KEY: randomBytes(32).toString('hex') };
+}
+
+/** Issue three independently signed, five-minute local conversation permissions. */
+export async function signP8Clearances(context, privateKeyPath, publicKeyPath, confirmation) {
+  assert.ok(confirmation === 'approve-p8-conversations', 'Explicit operator approval required');
+  const decisions = await Promise.all(['read-conversations', 'create-conversation', 'save-user-message']
+    .map(purpose => signWorkspaceDecision(context, privateKeyPath, publicKeyPath, purpose)));
+  return { FL_P8_READ_DECISION: decisions[0].envelope, FL_P8_CREATE_DECISION: decisions[1].envelope,
+    FL_P8_SAVE_DECISION: decisions[2].envelope };
+}
+
+async function signWorkspaceDecision(context, privateKeyPath, publicKeyPath, purpose) {
   const privateKey = createPrivateKey(await readFile(privateKeyPath));
   const publicKey = createPublicKey(await readFile(publicKeyPath));
   const pinned = publicKey.export({ type: 'spki', format: 'der' });
@@ -182,13 +212,10 @@ export async function signP6Clearance(context, privateKeyPath, publicKeyPath, co
     .export({ type: 'spki', format: 'der' })), 'Operator key does not match the pinned public key');
   const { primaryTarget, snapshot } = await context.verify();
   const issuedAt = Date.now();
-  const bytes = Buffer.from(JSON.stringify({ version: 1, purpose: createIdea
-    ? 'founders-lens:local-workspace:create-idea' : 'founders-lens:local-workspace:read-only',
+  const bytes = Buffer.from(JSON.stringify({ version: 1, purpose: 'founders-lens:local-workspace:' + purpose,
     primaryTarget, authorityIdentity: snapshot.authorityIdentity, namespace: snapshot.namespace, epoch: snapshot.epoch,
     recoveryRun: randomUUID(), inventoryDigest: snapshot.inventoryDigest, subjectVersions: snapshot.subjectVersions,
     issuedAt, expiresAt: issuedAt + 300_000 }));
   const envelope = JSON.stringify({ payload: bytes.toString('base64url'), signature: sign(null, bytes, privateKey).toString('base64url') });
-  if (createIdea) return { FL_P7_CREATE_IDEA_DECISION: envelope };
-  return { FL_P6_RECOVERY_DECISION: envelope, FL_P6_OPERATOR_PUBLIC_KEY: pinned.toString('base64'),
-  FL_P6_CURSOR_KEY: randomBytes(32).toString('hex') };
+  return { pinned, envelope };
 }

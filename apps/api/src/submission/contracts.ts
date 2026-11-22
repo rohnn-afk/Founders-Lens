@@ -29,8 +29,8 @@ export const fingerprintVersion = 1;
 
 // A fingerprint hashes the meaningful request fields in a fixed order.
 // The receipt stores this digest and safe IDs instead of copying the message.
-export function requestFingerprint(body: MessageCreate) {
-  return digest(JSON.stringify([submissionOperation, body.clientSubmissionId, body.content]));
+export function requestFingerprint(body: MessageCreate, operation = submissionOperation) {
+  return digest(JSON.stringify([operation, body.clientSubmissionId, body.content]));
 }
 
 export function digest(value: string) {

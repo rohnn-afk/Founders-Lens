@@ -8,7 +8,7 @@ import express from 'express';
 import { PrismaIdentityRepository } from '../apps/api/dist/security/identity-repository.js';
 import { suppressionScopeKey } from '../apps/api/dist/security/suppression-authority.js';
 import { WorkspaceCursor } from '../apps/api/dist/workspace/contracts.js';
-import { workspaceIdeaListRoutes } from '../apps/api/dist/workspace/routes.js';
+import { localConversationRoutes, workspaceIdeaListRoutes } from '../apps/api/dist/workspace/routes.js';
 import { WorkspaceService } from '../apps/api/dist/workspace/service.js';
 import { lockIdea } from '../apps/api/dist/workspace/repository.js';
 import { localReadOnlyWorkspace, workspaceIdeasCors } from '../apps/api/dist/workspace/read-only-composition.js';
@@ -17,6 +17,49 @@ test('local composition requires opt-in, rejects production and fails closed wit
   assert.equal(await localReadOnlyWorkspace({}), undefined);
   assert.equal(await localReadOnlyWorkspace({ NODE_ENV: 'production', FL_P6_READ_ONLY: '1' }), undefined);
   await assert.rejects(localReadOnlyWorkspace({ FL_P6_READ_ONLY: '1' }), { code: 'DEPENDENCY_UNAVAILABLE' });
+});
+
+test('P8 exposes conversation reads and approved POSTs without exposing generation admission', async t => {
+  const ideaId = randomUUID(), conversationId = randomUUID(), submission = randomUUID();
+  const app = express();
+  let writes = 0;
+  app.use('/api/v1', workspaceIdeasCors(false, { create: true, save: true }), localConversationRoutes({
+    idea: async () => ({ id: ideaId }), conversations: async () => ({ items: [] }),
+    conversation: async () => ({ id: conversationId, ideaId }), history: async () => ({ items: [] }),
+    create: async () => { writes++; return { id: conversationId }; },
+    save: async (_, id, key, body) => {
+      assert.equal(id, conversationId);
+      assert.equal(key, 'fixture-key');
+      assert.deepEqual(body, { content: 'Test', clientSubmissionId: submission });
+      writes++;
+      return { role: 'USER' };
+    }
+  }, async req => req.get('authorization') === 'Bearer fixture' ? principal : null));
+  const server = app.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const endpoint = 'http://127.0.0.1:' + server.address().port + '/api/v1';
+  const collection = '/ideas/' + ideaId + '/conversations';
+  const transcript = '/conversations/' + conversationId + '/messages';
+  const origin = 'http://127.0.0.1:3000';
+  const headers = { Authorization: 'Bearer fixture', Origin: origin };
+  const request = (path, method = 'GET', extra = {}, body) => fetch(endpoint + path,
+    { method, headers: { ...headers, ...extra }, ...(body && { body: JSON.stringify(body) }) });
+  assert.equal((await request(collection)).status, 200);
+  assert.equal((await request(transcript)).status, 200);
+  assert.equal(writes, 0);
+  assert.equal((await request(transcript, 'POST', { 'Content-Type': 'application/json' }, {})).status, 404);
+  assert.equal((await request(transcript, 'HEAD')).status, 404);
+  assert.equal((await request(transcript, 'GET', { Origin: 'http://localhost:3000' })).status, 403);
+  assert.equal((await request(transcript + '/save', 'OPTIONS', { 'Access-Control-Request-Method': 'POST',
+    'Access-Control-Request-Headers': 'authorization,content-type,idempotency-key' })).status, 204);
+  assert.equal((await request(collection, 'POST', { 'Content-Type': 'application/json' }, {})).status, 201);
+  const body = { content: 'Test', clientSubmissionId: submission };
+  assert.equal((await request(transcript + '/save', 'POST', { 'Content-Type': 'application/json' }, body)).status, 400);
+  const saved = await request(transcript + '/save', 'POST', { 'Content-Type': 'application/json', 'Idempotency-Key': 'fixture-key' }, body);
+  assert.equal(saved.status, 201);
+  assert.equal(saved.headers.get('cache-control'), 'no-store');
+  assert.equal(writes, 2);
 });
 
 const identity = { subject: 'user_fixture', instanceId: 'ins_fixture', sessionId: 'sess_fixture', expiresAt: Infinity };

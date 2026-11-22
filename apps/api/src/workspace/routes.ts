@@ -6,6 +6,8 @@ import { attachRequestContext, requestContext } from '../security/request-contex
 import { conversationCreate, emptyQuery, etag, ideaCreate, ideaPatch, idempotencyKey, ifMatch, input,
   listQuery, preferencesPatch, uuid, WorkspaceError } from './contracts.js';
 import type { WorkspaceService } from './service.js';
+import { messageCreate, SubmissionError, transcriptQuery, type MessageCreate, type TranscriptQuery } from '../submission/contracts.js';
+import type { z } from 'zod';
 
 type Authenticate = (request: Request) => Promise<Principal>;
 type Handler = (request: Request, response: Response, principal: Principal) => Promise<void>;
@@ -25,9 +27,9 @@ function readSingleHeader(request: Request, name: string) {
   if (names.length > 1) throw new WorkspaceError(400, 'VALIDATION_ERROR');
   return request.get(name);
 }
-function parseRequestBody(request: Request, response: Response): Promise<void> {
+function parseRequestBody(request: Request, response: Response, parser = parseJson): Promise<void> {
   if (!request.is('application/json')) throw new WorkspaceError(415, 'UNSUPPORTED_MEDIA_TYPE');
-  return new Promise((resolve, reject) => parseJson(request, response, error => {
+  return new Promise((resolve, reject) => parser(request, response, error => {
     if (!error) resolve();
     else reject(error.status === 413 ? new WorkspaceError(413, 'PAYLOAD_TOO_LARGE')
       : new WorkspaceError(400, 'VALIDATION_ERROR'));
@@ -44,13 +46,69 @@ function authenticatedRequest(authenticate: Authenticate, action: Handler) {
       if (!principal) throw new SecurityError('UNAUTHENTICATED');
       await action(request, response, principal);
     } catch (error) {
-      const failure = error instanceof WorkspaceError
+      const failure = error instanceof SubmissionError ? error.failure(requestId) : error instanceof WorkspaceError
         ? { status: error.status, body: { error: { code: error.code, message: 'The workspace request could not be completed.',
           requestId, retryable: error.status === 503 } } }
         : securityFailure(error, requestId);
       response.status(failure.status).json(failure.body);
     }
   };
+}
+
+export type LocalConversationOperations = {
+  idea(principal: Principal, id: string): Promise<unknown>;
+  conversations(principal: Principal, id: string, query: z.infer<typeof listQuery>): Promise<unknown>;
+  conversation(principal: Principal, id: string): Promise<unknown>;
+  history(principal: Principal, id: string, query: TranscriptQuery): Promise<unknown>;
+  create?: (principal: Principal, id: string, body: z.infer<typeof conversationCreate>) => Promise<unknown>;
+  save?: (principal: Principal, id: string, key: string, body: MessageCreate) => Promise<unknown>;
+};
+
+/** Mount the local conversation contract without mounting the generation submission router. */
+export function localConversationRoutes(operations: LocalConversationOperations, authenticate: Authenticate): Router {
+  const router = Router();
+  const handle = (action: Handler) => authenticatedRequest(authenticate, async (req, res, principal) => {
+    if (req.method === 'GET' && (req.get('transfer-encoding') || Number(req.get('content-length') ?? 0) > 0)) {
+      throw new WorkspaceError(400, 'VALIDATION_ERROR');
+    }
+    await action(req, res, principal);
+  });
+  const routeId = (request: Request, name: string) => input(uuid, request.params[name]);
+  router.get('/ideas/:ideaId', handle(async (req, res, principal) => {
+    input(emptyQuery, req.query);
+    sendReadDto(res, await operations.idea(principal, routeId(req, 'ideaId')));
+  }));
+  router.get('/ideas/:ideaId/conversations', handle(async (req, res, principal) => {
+    sendReadDto(res, await operations.conversations(principal, routeId(req, 'ideaId'), input(listQuery, req.query)));
+  }));
+  router.get('/conversations/:conversationId', handle(async (req, res, principal) => {
+    input(emptyQuery, req.query);
+    sendReadDto(res, await operations.conversation(principal, routeId(req, 'conversationId')));
+  }));
+  router.get('/conversations/:conversationId/messages', handle(async (req, res, principal) => {
+    sendReadDto(res, await operations.history(principal, routeId(req, 'conversationId'), input(transcriptQuery, req.query)));
+  }));
+  if (operations.create) {
+    const create = operations.create;
+    router.post('/ideas/:ideaId/conversations', handle(async (req, res, principal) => {
+      input(emptyQuery, req.query);
+      const id = routeId(req, 'ideaId');
+      await parseRequestBody(req, res);
+      res.status(201).json(await create(principal, id, input(conversationCreate, req.body)));
+    }));
+  }
+  if (operations.save) {
+    const save = operations.save;
+    const messageJson = json({ limit: '128kb' });
+    router.post('/conversations/:conversationId/messages/save', handle(async (req, res, principal) => {
+      input(emptyQuery, req.query);
+      const id = routeId(req, 'conversationId');
+      const key = input(idempotencyKey, readSingleHeader(req, 'idempotency-key'));
+      await parseRequestBody(req, res, messageJson);
+      res.status(201).json(await save(principal, id, key, input(messageCreate, req.body)));
+    }));
+  }
+  return router;
 }
 
 /** Register only idea listing. The caller must supply a verified runtime admission boundary. */

@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
-import type { MessageApi, Scope, SessionSource, WorkspaceApi } from './contracts';
+import type { MessageApi, SavedMessageApi, Scope, SessionSource, WorkspaceApi } from './contracts';
 import { createReadController, type ReadController, type ReadResult } from './read-controller';
 import { createCommandController, type CreateResult } from './create-controller';
 import { createRecoveryStorage, type RecoveryStorage } from './submission-recovery-storage';
@@ -78,13 +78,14 @@ type Workspace = {
   scope: Scope;
   invalidateSession: () => void;
   messageApi: MessageApi | undefined;
+  savedMessages?: SavedMessageApi | undefined;
   recovery: RecoveryStorage | undefined;
 };
 const WorkspaceContext = createContext<Workspace | null>(null);
 
-export function WorkspaceProvider({ children, api, session, messageApi, recoveryTtl }: {
+export function WorkspaceProvider({ children, api, session, messageApi, recoveryTtl, savedMessages }: {
   children: ReactNode; api?: WorkspaceApi; session?: SessionSource;
-  messageApi?: MessageApi; recoveryTtl?: number;
+  messageApi?: MessageApi; recoveryTtl?: number; savedMessages?: SavedMessageApi;
 }) {
   const pathname = usePathname();
   const reads = useMemo(createReadController, []);
@@ -99,9 +100,10 @@ export function WorkspaceProvider({ children, api, session, messageApi, recovery
   const invalidateSession = useCallback(() => {
     reads.enter(null, true);
     commands?.clear();
+    savedMessages?.clear();
     recovery?.clear();
     setView(null);
-  }, [reads, commands, recovery]);
+  }, [reads, commands, recovery, savedMessages]);
 
   // Client Components can react to browser events. Layout effects run before
   // paint, so old route content is gated before a newly selected route paints.
@@ -110,6 +112,7 @@ export function WorkspaceProvider({ children, api, session, messageApi, recovery
     function onSessionChange() {
       reads.enter(null, true);
       commands?.clear();
+      savedMessages?.clear();
       recovery?.clear();
       setView(null);
       setSessionRevision(revision => revision + 1);
@@ -119,8 +122,9 @@ export function WorkspaceProvider({ children, api, session, messageApi, recovery
       unsubscribe();
       reads.enter(null, true);
       commands.clear();
+      savedMessages?.clear();
     };
-  }, [session, commands, reads, recovery]);
+  }, [session, commands, reads, recovery, savedMessages]);
 
   useLayoutEffect(() => {
     if (!session || !commands) return;
@@ -173,7 +177,7 @@ export function WorkspaceProvider({ children, api, session, messageApi, recovery
 
   const scope = view?.pathname === pathname ? view.scope : null;
   const value = scope && reads.isCurrent(scope) && api && commands
-    ? { scope, api, reads, commands, invalidateSession, messageApi, recovery } : null;
+    ? { scope, api, reads, commands, invalidateSession, messageApi, recovery, savedMessages } : null;
   return (
     // Only this attribute may differ when the parser-time script runs before
     // hydration, when React attaches behavior to the server-rendered markup.
@@ -201,13 +205,13 @@ export function useWorkspace() {
 }
 
 export function useWorkspaceRead<T>(load: (workspace: Workspace) => Promise<ReadResult<T>>) {
-  const { api, reads, commands, scope, invalidateSession, messageApi, recovery } = useWorkspace();
+  const { api, reads, commands, scope, invalidateSession, messageApi, recovery, savedMessages } = useWorkspace();
   const [state, setState] = useState<{ load: typeof load; result: ReadResult<T> }>();
   useEffect(() => {
     // React renders the current state. Effects start asynchronous work after
     // a render and clean up when that input changes or the view unmounts.
     let active = true;
-    void load({ api, reads, commands, scope, invalidateSession, messageApi, recovery }).then(result => {
+    void load({ api, reads, commands, scope, invalidateSession, messageApi, recovery, savedMessages }).then(result => {
       if (!active || !reads.isCurrent(scope)) return;
       if (result.kind === 'signed-out' || result.kind === 'blocked') {
         invalidateSession();
@@ -216,7 +220,7 @@ export function useWorkspaceRead<T>(load: (workspace: Workspace) => Promise<Read
       setState({ load, result });
     });
     return () => { active = false; };
-  }, [api, reads, commands, scope, load, invalidateSession, messageApi, recovery]);
+  }, [api, reads, commands, scope, load, invalidateSession, messageApi, recovery, savedMessages]);
   return state?.load === load ? state.result : { kind: 'loading' as const };
 }
 

@@ -12,6 +12,7 @@ async function controller(name) {
 }
 const { createReadController, readThink, readConversation } = await controller('read-controller');
 const { createCommandController } = await controller('create-controller');
+const { createLocalConversationApi } = await controller('local-conversation-api');
 
 const ok = data => ({ status: 200, data });
 const created = data => ({ status: 201, data });
@@ -23,6 +24,37 @@ const api = overrides => ({
   ideas: async () => ok(page([])), idea: async id => ok(idea(id)),
   conversations: async () => ok(page([])), conversation: async id => ok(chat(id, 'first')),
   ...overrides
+});
+
+test('P8 save retains the exact intent after a lost response and discards it on session cleanup', async t => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: { location: { origin: 'http://127.0.0.1:3000' } } });
+  t.after(() => { if (previous) Object.defineProperty(globalThis, 'window', previous); else delete globalThis.window; });
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    calls.push({ url, body: init.body, key: init.headers['Idempotency-Key'] });
+    assert.equal(init.credentials, 'omit');
+    assert.equal(init.redirect, 'error');
+    if (calls.length === 1) throw new Error('Lost reply');
+    if (calls.length === 2) return new Response(null, { status: 404 });
+    return Response.json({ id: 'saved', conversationId: 'conversation', sequence: 1,
+      role: 'USER', content: 'Original', createdAt: '2026-01-01T00:00:00.000Z' }, { status: 201 });
+  });
+  let sequence = 0;
+  const { savedMessages } = createLocalConversationApi(async () => 'fixture-token', () => `fixture-${++sequence}`);
+  const signal = new AbortController().signal;
+  assert.equal((await savedMessages.save('conversation', 'Original', signal)).status, 503);
+  assert.equal(savedMessages.pending('conversation'), 'Original');
+  assert.equal((await savedMessages.save('conversation', 'Edited', signal)).status, 503);
+  assert.equal(calls.length, 1);
+  assert.equal((await savedMessages.save('conversation', undefined, signal)).status, 503);
+  assert.equal(savedMessages.pending('conversation'), 'Original');
+  assert.equal((await savedMessages.save('conversation', undefined, signal)).status, 201);
+  assert.deepEqual(calls[1], calls[0]);
+  assert.deepEqual(calls[2], calls[0]);
+  assert.match(calls[0].url, /\/messages\/save$/);
+  savedMessages.clear();
+  assert.equal((await savedMessages.save('conversation', undefined, signal)).status, 400);
 });
 
 test('chooser caches only its current account and route cursor pages', async () => {

@@ -24,7 +24,8 @@ export interface SubmissionRepository {
   scope(principal: Principal, conversationId: string): Promise<SubmissionScope | null>;
   accept(principal: Principal, command: SubmissionCommand, clock: () => Date, policy?: AdmissionPolicy): Promise<AcceptanceRef>;
   correlate(principal: Principal, scope: SubmissionScope, submissionId: string): Promise<AcceptanceRef | null>;
-  history(principal: Principal, scope: SubmissionScope, limit: number, after?: TurnAnchor): Promise<TranscriptRow[]>;
+  history(principal: Principal, scope: SubmissionScope, limit: number, after?: TurnAnchor,
+    localReadGuard?: () => void): Promise<TranscriptRow[]>;
 }
 
 export type TranscriptRow = {
@@ -61,8 +62,9 @@ export function createSubmissionService(repository: SubmissionRepository, author
       if (!ref) throw new SubmissionError('NOT_FOUND');
       return ref;
     },
-    async history(principal: Principal, conversationId: string, query: TranscriptQuery) {
-      const scope = await readScope(principal, conversationId, false);
+    async history(principal: Principal, conversationId: string, query: TranscriptQuery, localReadGuard?: () => void) {
+      const scope = await readScope(principal, conversationId, Boolean(localReadGuard));
+      if (localReadGuard && scope.status !== 'ACTIVE') throw new SecurityError('RESOURCE_NOT_FOUND');
       // The isolated slice explicitly reports an unavailable projection for
       // valid v2 requests until the structured transcript is implemented.
       if (query.assistantResponseVersion === '2') throw new SubmissionError('PROJECTION_UNAVAILABLE');
@@ -70,7 +72,7 @@ export function createSubmissionService(repository: SubmissionRepository, author
       const limit = query.limit ?? 25;
       const cursorScope = JSON.stringify([principal.localUserId, scope.ideaId, conversationId, limit]);
       const after = query.cursor === undefined ? undefined : cursors.decode(cursorScope, query.cursor);
-      const rows = await repository.history(principal, scope, limit + 1, after);
+      const rows = await repository.history(principal, scope, limit + 1, after, localReadGuard);
       const pageRows = rows.slice(0, limit);
       const items = pageRows.map(row => {
         if (row.contentSchemaVersion !== 1 && !(row.role === 'ASSISTANT' && row.contentSchemaVersion === 2)) {

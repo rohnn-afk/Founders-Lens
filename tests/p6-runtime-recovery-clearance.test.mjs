@@ -19,6 +19,7 @@ import { PrismaClient } from '../apps/api/dist/generated/prisma/client.js';
 import { WorkspaceCursor } from '../apps/api/dist/workspace/contracts.js';
 import { WorkspaceRepository } from '../apps/api/dist/workspace/repository.js';
 import { WorkspaceService } from '../apps/api/dist/workspace/service.js';
+import { localConversationOperations } from '../apps/api/dist/workspace/local-conversations.js';
 
 const { PrismaPg } = createRequire(new URL('../apps/api/package.json', import.meta.url))('@prisma/adapter-pg');
 
@@ -78,6 +79,17 @@ test('runtime recovery rejects unsigned, malformed, expired and noncanonical dec
   await assert.rejects(writeGuard(signed(decision)).assertClearance(), denied);
   await assert.rejects(guard(signed({ ...decision, purpose: create })).assertClearance(), denied);
   assert.equal(await writeGuard(signed({ ...decision, purpose: create })).verifiedDeadline(), decision.expiresAt);
+  const p8 = ['read-conversations', 'create-conversation', 'save-user-message']
+    .map(operation => 'founders-lens:local-workspace:' + operation);
+  for (const purpose of p8) {
+    const verifier = encoded => createRuntimeRecoveryClearance({ decision: encoded, operatorPublicKey: operator.publicKey,
+      primary, authority, subjectKeys, purpose });
+    for (const other of [decision.purpose, create, ...p8]) {
+      const check = verifier(signed({ ...decision, purpose: other })).assertClearance();
+      if (other === purpose) await check;
+      else await assert.rejects(check, denied);
+    }
+  }
 });
 
 test('normal startup has no private idea route', async t => {
@@ -291,6 +303,133 @@ test('runtime decision is invalidated by live PostgreSQL target and authority ch
       assert.deepEqual((await service.ideas(foreign, {})).items.map(idea => idea.title), ['foreign']);
       assert.deepEqual(await service.ideas(empty, {}), { items: [], page: { hasMore: false, nextCursor: null } });
       await assert.rejects(service.ideas(foreign, { cursor: first.page.nextCursor }), { status: 400 });
+      await workspaceTest.test('P8 restricted connection saves ordered USER turns without background work', async () => {
+        const password = randomBytes(32).toString('hex');
+        await primary.query(`CREATE ROLE fl_p8_conversations LOGIN NOINHERIT PASSWORD '${password}'`);
+        await primary.query((await readFile('tests/fixtures/p8-conversation-grants.sql', 'utf8'))
+          .replaceAll('founders_lens_p6_local', 'primary_proof'));
+        const connection = pool(primaryPort, 'primary_proof', 'fl_p8_conversations', password);
+        const client = new PrismaClient({ adapter: new PrismaPg(connection), log: [], errorFormat: 'minimal' });
+        const verify = async () => Date.now() + 30_000;
+        const key = randomBytes(32);
+        const permissions = { read: verify, create: verify, save: verify };
+        const operations = localConversationOperations(client, authority.authority, key, permissions);
+        const ideaId = first.items[0].id;
+        const rows = async () => (await primary.query(`SELECT
+          (SELECT count(*)::int FROM "Conversation") AS conversations,(SELECT count(*)::int FROM "Message") AS messages,
+          (SELECT count(*)::int FROM "GenerationAttempt") AS attempts,(SELECT count(*)::int FROM "UsageLedger") AS usage,
+          (SELECT count(*)::int FROM "OutboxEvent") AS outbox,(SELECT count(*)::int FROM "IdempotencyRecord") AS receipts`)).rows[0];
+        const before = await rows();
+        const missing = { code: 'RESOURCE_NOT_FOUND' };
+        try {
+          assert.equal((await operations.idea(owner, ideaId)).id, ideaId);
+          assert.deepEqual((await operations.conversations(owner, ideaId, {})).items, []);
+          assert.deepEqual(await rows(), before);
+          await assert.rejects(operations.idea(foreign, ideaId), missing);
+          await assert.rejects(operations.create(foreign, ideaId, {}), missing);
+          const conversation = await operations.create(owner, ideaId, { title: 'Disposable conversation' });
+          assert.equal((await operations.conversation(owner, conversation.id)).ideaId, ideaId);
+          assert.equal((await operations.conversations(owner, ideaId, {})).items[0].id, conversation.id);
+          assert.deepEqual((await operations.history(owner, conversation.id, {})).items, []);
+          await assert.rejects(operations.history(foreign, conversation.id, {}), missing);
+          const input = { clientSubmissionId: randomUUID(), content: 'Disposable first user turn' };
+          const [firstMessage, replay] = await Promise.all([1, 2].map(() => operations.save(owner, conversation.id, 'same-turn-key', input)));
+          assert.deepEqual(firstMessage, replay);
+          assert.equal(firstMessage.sequence, 1);
+          await assert.rejects(operations.save(owner, conversation.id, 'same-turn-key', { ...input, content: 'Changed' }),
+            { code: 'IDEMPOTENCY_KEY_REUSED' });
+          // A receipt conflict cannot disclose its result once clearance expires during lookup.
+          let deadline = Date.now() + 30_000;
+          const clock = t.mock.method(Date, 'now', () => deadline - 1000);
+          try {
+            const slowReceipt = client.$extends({ query: { idempotencyRecord: { async findUnique({ args, query }) {
+              const result = await query(args);
+              clock.mock.mockImplementation(() => deadline);
+              return result;
+            } } } });
+            const expiring = localConversationOperations(slowReceipt, authority.authority, key,
+              { ...permissions, save: async () => deadline });
+            await assert.rejects(expiring.save(owner, conversation.id, 'same-turn-key', { ...input, content: 'Changed' }),
+              { code: 'DEPENDENCY_UNAVAILABLE' });
+          } finally { clock.mock.restore(); }
+          let verifications = 0;
+          const changedAuthority = localConversationOperations(client, authority.authority, key, { ...permissions,
+            save: async () => {
+              if (++verifications === 2) throw new Error('Final authority verification failed');
+              return verify();
+            } });
+          await assert.rejects(changedAuthority.save(owner, conversation.id, 'same-turn-key', { ...input, content: 'Changed' }),
+            /Final authority verification failed/);
+          await assert.rejects(operations.save(foreign, conversation.id, 'same-turn-key', input), missing);
+          const secondMessage = await operations.save(owner, conversation.id, 'second-turn-key',
+            { clientSubmissionId: randomUUID(), content: 'Disposable second user turn' });
+          assert.equal(secondMessage.sequence, 2);
+          const firstPage = await operations.history(owner, conversation.id, { limit: 1 });
+          assert.deepEqual(firstPage.items, [firstMessage]);
+          assert.deepEqual((await operations.history(owner, conversation.id, { limit: 1, cursor: firstPage.page.nextCursor })).items, [secondMessage]);
+          const interrupted = client.$extends({ query: { idempotencyRecord: { create() { throw new Error('P8 receipt fault'); } } } });
+          const failing = localConversationOperations(interrupted, authority.authority, key, permissions);
+          await assert.rejects(failing.save(owner, conversation.id, 'interrupted-turn',
+            { clientSubmissionId: randomUUID(), content: 'Rolled-back turn' }), /P8 receipt fault/);
+          assert.equal((await primary.query('SELECT "nextSequence" FROM "Conversation" WHERE id=$1', [conversation.id])).rows[0].nextSequence, 3);
+          assert.deepEqual(await rows(), { ...before, conversations: before.conversations + 1,
+            messages: before.messages + 2, receipts: before.receipts + 2 });
+          const unavailable = { code: 'DEPENDENCY_UNAVAILABLE' };
+          const suppressed = localConversationOperations(client, { async lookup(scope, request) {
+            const evidence = await authority.authority.lookup(scope, request);
+            return scope.kind === 'IDEA' && evidence ? { ...evidence, verdict: 'SUPPRESSED' } : evidence;
+          } }, key, permissions);
+          await assert.rejects(suppressed.history(owner, conversation.id, {}), unavailable);
+          await assert.rejects(suppressed.save(owner, conversation.id, 'same-turn-key', input), unavailable);
+          const offline = localConversationOperations(client, { async lookup() { throw new Error('Authority unavailable'); } }, key, permissions);
+          await assert.rejects(offline.history(owner, conversation.id, {}), unavailable);
+          const locker = await primary.connect();
+          try {
+            await locker.query('BEGIN');
+            await locker.query('SELECT id FROM "Conversation" WHERE id=$1 FOR UPDATE', [conversation.id]);
+            let deadline = 0;
+            const expiring = localConversationOperations(client, authority.authority, key,
+              { ...permissions, save: async () => (deadline = Date.now() + 200) });
+            const deniedSave = assert.rejects(expiring.save(owner, conversation.id, 'expired-turn',
+              { clientSubmissionId: randomUUID(), content: 'Expired' }), unavailable);
+            void deniedSave.catch(() => {});
+            let waiting = false;
+            for (let attempt = 0; attempt < 40 && !waiting; attempt++) {
+              waiting = (await primary.query(`SELECT EXISTS (SELECT FROM pg_stat_activity
+                WHERE usename='fl_p8_conversations' AND cardinality(pg_blocking_pids(pid)) > 0) AS waiting`)).rows[0].waiting;
+              if (!waiting) await new Promise(resolve => setTimeout(resolve, 10));
+            }
+            assert.ok(waiting && deadline);
+            await new Promise(resolve => setTimeout(resolve, Math.max(0, deadline - Date.now()) + 10));
+            await locker.query('COMMIT');
+            await deniedSave;
+          } finally {
+            try { await locker.query('ROLLBACK'); } finally { locker.release(); }
+          }
+          const deletionId = randomUUID();
+          await primary.query(`INSERT INTO "DataOperation" (id,kind,"accountId","ideaId","deadlineAt","clerkInstanceId",
+            "ownerSubjectKey","subjectKeyVersion","deletionScopeKey","deletionState","policyVersion")
+            VALUES ($1,'DELETE_IDEA',$2,$3,now()+interval '1 minute',$4,$5,$6,$7,'DELETION_REQUESTED','p8-fixture')`,
+          [deletionId, owner.localUserId, ideaId, owner.clerkInstanceId, owner.subjectKeys[0].digest, owner.subjectKeys[0].version, `idea:${ideaId}`]);
+          try {
+            await assert.rejects(operations.history(owner, conversation.id, {}), missing);
+            await assert.rejects(operations.save(owner, conversation.id, 'same-turn-key', input), missing);
+          } finally { await primary.query('DELETE FROM "DataOperation" WHERE id=$1', [deletionId]); }
+          const tombstoneId = randomUUID();
+          await primary.query(`INSERT INTO "IdentityTombstone" (id,"clerkInstanceId","subjectKey","subjectKeyVersion","requestedAt")
+            VALUES ($1,$2,$3,$4,now())`, [tombstoneId, owner.clerkInstanceId, owner.subjectKeys[0].digest, owner.subjectKeys[0].version]);
+          try {
+            await assert.rejects(operations.history(owner, conversation.id, {}), { code: 'ACCOUNT_UNAVAILABLE' });
+            await assert.rejects(operations.save(owner, conversation.id, 'same-turn-key', input), { code: 'ACCOUNT_UNAVAILABLE' });
+          } finally { await primary.query('DELETE FROM "IdentityTombstone" WHERE id=$1', [tombstoneId]); }
+          assert.deepEqual(await rows(), { ...before, conversations: before.conversations + 1,
+            messages: before.messages + 2, receipts: before.receipts + 2 });
+          for (const table of ['GenerationAttempt', 'UsageLedger', 'OutboxEvent']) {
+            assert.equal((await connection.query('SELECT has_any_column_privilege(current_user,$1,\'INSERT\') AS allowed',
+              [`public."${table}"`])).rows[0].allowed, false);
+          }
+        } finally { await client.$disconnect(); }
+      });
       await workspaceTest.test('P7 restricted writer creates atomically and replays through the same account lock', async () => {
         const password = randomBytes(32).toString('hex');
         await primary.query(`CREATE ROLE fl_p7_idea_create LOGIN NOINHERIT PASSWORD '${password}'`);
@@ -327,7 +466,8 @@ test('runtime decision is invalidated by live PostgreSQL target and authority ch
           assert.notEqual(replacement.id, created.id);
           const { rows: [totals] } = await primary.query(`SELECT
             (SELECT count(*)::int FROM "Idea" WHERE "ownerId"=$1 AND title=$2) AS ideas,
-            (SELECT count(*)::int FROM "IdempotencyRecord" WHERE "accountId"=$1) AS receipts`, [owner.localUserId, input.title]);
+            (SELECT count(*)::int FROM "IdempotencyRecord" WHERE "accountId"=$1 AND "operationType"='postIdeas') AS receipts`,
+          [owner.localUserId, input.title]);
           assert.deepEqual(totals, { ideas: 3, receipts: 2 });
           await assert.rejects(writer.query('SELECT content FROM "Message"'), { code: '42501' });
           await assert.rejects(writer.query('UPDATE "Idea" SET title=title WHERE id=$1', [created.id]), { code: '42501' });
