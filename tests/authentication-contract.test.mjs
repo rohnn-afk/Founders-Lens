@@ -259,3 +259,105 @@ test('configured audience policy uses only verified claims and exact matches', a
     }
   });
 });
+
+test('deletion reverification requires fresh completion of the exact signed challenge', async t => {
+  const boundary = createClerkBoundary(config);
+  const now = Date.now();
+  const signed = { reverification_id: 'reverification_synthetic' };
+  const record = {
+    id: signed.reverification_id, session_id: 'sess_synthetic', user_id: 'user_synthetic',
+    status: 'complete', level: 'first_factor', created_at: now - 3000, updated_at: now - 1000,
+    first_factor_verified_at: now - 2000, second_factor_verified_at: null
+  };
+  let reply = async () => Response.json(record);
+  let challengeReads = 0;
+  const user = t.mock.method(boundary.client.users, 'getUser', async () =>
+    ({ id: record.user_id, banned: false, locked: false }));
+  const session = t.mock.method(boundary.client.sessions, 'getSession', async () =>
+    ({ id: record.session_id, userId: record.user_id, status: 'active', expireAt: now + 120_000 }));
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    challengeReads++;
+    assert.equal(url, 'https://api.clerk.com/v1/sessions/sess_synthetic/reverifications/reverification_synthetic');
+    assert.equal(options.method, 'GET');
+    assert.equal(options.redirect, 'error');
+    assert.equal(options.headers['Clerk-API-Version'], '2026-05-12');
+    assert.ok(options.signal instanceof AbortSignal);
+    return reply();
+  });
+  const verify = (claims = signed, requireMfa = false) => {
+    const authorization = 'Bearer ' + jwt(claims);
+    return boundary.verifyDeletionReverification({ authorization }, ['Authorization', authorization], { requireMfa });
+  };
+  const denies = code => error => error instanceof SecurityError && error.code === code;
+
+  await t.test('ordinary authentication does not require step-up or call the provider', async () => {
+    const identity = await authenticate(boundary, jwt());
+    assert.deepEqual(Object.keys(identity).sort(), ['expiresAt', 'instanceId', 'sessionId', 'subject']);
+    assert.equal(user.mock.callCount(), 0);
+    assert.equal(session.mock.callCount(), 0);
+    assert.equal(challengeReads, 0);
+  });
+
+  await t.test('a live session and matching completion produce bounded evidence', async () => {
+    const result = await verify();
+    assert.equal(result.identity.instanceId, config.instanceId);
+    assert.equal(result.identity.subject, record.user_id);
+    assert.equal(result.identity.sessionId, record.session_id);
+    assert.equal(result.challengeId, signed.reverification_id);
+    assert.ok(result.validUntil <= result.identity.expiresAt);
+    assert.equal(challengeReads, 1);
+    assert.equal(session.mock.callCount(), 1);
+  });
+
+  await t.test('MFA requires signed ages and current completion of both factors', async () => {
+    const claims = { ...signed, fva: [0, 0] };
+    await assert.rejects(verify(claims, true), denies('UNAUTHENTICATED'));
+    reply = async () => Response.json({ ...record, level: 'multi_factor', second_factor_verified_at: now - 1500 });
+    assert.equal((await verify(claims, true)).challengeId, signed.reverification_id);
+    await assert.rejects(verify(signed, true), denies('UNAUTHENTICATED'));
+    reply = async () => Response.json({ ...record, level: 'multi_factor' });
+    await assert.rejects(verify(claims, true), denies('UNAUTHENTICATED'));
+  });
+
+  await t.test('untrusted tokens or missing step-up claims fail before provider I/O', async () => {
+    const reads = challengeReads;
+    const livenessCalls = session.mock.callCount();
+    for (const claims of [{}, { ...signed, reverification_id: '../invalid' }, { ...signed, fva: [6, -1] },
+      { ...signed, iss: 'https://wrong.invalid' }, { ...signed, azp: 'https://wrong.invalid' },
+      { ...signed, aud: 'wrong' }, { ...signed, exp: Math.floor(now / 1000) - 1 }]) {
+      await assert.rejects(verify(claims), denies('UNAUTHENTICATED'));
+    }
+    const authorization = 'Bearer ' + jwt(signed, other.privateKey);
+    await assert.rejects(boundary.verifyDeletionReverification({ authorization }, ['Authorization', authorization],
+      { requireMfa: false }), denies('UNAUTHENTICATED'));
+    assert.equal(challengeReads, reads);
+    assert.equal(session.mock.callCount(), livenessCalls);
+  });
+
+  await t.test('a fresh prior factor cannot satisfy an incomplete, foreign, or stale challenge', async () => {
+    for (const change of [{ status: 'needs_first_factor' }, { status: 'needs_second_factor' },
+      { session_id: 'sess_other' }, { user_id: 'user_other' }, { id: 'different' },
+      { created_at: now - 400_000, first_factor_verified_at: now - 301_000 },
+      { first_factor_verified_at: now - 4000 }, { updated_at: now + 60_000 }]) {
+      reply = async () => Response.json({ ...record, ...change });
+      await assert.rejects(verify(), denies('UNAUTHENTICATED'));
+    }
+  });
+
+  await t.test('missing records and provider failures deny without exposing provider data', async () => {
+    reply = async () => new Response(null, { status: 404 });
+    await assert.rejects(verify(), denies('UNAUTHENTICATED'));
+    for (const failure of [
+      async () => new Response(null, { status: 503 }),
+      async () => Response.json({ ...record, first_factor_verified_at: 'invalid' }),
+      async () => { throw new DOMException('Simulated provider timeout', 'TimeoutError'); }
+    ]) {
+      reply = failure;
+      await assert.rejects(verify(), denies('DEPENDENCY_UNAVAILABLE'));
+    }
+    session.mock.mockImplementation(async () => { throw new Error('Simulated liveness outage'); });
+    const reads = challengeReads;
+    await assert.rejects(verify(), denies('DEPENDENCY_UNAVAILABLE'));
+    assert.equal(challengeReads, reads);
+  });
+});

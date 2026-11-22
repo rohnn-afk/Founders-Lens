@@ -12,6 +12,10 @@ import test from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 const require = createRequire(import.meta.url);
+const browserLive = process.argv.includes('--clerk-browser-live');
+const reverificationLive = process.argv.includes('--clerk-reverification-live');
+const interactiveMode = browserLive || reverificationLive;
+if (browserLive && reverificationLive) throw new Error('Select exactly one interactive Clerk test mode.');
 
 async function waitForBrowser(check, timeout = 20_000, failure = () => 'Edge did not reach the expected sign-in state.') {
   const deadline = Date.now() + timeout;
@@ -59,14 +63,21 @@ async function openEdge(t, url, interactive = false) {
       throw new Error(`Disposable Edge automation connection closed (WebSocket code ${closeCode ?? 'unavailable'}; Edge process ${processState}).`);
     }
     const id = ++sequence;
-    const signal = AbortSignal.timeout(timeout);
-    return new Promise(resolve => {
+    const listeners = new AbortController();
+    let timer;
+    const result = new Promise(resolve => {
       socket.addEventListener('message', event => {
         const reply = JSON.parse(event.data);
         if (reply.id === id) resolve(reply.result?.result?.value);
-      }, { signal });
-      signal.addEventListener('abort', () => resolve(undefined), { once: true });
+      }, { signal: listeners.signal });
+      socket.addEventListener('close', () => resolve(undefined), { signal: listeners.signal });
+      timer = setTimeout(() => resolve(undefined), timeout);
       socket.send(JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression, returnByValue: true, awaitPromise: true } }));
+    });
+    // Successful evaluations must release their listeners before the next poll.
+    return result.finally(() => {
+      clearTimeout(timer);
+      listeners.abort();
     });
   };
 }
@@ -99,7 +110,11 @@ async function startWithoutClerk(t) {
   throw new Error('Unable to start the unconfigured web application.');
 }
 
-test('unconfigured sign-in and workspace fail closed without a Clerk session', { timeout: 30_000 }, async t => {
+// Interactive runs use the configured development server and do not require a
+// separately built application for the unconfigured startup checks.
+test('unconfigured sign-in and workspace fail closed without a Clerk session', {
+  skip: interactiveMode, timeout: 30_000
+}, async t => {
   const origin = await startWithoutClerk(t);
   const signIn = await fetch(origin + '/sign-in');
   assert.equal(signIn.status, 200);
@@ -114,7 +129,7 @@ test('unconfigured sign-in and workspace fail closed without a Clerk session', {
 });
 
 test('Edge renders the unconfigured sign-in notice in a fresh browser profile', {
-  skip: !process.argv.includes('--edge'), timeout: 60_000
+  skip: interactiveMode || !process.argv.includes('--edge'), timeout: 60_000
 }, async t => {
   const origin = await startWithoutClerk(t);
   await verifyInEdge(t, origin + '/sign-in',
@@ -123,7 +138,7 @@ test('Edge renders the unconfigured sign-in notice in a fresh browser profile', 
 
 for (const route of ['/sign-in', '/app']) {
   test(`configured Clerk reaches the sign-in form from ${route} on the IPv4 development server`, {
-    skip: !process.argv.includes('--configured-edge'), timeout: 55_000
+    skip: interactiveMode || !process.argv.includes('--configured-edge'), timeout: 55_000
   }, async t => {
     // Use a fresh profile so the real Clerk development handshake must run.
     // Only assert booleans so browser DOM and protocol data cannot enter logs.
@@ -137,8 +152,11 @@ for (const route of ['/sign-in', '/app']) {
 
 const manualSignInTimeout = 180_000;
 
+// IMP7C-M02-T02, partial evidence. The owner reported this live test passed
+// (1 passed, 0 failed) after 63e867b. It exercises the verifier and provider
+// adapter directly. Private routes, ownership, and durable suppression are separate gates.
 test('interactive Clerk session passes Express verification and loses access on sign-out', {
-  skip: !process.argv.includes('--clerk-browser-live'), timeout: 2 * manualSignInTimeout + 190_000
+  skip: !browserLive, timeout: 2 * manualSignInTimeout + 190_000
 }, async t => {
   const { clerkConfig } = await import('../apps/api/dist/security/config.js');
   const { createClerkBoundary } = await import('../apps/api/dist/security/clerk.js');
@@ -235,4 +253,199 @@ test('interactive Clerk session passes Express verification and loses access on 
   assert.ok(expiryDelay <= 90_000, 'Unexpected lifetime for the approved development token.');
   await sleep(expiryDelay);
   await assert.rejects(verify(first.token), rejected);
+});
+
+const reverificationWindowMs = 5 * 60_000;
+
+/** Match a provider completion to the signed session and enforce factor freshness. */
+function deletionEvidenceIsFresh(record, evidence, requireMfa, now = Date.now()) {
+  if (!record || record.status !== 'complete' || record.id !== evidence.challengeId ||
+      record.session_id !== evidence.sessionId || record.user_id !== evidence.subject ||
+      record.level !== (requireMfa ? 'multi_factor' : 'first_factor') ||
+      !Number.isSafeInteger(record.created_at)) return false;
+  const fresh = timestamp => Number.isSafeInteger(timestamp) && timestamp >= record.created_at &&
+    timestamp <= now && now - timestamp <= reverificationWindowMs;
+  return fresh(record.first_factor_verified_at) && (!requireMfa || fresh(record.second_factor_verified_at));
+}
+
+test('reverification proof rejects incomplete, mismatched, stale and downgraded evidence', { skip: browserLive }, () => {
+  const evidence = { challengeId: 'challenge', sessionId: 'session', subject: 'subject' };
+  const now = 1_000_000;
+  const timestamp = now - reverificationWindowMs;
+  const record = { id: evidence.challengeId, session_id: evidence.sessionId, user_id: evidence.subject,
+    status: 'complete', level: 'first_factor', created_at: timestamp - 1, first_factor_verified_at: timestamp };
+  assert.equal(deletionEvidenceIsFresh(record, evidence, false, now), true);
+  assert.equal(deletionEvidenceIsFresh(record, evidence, false, now + 1), false);
+  assert.equal(deletionEvidenceIsFresh(record, evidence, true, now), false);
+  for (const change of [{ status: 'needs_first_factor' }, { session_id: 'foreign' },
+    { user_id: 'foreign' }, { id: 'foreign' }, { first_factor_verified_at: timestamp - 2 }]) {
+    assert.equal(deletionEvidenceIsFresh({ ...record, ...change }, evidence, false, now), false);
+  }
+  const mfa = { ...record, level: 'multi_factor' };
+  assert.equal(deletionEvidenceIsFresh(mfa, evidence, true, now), false);
+  assert.equal(deletionEvidenceIsFresh({ ...mfa, second_factor_verified_at: timestamp }, evidence, true, now), true);
+});
+
+/** Read the exact session-scoped Clerk record with the pinned Backend API version. */
+async function readClerkReverification(secretKey, evidence) {
+  const { sessionId, challengeId } = evidence;
+  assert.ok(/^[A-Za-z0-9_-]{1,250}$/.test(challengeId), 'Signed challenge identifier unavailable.');
+  const response = await fetch(
+    'https://api.clerk.com/v1/sessions/' + encodeURIComponent(sessionId) +
+    '/reverifications/' + encodeURIComponent(challengeId), {
+      headers: { Authorization: 'Bearer ' + secretKey, 'Clerk-API-Version': '2026-05-12' },
+      redirect: 'error', signal: AbortSignal.timeout(8000)
+    });
+  assert.ok(response.ok, 'Provider challenge lookup failed with HTTP ' + response.status + '.');
+  return response.json();
+}
+
+/**
+ * Render a temporary factor form in the disposable tab. Codes travel directly
+ * from that form to Clerk's client SDK. CDP receives only fixed status labels.
+ * This fixture supports email code and, when required, enrolled TOTP.
+ */
+async function completeBrowserChallenge(evaluate, local, requireMfa) {
+  const installed = await evaluate(`(async () => {
+    if (!(${local}) || location.pathname !== '/app') return false;
+    const session = window.Clerk.session;
+    const form = document.createElement('form');
+    const label = document.createElement('label');
+    const input = document.createElement('input');
+    const button = document.createElement('button');
+    const hint = document.createElement('p');
+    form.id = 'clerk-reverification-proof';
+    form.dataset.state = 'preparing';
+    input.type = 'password';
+    input.autocomplete = 'off';
+    button.textContent = 'Verify';
+    button.disabled = true;
+    label.append('Clerk verification code ', input);
+    form.append(label, button, hint);
+    document.body.prepend(form);
+    try {
+      const email = window.Clerk.user.primaryEmailAddressId;
+      if (!email) throw new Error();
+      const prepared = await session.prepareFirstFactorVerification({ strategy: 'email_code', emailAddressId: email });
+      if (prepared.status !== 'needs_first_factor') throw new Error();
+      hint.textContent = 'Enter the email code from Clerk in this browser.';
+      form.dataset.state = 'awaiting first factor';
+      button.disabled = false;
+      form.addEventListener('submit', async event => {
+        event.preventDefault();
+        const second = form.dataset.state === 'awaiting TOTP';
+        const code = input.value;
+        input.value = '';
+        button.disabled = true;
+        try {
+          const verification = second ?
+            await session.attemptSecondFactorVerification({ strategy: 'totp', code }) :
+            await session.attemptFirstFactorVerification({ strategy: 'email_code', code });
+          if (verification.status === 'needs_second_factor' && ${requireMfa} && !second &&
+              verification.supportedSecondFactors?.some(factor => factor.strategy === 'totp')) {
+            form.dataset.state = 'awaiting TOTP';
+            hint.textContent = 'Enter the authenticator code in this browser.';
+            button.disabled = false;
+          } else {
+            form.dataset.state = verification.status === 'complete' && (!${requireMfa} || second) ? 'complete' : 'unexpected factor state';
+          }
+        } catch {
+          form.dataset.state = 'factor attempt failed';
+        }
+      });
+      return true;
+    } catch {
+      form.dataset.state = 'factor preparation failed';
+      return false;
+    }
+  })()`, 15_000);
+  assert.ok(installed === true, 'Clerk email factor preparation did not succeed.');
+  await waitForBrowser(async () => {
+    const state = await evaluate(`(${local}) && document.getElementById('clerk-reverification-proof')?.dataset.state`);
+    assert.ok(!['unexpected factor state', 'factor attempt failed'].includes(state),
+      'Clerk did not complete the required factors.');
+    return state === 'complete';
+  }, manualSignInTimeout, () => 'Manual Clerk factor completion timed out.');
+}
+
+// Owner-run proof after 8513c36 passed with a single factor. MFA acceptance
+// still requires separate live evidence from an approved MFA-enabled account.
+test('interactive Clerk reverification distinguishes abandoned and completed challenges', {
+  skip: !reverificationLive, timeout: 450_000
+}, async t => {
+  const { clerkConfig } = await import('../apps/api/dist/security/config.js');
+  const { createClerkBoundary } = await import('../apps/api/dist/security/clerk.js');
+  const { ClerkIdentityProvider } = await import('../apps/api/dist/security/identity-provider.js');
+  const env = process.env;
+  const origin = 'http://127.0.0.1:3000';
+  const config = clerkConfig({ ...env, CLERK_PUBLISHABLE_KEY: env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY });
+  assert.ok(config.publishableKey.startsWith('pk_test_') && config.authorizedParties.includes(origin) &&
+    /^user_[A-Za-z0-9_-]+$/.test(env.CLERK_TEST_USER_ID ?? '') &&
+    (config.audience || env.CLERK_TEST_ALLOW_NO_AUDIENCE === '1'), 'Approved development session configuration required.');
+  const boundary = createClerkBoundary(config);
+  const provider = new ClerkIdentityProvider(boundary.client);
+  const local = `location.origin === ${JSON.stringify(origin)}`;
+  const shell = `${local} && location.pathname === '/app' &&
+    document.body?.innerText.includes('You are signed in.') && window.Clerk?.session?.status === 'active'`;
+  const evaluate = await openEdge(t, origin + '/app', true);
+  console.info('Sign in to the disposable Edge window with the approved Clerk test account.');
+  await waitForBrowser(async () => await evaluate(shell) === true, manualSignInTimeout);
+  let expectedIdentity;
+
+  /** Verify each refreshed bearer before using its signed challenge and factor claims. */
+  async function readEvidence() {
+    const token = await evaluate(`(${shell}) ? window.Clerk.session.getToken({ skipCache: true }) : null`, 10_000);
+    assert.ok(typeof token === 'string' && token.split('.').length === 3, 'Fresh session token unavailable.');
+    const authorization = 'Bearer ' + token;
+    const identity = await boundary.authenticate({ authorization }, ['Authorization', authorization]);
+    assert.ok(identity.subject === env.CLERK_TEST_USER_ID &&
+      (!expectedIdentity || identity.sessionId === expectedIdentity.sessionId), 'Clerk test identity or session changed.');
+    await provider.assertLive(identity);
+    const claims = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
+    assert.ok(config.audience || !Object.hasOwn(claims, 'aud'), 'Session disagrees with the approved audience policy.');
+    assert.ok(Array.isArray(claims.fva) && claims.fva.length === 2 && claims.fva.every(Number.isInteger),
+      'Signed factor ages unavailable.');
+    return { ...identity, challengeId: claims.reverification_id, factorAges: claims.fva };
+  }
+
+  expectedIdentity = await readEvidence();
+  const user = await boundary.client.users.getUser(expectedIdentity.subject);
+  assert.ok(typeof user.twoFactorEnabled === 'boolean', 'Provider did not establish the account factor policy.');
+  const requireMfa = user.twoFactorEnabled || env.CLERK_TEST_REQUIRE_MFA === '1';
+  const level = requireMfa ? 'multi_factor' : 'first_factor';
+  const start = () => evaluate(`(async () => {
+    if (!(${shell})) return false;
+    const result = await window.Clerk.session.startVerification({ level: ${JSON.stringify(level)} });
+    return result.status === 'needs_first_factor';
+  })()`, 10_000);
+
+  // Starting a challenge must not turn a recent factor from ordinary sign-in into completion evidence.
+  assert.ok(await start() === true, 'Clerk did not start a first-factor challenge.');
+  const abandoned = await readEvidence();
+  assert.ok(abandoned.challengeId !== expectedIdentity.challengeId, 'New signed challenge identifier unavailable.');
+  assert.ok(abandoned.factorAges[0] >= 0 && abandoned.factorAges[0] < 5, 'Prior first-factor evidence must still be fresh.');
+  const pending = await readClerkReverification(config.secretKey, abandoned);
+  assert.ok(pending.id === abandoned.challengeId && pending.session_id === abandoned.sessionId &&
+    pending.user_id === abandoned.subject && pending.status === 'needs_first_factor',
+  'Provider did not bind the incomplete challenge to this identity.');
+  assert.ok(!deletionEvidenceIsFresh(pending, abandoned, requireMfa), 'Incomplete challenge qualified for deletion.');
+
+  assert.ok(await start() === true, 'Clerk did not start a separate challenge.');
+  const second = await readEvidence();
+  assert.ok(second.challengeId !== abandoned.challengeId, 'Second challenge reused the abandoned identifier.');
+  const old = await readClerkReverification(config.secretKey, abandoned);
+  assert.ok(!deletionEvidenceIsFresh(old, abandoned, requireMfa), 'Abandoned challenge qualified for deletion.');
+  console.info('Complete the Clerk factor prompt in Edge. Enter codes only in the disposable browser.');
+  await completeBrowserChallenge(evaluate, local, requireMfa);
+  const completed = await readEvidence();
+  assert.ok(completed.challengeId === second.challengeId, 'Completed claim does not match the started challenge.');
+  assert.ok(completed.factorAges[0] >= 0 && completed.factorAges[0] <= 5 &&
+    (!requireMfa || (completed.factorAges[1] >= 0 && completed.factorAges[1] <= 5)),
+  'Signed factor ages do not meet the proof policy.');
+  const record = await readClerkReverification(config.secretKey, completed);
+  assert.ok(deletionEvidenceIsFresh(record, completed, requireMfa), 'Provider completion did not satisfy the proof policy.');
+  // Advance only the proof evaluator clock. JWT verification and Clerk clocks remain real.
+  assert.ok(!deletionEvidenceIsFresh(record, completed, requireMfa,
+    record.first_factor_verified_at + reverificationWindowMs + 1), 'Stale completion qualified for deletion.');
+  console.info(requireMfa ? 'Provider completion verified with two factors.' : 'Provider completion verified with one factor.');
 });
