@@ -1,6 +1,6 @@
 // Browser transport for the opted-in local workspace. Clerk credentials exist
 // only in the request, and uncertain saves retain their original in-memory intent.
-import type { Conversation, Idea, Message, MessageBody, Page, Reply, SavedMessageApi, WorkspaceApi } from './contracts';
+import type { Acceptance, Conversation, Generation, Idea, Message, MessageApi, MessageBody, Page, Reply, SavedMessageApi, WorkspaceApi } from './contracts';
 
 const origin = 'http://127.0.0.1:3000';
 const endpoint = 'http://127.0.0.1:3001/api/v1';
@@ -24,10 +24,10 @@ const message = (value: Message, id: string) => typeof value?.id === 'string' &&
   Number.isSafeInteger(value.sequence) && value.sequence > 0 && ['USER', 'ASSISTANT'].includes(value.role) &&
   typeof value.content === 'string' && typeof value.createdAt === 'string';
 
-/** Construct session-scoped adapters. No operation here requests generation or uses browser storage. */
+/** Construct session-scoped P8 and opt-in generation transports. */
 export function createLocalConversationApi(getToken: () => Promise<string | null>, makeKey = () => crypto.randomUUID()) {
   async function request<T>(path: string, signal: AbortSignal, decode: (value: T) => T,
-    command?: { body: unknown; key?: string }): Promise<Reply<T>> {
+    command?: { body: unknown; key?: string; accepted?: boolean }, headers?: (headers: Headers) => void): Promise<Reply<T>> {
     if (window.location.origin !== origin) return { status: 403 };
     const token = await getToken();
     signal.throwIfAborted();
@@ -36,9 +36,10 @@ export function createLocalConversationApi(getToken: () => Promise<string | null
       headers: { Authorization: `Bearer ${token}`, ...(command && { 'Content-Type': 'application/json' }),
         ...(command?.key && { 'Idempotency-Key': command.key }) }, ...(command && { body: JSON.stringify(command.body) }),
       credentials: 'omit', redirect: 'error', cache: 'no-store', signal: AbortSignal.any([signal, AbortSignal.timeout(12_000)]) });
-    if (response.status === (command ? 201 : 200)) {
+    if (response.status === (command ? command.accepted ? 202 : 201 : 200)) {
       const data = decode(await response.json());
       if (signal.aborted) return { status: 503 };
+      headers?.(response.headers);
       return { status: command ? 201 : 200, data };
     }
     // A closed mount returns a bare 404. It cannot settle a prior save intent.
@@ -91,5 +92,34 @@ export function createLocalConversationApi(getToken: () => Promise<string | null
       finally { intent.sending = false; }
     }
   };
-  return { api, savedMessages };
+  const messagePath = (id: string) => conversationPath(id) + '/messages';
+  const validAcceptance = (value: Acceptance) => typeof value?.messageId === 'string' &&
+    typeof value.generationId === 'string' && value.statusUrl === '/api/v1/generations/' + value.generationId &&
+    value.eventsUrl === value.statusUrl + '/events';
+  const messageApi: MessageApi = {
+    history: savedMessages.history,
+    async submit(id, body, key, signal) {
+      const reply = await request<Acceptance & { status: 'PENDING' }>(messagePath(id), signal,
+        verify(value => validAcceptance(value) && value.status === 'PENDING'), { body, key, accepted: true });
+      if ('data' in reply) return reply.status === 201 ? { status: 202, data: reply.data } : { status: 503 };
+      return reply;
+    },
+    correlate: (id, submissionId, signal) =>
+      request<Acceptance & { clientSubmissionId: string }>(conversationPath(id) + '/submissions/' +
+        encodeURIComponent(submissionId), signal, verify(value => validAcceptance(value) && value.clientSubmissionId === submissionId)),
+    generation: { async status(id, signal) {
+      const reply = await request<Generation>('/generations/' + encodeURIComponent(id), signal, verify(value =>
+        value?.id === id && typeof value.conversationId === 'string' && typeof value.triggerMessageId === 'string' &&
+        typeof value.selected === 'boolean' && typeof value.createdAt === 'string' &&
+        ['PENDING', 'RUNNING', 'CANCEL_REQUESTED', 'COMPLETED', 'FAILED', 'CANCELLED'].includes(value.status)));
+      if ('data' in reply) return reply.status === 200 ? { status: 200, data: reply.data } : { status: 503 };
+      return reply;
+    } }
+  };
+  return { api, savedMessages, messageApi, async generationEnabled(id: string, signal: AbortSignal) {
+    let enabled = false;
+    await request<Conversation>(conversationPath(id), signal, verify(value => conversation(value) && value.id === id), undefined,
+      headers => { enabled = headers.get('X-Workspace-Generation') === 'enabled'; });
+    return enabled;
+  } };
 }

@@ -21,9 +21,12 @@ const authority = { async lookup(scope, query) {
     validUntil: Date.now() + 1000, integrity: 'VERIFIED', coverage: 'COMPLETE', authority: 'INDEPENDENT', epoch: 'synthetic' };
 } };
 
-async function harness(t, service) {
+async function harness(t, service, options) {
   const app = express();
-  app.use('/api/v1', submissionRoutes(service, async req => req.get('Authorization') === headers.Authorization ? principal : null));
+  app.use('/api/v1', submissionRoutes(service,
+    async req => req.get('Authorization') === headers.Authorization ? principal : null, options));
+  if (options?.readConversation) app.get('/api/v1/conversations/:conversationId/messages',
+    (_request, response) => response.set('Cache-Control', 'no-store').json({ route: 'workspace' }));
   const server = app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
@@ -34,6 +37,13 @@ async function harness(t, service) {
     return { status: response.status, headers: response.headers, body: await response.json() };
   };
 }
+
+test('scoped generation transcript reads leave other conversations with the workspace router', async t => {
+  const send = await harness(t, { async history() { return { route: 'generation' }; } },
+    { readConversation: conversationId });
+  assert.deepEqual((await send({ method: 'GET' })).body, { route: 'generation' });
+  assert.deepEqual((await send({ method: 'GET', id: randomUUID() })).body, { route: 'workspace' });
+});
 
 test('isolated submission returns the exact 202 representation and Location', async t => {
   const ref = { messageId: randomUUID(), generationId: randomUUID() };
@@ -49,6 +59,25 @@ test('isolated submission returns the exact 202 representation and Location', as
   assert.equal(result.status, 202);
   assert.equal(result.headers.get('location'), statusUrl);
   assert.deepEqual(result.body, { ...ref, status: 'PENDING', statusUrl, eventsUrl: statusUrl + '/events' });
+});
+
+test('admission withholds a committed acceptance after the suppression window expires', async t => {
+  let now = 1000;
+  t.mock.method(Date, 'now', () => now);
+  let durable = false;
+  const repo = {
+    async scope() { return { id: conversationId, ideaId, status: 'ACTIVE',
+      idea: { id: ideaId, status: 'ACTIVE', ownerId: principal.localUserId } }; },
+    async accept(_principal, _command, _clock, _policy, requireFresh) {
+      requireFresh();
+      durable = true;
+      now += 1000;
+      return { messageId: randomUUID(), generationId: randomUUID() };
+    }
+  };
+  const service = createSubmissionService(repo, authority, { clock: () => new Date(now) });
+  await assert.rejects(service.submit(principal, conversationId, 'fixture-key', body), { code: 'DEPENDENCY_UNAVAILABLE' });
+  assert.equal(durable, true);
 });
 
 test('isolated recovery projects the original IDs and negotiates legacy transcript without downgrade', async t => {

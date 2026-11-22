@@ -28,13 +28,23 @@ const lifecycle = `FROM "GenerationAttempt" g JOIN "Conversation" c ON c.id=g."c
     AND d.kind='DELETE_ACCOUNT' AND d."ownerSubjectKey"=a."subjectKey" AND d."subjectKeyVersion"=a."subjectKeyVersion")
   AND NOT EXISTS (SELECT 1 FROM "DataOperation" d WHERE d.kind='DELETE_IDEA' AND d."ideaId"=i.id)`;
 
-export function outboxRepository(pool: Pool, fixtureIds: readonly string[]) {
-  if (!fixtureIds.length || !fixtureIds.every(isUuid) || new Set(fixtureIds).size !== fixtureIds.length) {
-    throw new Error('Exact M05 fixture IDs are required');
-  }
-  const ids = [...fixtureIds];
+type Selection = readonly string[] | { accountId: string; conversationId: string };
+const isFixtureSelection = (value: Selection): value is readonly string[] => Array.isArray(value);
+
+/** Restrict local discovery before taking any outbox leases. */
+export function outboxRepository(pool: Pool, selection: Selection) {
+  const fixture = isFixtureSelection(selection);
+  const ids = fixture ? [...selection] : [];
+  if (fixture ? !ids.length || !ids.every(isUuid) || new Set(ids).size !== ids.length :
+    !isUuid(selection.accountId) || !isUuid(selection.conversationId)) throw new Error('Invalid outbox selection');
+  const filters = fixture ? [ids] : [selection.accountId, selection.conversationId];
+  const selectScope = fixture ? 'e.id=ANY($1::uuid[])' : `e.kind='p9.generation.requested'
+    AND e."aggregateType"='GenerationAttempt' AND EXISTS (
+      SELECT 1 FROM "GenerationAttempt" g JOIN "Conversation" c ON c.id=g."conversationId"
+      JOIN "Idea" i ON i.id=c."ideaId"
+      WHERE g.id=e."aggregateId" AND c.id=$2::uuid AND i."ownerId"=$1::uuid)`;
   function allowed(id: string) {
-    if (!ids.includes(id)) throw new Error('Unknown M05 fixture');
+    if (!isUuid(id) || (fixture && !ids.includes(id))) throw new Error('Unknown outbox event');
   }
 
   return {
@@ -45,9 +55,9 @@ export function outboxRepository(pool: Pool, fixtureIds: readonly string[]) {
         await client.query('BEGIN');
         // SKIP LOCKED lets other dispatchers take different rows. A lease
         // recovers claims abandoned after commit, and every claim costs an attempt.
-        const selected = await client.query<{ id: string }>(`SELECT id FROM "OutboxEvent"
-          WHERE id=ANY($1::uuid[]) AND ${due}
-          ORDER BY "nextAttemptAt", id LIMIT $2 FOR UPDATE SKIP LOCKED`, [ids, policy.batch]);
+        const selected = await client.query<{ id: string }>(`SELECT id FROM "OutboxEvent" e
+          WHERE ${selectScope} AND ${due}
+          ORDER BY "nextAttemptAt", id LIMIT ${policy.batch} FOR UPDATE SKIP LOCKED`, filters);
         const selectedIds = selected.rows.map(row => row.id);
         const exhausted = await client.query<{ id: string }>(`UPDATE "OutboxEvent" e
           SET status='FAILED', "leaseUntil"=NULL, "lastErrorCode"='DISPATCH_EXHAUSTED'

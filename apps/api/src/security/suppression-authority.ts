@@ -25,6 +25,19 @@ export interface SuppressionEvidence {
 export interface SuppressionAuthority {
   lookup(scope: SuppressionScope, query: SuppressionQuery): Promise<SuppressionEvidence | null>;
 }
+
+/** Carry observed expiry into a locked operation. Callers must still validate each lookup. */
+export function suppressionWindow(source: SuppressionAuthority) {
+  let expiresAt = Infinity;
+  const authority: SuppressionAuthority = { async lookup(scope, query) {
+    const evidence = await source.lookup(scope, query);
+    if (evidence) expiresAt = Math.min(expiresAt, evidence.validUntil);
+    return evidence;
+  } };
+  return { authority, requireFresh() {
+    if (!Number.isFinite(expiresAt) || Date.now() >= expiresAt) throw new SecurityError('DEPENDENCY_UNAVAILABLE');
+  }, deadline: () => expiresAt };
+}
 export function suppressionScopeKey(scope: SuppressionScope): string {
   return scope.kind === 'ACCOUNT'
     ? JSON.stringify(['ACCOUNT', scope.instanceId, scope.subjectKeyVersion, scope.subjectKey, scope.incarnation])

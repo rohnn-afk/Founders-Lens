@@ -127,6 +127,8 @@ export function createGenerationController(api: GenerationApi, scope: Scope, con
   }
 
   async function send(kind: Intent['kind'], target: string) {
+    const invoke = kind === 'cancel' ? api.cancel?.bind(api, target) : api.regenerate?.bind(api, conversationId, target);
+    if (!invoke) return;
     if (!live() || command || (intent && (intent.kind !== kind || intent.target !== target))) return;
     intent ??= { kind, target, key: key() };
     const frozen = intent;
@@ -141,8 +143,7 @@ export function createGenerationController(api: GenerationApi, scope: Scope, con
     update({ ...view, command: 'sending', intent: kind });
     let follow: string | undefined;
     try {
-      const reply = kind === 'cancel' ? await api.cancel(target, frozen.key, request.signal)
-        : await api.regenerate(conversationId, target, frozen.key, request.signal);
+      const reply = await invoke(frozen.key, request.signal);
       if (!live() || request.signal.aborted || blocked(reply)) return;
       if ((reply.status === 200 || reply.status === 202) && reply.data.conversationId === conversationId &&
         (kind === 'cancel' ? reply.data.id === target : reply.data.triggerMessageId === target && reply.status === 202)) {

@@ -14,6 +14,13 @@ import { PrismaIdentityRepository } from '../security/identity-repository.js';
 import { IdentityService } from '../security/identity-service.js';
 import { SubjectKeys } from '../security/subject-key.js';
 import { createSuppressionLedger } from '../security/suppression-ledger.js';
+import { createSubmissionRepository } from '../submission/repository.js';
+import { submissionRoutes } from '../submission/routes.js';
+import { createSubmissionService, type SubmissionService } from '../submission/service.js';
+import { createGenerationRepository } from '../generation/repository.js';
+import { generationRoutes } from '../generation/routes.js';
+import { createGenerationService } from '../generation/service.js';
+import { localGenerationPolicy } from '../generation/local-policy.js';
 import { WorkspaceCursor } from './contracts.js';
 import { WorkspaceRepository } from './repository.js';
 import { localConversationRoutes, workspaceIdeaListRoutes, type LocalConversationOperations } from './routes.js';
@@ -23,35 +30,44 @@ import { WorkspaceService } from './service.js';
 const origin = 'http://127.0.0.1:3000';
 
 /** Limit local browser access to the exact configured ideas endpoint and methods. */
-export function workspaceIdeasCors(allowCreate: boolean, conversations?: { create: boolean; save: boolean }): RequestHandler {
+export function workspaceIdeasCors(allowCreate: boolean, conversations?: { create: boolean; save: boolean },
+  generationConversation?: string): RequestHandler {
   return (request, response, next) => {
     const path = request.path;
+    const allowSubmission = Boolean(generationConversation);
     const ideas = path === '/ideas';
     const conversationCollection = /^\/ideas\/[^/]+\/conversations$/.test(path);
     const conversationRead = conversations && (conversationCollection || /^\/ideas\/[^/]+$/.test(path) ||
       /^\/conversations\/[^/]+(?:\/messages)?$/.test(path));
     const save = conversations?.save && /^\/conversations\/[^/]+\/messages\/save$/.test(path);
-    const postHeaders = (ideas && allowCreate) || save ? 'authorization,content-type,idempotency-key' :
+    const submit = allowSubmission && /^\/conversations\/[^/]+\/messages$/.test(path);
+    const generationRead = allowSubmission && (submit || /^\/generations\/[^/]+$/.test(path) ||
+      /^\/conversations\/[^/]+\/submissions\/[^/]+$/.test(path));
+    const allowRead = ideas || conversationRead || generationRead;
+    const postHeaders = (ideas && allowCreate) || save || submit ? 'authorization,content-type,idempotency-key' :
       (conversations?.create && conversationCollection ? 'authorization,content-type' : undefined);
-    if (request.baseUrl !== '/api/v1' || !(ideas || conversationRead || save)) { response.status(404).end(); return; }
+    if (request.baseUrl !== '/api/v1' || !(allowRead || save)) { response.status(404).end(); return; }
     response.vary('Origin');
     const caller = request.get('Origin');
     if (caller && caller !== origin) { response.status(403).end(); return; }
     if (caller === origin) response.set({ 'Access-Control-Allow-Origin': origin,
-      'Access-Control-Expose-Headers': 'X-Workspace-Idea-Creation, X-Workspace-Conversations' });
+      'Access-Control-Expose-Headers': 'X-Workspace-Idea-Creation, X-Workspace-Conversations, X-Workspace-Generation' });
+    if (request.method === 'GET' && generationConversation && path === '/conversations/' + generationConversation) {
+      response.set('X-Workspace-Generation', 'enabled');
+    }
     if (request.method === 'GET' && allowCreate) response.set('X-Workspace-Idea-Creation', 'enabled');
     if (request.method === 'GET' && ideas && conversations) response.set('X-Workspace-Conversations', 'enabled');
     const method = request.get('Access-Control-Request-Method');
     const headers = request.get('Access-Control-Request-Headers')?.toLowerCase().split(',').map(value => value.trim()).sort().join(',');
     if (request.method === 'OPTIONS') {
       response.vary('Access-Control-Request-Method').vary('Access-Control-Request-Headers');
-      if (caller === origin && ((method === 'GET' && (ideas || conversationRead) && headers === 'authorization') ||
+      if (caller === origin && ((method === 'GET' && allowRead && headers === 'authorization') ||
         (postHeaders && method === 'POST' && headers === postHeaders))) {
         response.set({ 'Access-Control-Allow-Methods': method, 'Access-Control-Allow-Headers': headers }).status(204).end();
       } else response.status(404).end();
       return;
     }
-    if ((request.method !== 'GET' || !(ideas || conversationRead)) && (request.method !== 'POST' || !postHeaders)) {
+    if ((request.method !== 'GET' || !allowRead) && (request.method !== 'POST' || !postHeaders)) {
       response.status(404).end(); return;
     }
     next();
@@ -90,12 +106,16 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
   let writeClient: PrismaClient | undefined;
   let conversationPool: pg.Pool | undefined;
   let conversationClient: PrismaClient | undefined;
+  let submissionPool: pg.Pool | undefined;
+  let submissionClient: PrismaClient | undefined;
   const close = async () => {
     await prisma.$disconnect();
     await writeClient?.$disconnect();
     await writePool?.end();
     await conversationClient?.$disconnect();
     await conversationPool?.end();
+    await submissionClient?.$disconnect();
+    await submissionPool?.end();
     await Promise.all([primary.end(), authorityPool.end()]);
   };
   try {
@@ -152,8 +172,49 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
         conversationPool = undefined;
       }
     }
+    let submission: SubmissionService | undefined;
+    let generation: ReturnType<typeof createGenerationService> | undefined;
+    let generationReadDeadline: (() => Promise<number>) | undefined;
+    let generationConversation: string | undefined;
+    if (env['FL_P9_SUBMIT'] === '1') {
+      try {
+        const target = pool(55437, 'founders_lens_p6_local', 'fl_p9_submit', required('FL_P9_SUBMIT_PASSWORD'));
+        submissionPool = target;
+        target.on('error', () => {});
+        const admission = createRuntimeRecoveryClearance({ decision: required('FL_P9_SUBMIT_DECISION'),
+          operatorPublicKey, primary: target, authority, subjectKeys, purpose: 'founders-lens:local-generation:submit' });
+        await admission.assertClearance();
+        const status = createRuntimeRecoveryClearance({ decision: required('FL_P9_STATUS_DECISION'),
+          operatorPublicKey, primary: target, authority, subjectKeys, purpose: 'founders-lens:local-generation:status' });
+        await status.assertClearance();
+        const approvedConversation = required('FL_P9_SYNTHETIC_CONVERSATION');
+        const { policy, allows } = localGenerationPolicy({
+          model: required('P9_GEMINI_MODEL'), priceVersion: required('FL_P9_PRICE_VERSION'),
+          maximumMicrosPerMillionTokens: required('FL_P9_MAX_MICROS_PER_MILLION_TOKENS'),
+          budgetMicros: required('FL_P9_BUDGET_MICROS'), tokenBudget: required('FL_P9_ACCOUNT_TOKEN_BUDGET'),
+          requestsPerMinute: required('FL_P9_REQUESTS_PER_MINUTE'), maximumAdmissions: required('FL_P9_MAX_ADMISSIONS'),
+          accountId: required('FL_P9_SYNTHETIC_ACCOUNT'), conversationId: approvedConversation,
+          syntheticTextSha256: required('FL_P9_SYNTHETIC_TEXT_SHA256')
+        });
+        submissionClient = new PrismaClient({ adapter: new PrismaPg(target), log: [], errorFormat: 'minimal' });
+        generation = createGenerationService(createGenerationRepository(submissionClient, policy),
+          authority.authority, status.verifiedDeadline, approvedConversation);
+        generationReadDeadline = status.verifiedDeadline;
+        generationConversation = approvedConversation;
+        submission = createSubmissionService(createSubmissionRepository(submissionClient), authority.authority, {
+          executionAdmission: admission.verifiedDecision, clock: () => new Date(), policy, cursorSecret: cursorKey,
+          allowSubmission: (principal, conversationId, content) => allows(principal.localUserId, conversationId, content)
+        });
+      } catch {
+        await submissionClient?.$disconnect();
+        await submissionPool?.end();
+        submissionClient = undefined;
+        submissionPool = undefined;
+      }
+    }
     const router = Router();
-    router.use(workspaceIdeasCors(Boolean(create), conversations && { create: Boolean(conversations.create), save: Boolean(conversations.save) }));
+    router.use(workspaceIdeasCors(Boolean(create), conversations && { create: Boolean(conversations.create), save: Boolean(conversations.save) },
+      generationConversation));
     const authenticate = async (request: Request) => {
       const verified = await clerk.authenticate(request.headers, request.rawHeaders);
       if (!config.audience && Object.hasOwn(JSON.parse(Buffer.from(request.get('Authorization')!.split('.')[1]!, 'base64url').toString()), 'aud')) {
@@ -165,6 +226,11 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
     router.use(workspaceIdeaListRoutes({ ideas(principal, query) {
       return workspace.ideas(principal, query, clearance.assertClearance);
     } }, authenticate, create));
+    if (submission && generation && generationReadDeadline && generationConversation) {
+      router.use(submissionRoutes(submission, authenticate, { readDeadline: generationReadDeadline,
+        readConversation: generationConversation }));
+      router.use(generationRoutes(generation, authenticate, { statusOnly: true }));
+    }
     if (conversations) router.use(localConversationRoutes(conversations, authenticate));
     return { router, close };
   } catch (error) {

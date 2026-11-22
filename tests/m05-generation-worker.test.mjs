@@ -102,3 +102,30 @@ test('failed heartbeat aborts the current fake and prevents output', async () =>
   await worker.process(job);
   assert.deepEqual(calls, [['start', 7], ['heartbeat', 7], ['finish', 7, undefined]]);
 });
+
+test('trusted worker denies invocation after a failed post-marker authority check', async () => {
+  const current = { ...scope, triggerMessageId: randomUUID() };
+  let checks = 0;
+  const repository = {
+    scope: async () => current,
+    claim: async () => ({ epoch: 7, remainingMs: 5000 }),
+    markInvocation: async () => true,
+    readContext: () => assert.fail('fixture context must not be used'),
+    heartbeat: () => assert.fail('denied invocation cannot renew the lease'),
+    finish: () => assert.fail('denied invocation cannot publish')
+  };
+  const worker = generationWorker(repository, () => assert.fail('fixture proof must not be used'),
+    value => value === id, undefined, () => 10, () => assert.fail('denied provider call'), {
+      async verifyExecution() {
+        if (++checks === 4) throw new Error('Authority unavailable');
+        return 100;
+      },
+      async readContext(actual, lease) {
+        assert.equal(actual, current);
+        assert.equal(lease.epoch, 7);
+        return { current: { id: current.triggerMessageId, text: 'Synthetic', truncated: false }, previous: [], memory: [] };
+      }
+    });
+  await worker.process(job);
+  assert.equal(checks, 4);
+});

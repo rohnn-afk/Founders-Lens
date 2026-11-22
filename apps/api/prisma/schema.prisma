@@ -260,6 +260,7 @@ model Message {
 
 // Phase3 P3-P02 design amendment; migration/validation not executed.
 model GenerationAttempt {
+  providerReceipt GenerationProviderReceipt?
   orchestrationMetadata Json? // bounded version references/counters only; no prompt/context/reasoning
   id                   String @id @default(uuid()) @db.Uuid
   conversationId       String @db.Uuid
@@ -267,6 +268,7 @@ model GenerationAttempt {
   triggerMessageId     String @db.Uuid
   triggerMessage       Message @relation("TriggerMessage", fields: [triggerMessageId, conversationId], references: [id, conversationId], onDelete: Restrict)
   contextEpoch         Int?
+  leaseClaimant        String? @db.VarChar(63)
   dispatchAuthorizedAt DateTime? @db.Timestamptz(3)
   attemptNumber        Int
   regenerationKey      String? @db.VarChar(128) // only for explicit regeneration
@@ -289,6 +291,17 @@ model GenerationAttempt {
   lastHeartbeatAt DateTime? @db.Timestamptz(3)
   deadlineAt     DateTime @db.Timestamptz(3)
   executionAttempts Int @default(0)
+}
+
+model GenerationProviderReceipt {
+  attemptId    String @id @db.Uuid
+  attempt      GenerationAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  leaseEpoch   Int
+  responseId   String? @db.VarChar(256)
+  inputTokens  Int
+  outputTokens Int
+  totalTokens  Int
+  observedAt   DateTime @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(3)
 }
 
 model MemoryProposal {

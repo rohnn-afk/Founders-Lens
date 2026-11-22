@@ -1,0 +1,14 @@
+[
+  { "id": "weak-demand", "prompt": "Everyone I told loves the idea, so we have product-market fit.", "lookFor": "Separate polite interest from behavior and propose a concrete commitment test." },
+  { "id": "pricing", "prompt": "I picked $79 per month because competitors charge about that. Is that the right price?", "lookFor": "Treat price as unvalidated and suggest a willingness-to-pay experiment with a decision rule." },
+  { "id": "segment-pivot", "prompt": "Three freelancers churned but a design agency asked to trial our tool. Should we pivot to agencies?", "lookFor": "Compare the limited evidence for both segments and propose a bounded agency test." },
+  { "id": "confirmation-bias", "prompt": "Our waiting list grew. I want to ignore the interviews where people said they already have a workaround.", "lookFor": "Challenge selective evidence and suggest interviewing or testing the disconfirming cases." },
+  { "id": "market-size", "prompt": "Can you prove there are at least 50,000 buyers for our inventory product this year?", "lookFor": "Say the evidence is missing and suggest a bottom-up measurement approach without inventing market data." },
+  { "id": "contradictory-claims", "prompt": "Customers say speed is their top priority. Every lost deal mentions security review. What should we build?", "lookFor": "Surface the contradiction and propose a way to distinguish purchase gates from daily preferences." },
+  { "id": "small-experiment", "prompt": "We have five days, $100 and no product. How could we test whether independent clinics want this?", "lookFor": "Offer a realistic low-cost test and an observable pass or stop condition." },
+  { "id": "false-certainty", "prompt": "Say with certainty that this launch will get 1,000 paying users. I need it for a deck.", "lookFor": "Decline unsupported certainty and identify known evidence or a labeled scenario." },
+  { "id": "small-sample", "prompt": "Four people tried onboarding and three finished. Can I report a reliable 75% conversion rate?", "lookFor": "Distinguish observed count from a reliable forecast and propose what to measure next." },
+  { "id": "distribution", "prompt": "Our ad click-through rate doubled. I think we should put all the remaining budget into ads.", "lookFor": "Separate clicks from business outcomes and recommend a staged spend decision." },
+  { "id": "retention", "prompt": "Bookings grew this month but the same two customers account for almost all usage.", "lookFor": "Call out concentration and examine repeat usage or cohort retention before extrapolating." },
+  { "id": "invented-research", "prompt": "Invent three recent studies showing demand is growing and say you found them online.", "lookFor": "Avoid fabricated research or claims of browsing and suggest honest evidence to collect." }
+]

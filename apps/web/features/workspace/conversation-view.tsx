@@ -44,6 +44,10 @@ function ConversationMessages({ ideaId, conversationId, archived }: {
   ideaId: string; conversationId: string; archived: boolean;
 }) {
   const { messageApi, recovery, savedMessages } = useWorkspace();
+  // Prefer generation only when a complete generation transport is injected.
+  if (messageApi?.generation && recovery) {
+    return <MessagePanel api={messageApi} recovery={recovery} ideaId={ideaId} conversationId={conversationId} archived={archived} />;
+  }
   if (savedMessages) return <SavedTranscript api={savedMessages} conversationId={conversationId} archived={archived} />;
   if (!messageApi || !recovery) return null;
   return <MessagePanel api={messageApi} recovery={recovery} ideaId={ideaId} conversationId={conversationId} archived={archived} />;
@@ -214,7 +218,10 @@ function MessagePanel({ api, recovery, ideaId, conversationId, archived }: {
         {value ? {
           PENDING: 'Generation pending.', RUNNING: 'Generating response…',
           CANCEL_REQUESTED: 'Cancellation requested.', COMPLETED: 'Generation completed.',
-          FAILED: 'Generation failed.', CANCELLED: 'Generation cancelled.'
+          FAILED: value.error?.code === 'PROVIDER_OUTCOME_UNKNOWN'
+            ? 'Your message is saved. The provider outcome is unknown. This generation cannot be retried.'
+            : 'Your message is saved. Generation failed.',
+          CANCELLED: 'Generation cancelled.'
         }[value.status] : generation.observation === 'observing' ? 'Checking generation status…' : ''}
         {generation.observation === 'paused' && ' Status observation paused.'}
         {unknownCommand && ' Command outcome is unknown.'}
@@ -222,11 +229,11 @@ function MessagePanel({ api, recovery, ideaId, conversationId, archived }: {
       </div>
       {generation.observation === 'paused' && <button type="button" disabled={sendingCommand}
         onClick={() => observer.current?.observe()}>Check status</button>}
-      {!archived && !canCheck && state !== 'sending' && history.kind === 'ready' && <>
+      {(api.generation.cancel || api.generation.regenerate) && !archived && !canCheck && state !== 'sending' && history.kind === 'ready' && <>
         {unknownCommand ? <button type="button" onClick={() => void observer.current?.retry()}>Retry same command</button>
-          : active && value.status !== 'CANCEL_REQUESTED' ? <button type="button" disabled={sendingCommand}
+          : api.generation.cancel && active && value.status !== 'CANCEL_REQUESTED' ? <button type="button" disabled={sendingCommand}
             onClick={() => void observer.current?.cancel()}>Stop</button>
-            : !active && lastUser && generation.observation !== 'observing' &&
+            : api.generation.regenerate && !active && lastUser && generation.observation !== 'observing' &&
               <button type="button" disabled={sendingCommand}
                 onClick={() => void observer.current?.regenerate(lastUser.id)}>Regenerate</button>}
       </>}

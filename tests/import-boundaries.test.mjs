@@ -105,6 +105,10 @@ test('application imports remain inside their own workspace and browser-safe dep
         } else if (!specifier.startsWith('node:')) {
           const packageName = specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0];
           assert.ok(manifest.dependencies?.[packageName], `Undeclared runtime dependency ${specifier} in ${file}`);
+          if (packageName === '@google/genai') {
+            assert.ok(app === 'worker' && path.relative(appRoot, file).split(path.sep).join('/') === 'src/founder-provider.ts',
+              `Gemini SDK outside the worker provider boundary in ${file}`);
+          }
         } else {
           assert.notEqual(app, 'web', `Node dependency ${specifier} in ${file}`);
         }
@@ -113,7 +117,8 @@ test('application imports remain inside their own workspace and browser-safe dep
     if (app === 'web') {
       assert.deepEqual(Object.keys(manifest.dependencies).sort(), [...browserPackages, clerkUi].sort());
     } else if (app === 'dispatcher' || app === 'worker') {
-      assert.deepEqual(Object.keys(manifest.dependencies ?? {}).sort(), ['bullmq', 'ioredis', 'pg']);
+      assert.deepEqual(Object.keys(manifest.dependencies ?? {}).sort(),
+        app === 'worker' ? ['@google/genai', 'bullmq', 'ioredis', 'pg'] : ['bullmq', 'ioredis', 'pg']);
     }
   }
 });

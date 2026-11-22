@@ -49,8 +49,8 @@ type GenerationFailure = { status: 400 | 401 | 403 | 404 | 409 | 413 | 415 | 429
 export type GenerationReply = { status: 200 | 202; data: Generation } | GenerationFailure;
 export type GenerationApi = {
   status(id: string, signal: AbortSignal): Promise<GenerationReply>;
-  cancel(id: string, key: string, signal: AbortSignal): Promise<GenerationReply>;
-  regenerate(conversationId: string, triggerMessageId: string, key: string, signal: AbortSignal): Promise<GenerationReply>;
+  cancel?(id: string, key: string, signal: AbortSignal): Promise<GenerationReply>;
+  regenerate?(conversationId: string, triggerMessageId: string, key: string, signal: AbortSignal): Promise<GenerationReply>;
 };
 export interface WorkspaceApi {
   ideas(cursor: string | null, signal: AbortSignal): Promise<Reply<Page<Idea>>>;

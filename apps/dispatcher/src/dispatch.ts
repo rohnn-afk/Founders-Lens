@@ -23,14 +23,17 @@ export function backoff(attempt: number, random = Math.random) {
 
 function generation(event: Event) {
   const payload = event.payload;
-  return event.kind === 'generation.requested' && event.aggregateType === 'GenerationAttempt' &&
+  return (event.kind === 'generation.requested' || event.kind === 'p9.generation.requested') &&
+    event.aggregateType === 'GenerationAttempt' &&
     isUuid(event.aggregateId) && payload !== null && typeof payload === 'object' &&
     Object.keys(payload).length === 1 && 'generationId' in payload && payload.generationId === event.aggregateId
     ? event.aggregateId : undefined;
 }
 
 export function dispatcher(repository: OutboxRepository, queue: GenerationQueue, authority: Authority,
-  report: Report, { now = Date.now, monotonic = () => performance.now(), random = Math.random } = {}) {
+  report: Report, { now = Date.now, monotonic = () => performance.now(), random = Math.random,
+    verifyExecution }: { now?: () => number; monotonic?: () => number; random?: () => number;
+    verifyExecution?: (attemptId: string, scope: Scope) => Promise<number> } = {}) {
   let active: Promise<void> | undefined;
   let stopping = false;
   let closed = false;
@@ -66,7 +69,9 @@ export function dispatcher(repository: OutboxRepository, queue: GenerationQueue,
     const started = monotonic();
     const scope = await repository.scope(event, published);
     if (closed || !scope || (expected !== undefined && expected !== scopeIdentity(scope))) return 'INELIGIBLE' as const;
-    const expires = await clearance(scope);
+    const expires = verifyExecution
+      ? await verifyExecution(event.aggregateId, scope).catch(() => undefined)
+      : await clearance(scope);
     if (closed || !expires || expires <= now()) return 'SUPPRESSION_UNAVAILABLE' as const;
     const checked = monotonic();
     const current = await repository.scope(event, published);

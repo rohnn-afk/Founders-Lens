@@ -2,7 +2,7 @@
 // joins the API, dispatcher and worker through their real persistence adapters.
 import assert from 'node:assert/strict';
 import { execFile, execFileSync, spawn } from 'node:child_process';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, createHmac, generateKeyPairSync, randomBytes, randomUUID, sign } from 'node:crypto';
 import { once } from 'node:events';
 import { access, cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import test from 'node:test';
+import { leasedContextReader } from '../apps/worker/dist/leased-context-reader.js';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Pool } from 'pg';
 import { Redis } from 'ioredis';
@@ -29,7 +30,12 @@ import { generationQueue } from '../apps/dispatcher/dist/generation-queue.js';
 import { generationRepository } from '../apps/worker/dist/generation-repository.js';
 import { generationWorker } from '../apps/worker/dist/generation-worker.js';
 import { syntheticContextResponse } from '../apps/worker/dist/generation-context.js';
+import { deterministicFounderProvider, founderPrompt } from '../apps/worker/dist/founder-provider.js';
 import { generationConsumer } from '../apps/worker/dist/generation-consumer.js';
+import { createExecutionAuthorizer } from '../apps/api/dist/generation/execution-scope.js';
+import { createSuppressionLedger } from '../apps/api/dist/security/suppression-ledger.js';
+import { createRuntimeRecoveryClearance } from '../apps/api/dist/privacy/runtime-recovery-clearance.js';
+import { startLocalGeneration } from '../scripts/p9-local-runtime.mjs';
 
 const require = createRequire(new URL('../apps/api/package.json', import.meta.url));
 const express = require('express');
@@ -41,9 +47,13 @@ const redisImage = 'docker.io/library/redis:7.4.12-bookworm@sha256:2e3eb11462c4e
 const checksum = '19fcf7f5f144d1ff39a00a489193392e9deaa60617ebe2f42a8ee576e203032b';
 const roles = { api: 'fl_m05_t02_api', worker: 'fl_m05_t02_worker', fixture: 'fl_m05_t02_fixture', dispatch: 'fl_m05_e2e_dispatcher' };
 const policy = { operationType: 'generation', unit: 'synthetic_unit', reservationUnits: 1,
-  quotaUnits: 6, deadlineMs: 120_000, receiptTtlMs: 120_000 };
+  quotaUnits: 5, deadlineMs: 120_000, receiptTtlMs: 120_000 };
+const meteredPolicy = { ...policy, unit: 'tokens', reservationUnits: 4608,
+  quotaUnits: 9216, requestsPerMinute: 1, currentTurnBytes: 1200 };
 const secret = () => randomBytes(32).toString('hex');
 const browserMode = process.argv.includes('--browser');
+const p9Fault = process.argv.includes('--p9-crash') ? 'crash' :
+  process.argv.includes('--p9-authority-loss') ? 'authority-loss' : undefined;
 const edge = process.env.WORKSPACE_EDGE ?? 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
 const browserMessage = 'Browser founder message';
 const correction = 'Correction: the pilot serves clinics.';
@@ -335,12 +345,34 @@ async function postgres(id, run, credentials) {
         await admin.query(`CREATE ROLE ${role} LOGIN NOINHERIT PASSWORD '${credentials[key]}';
           GRANT CONNECT ON DATABASE ${database} TO ${role}`);
       }
+      if (!browserMode) {
+        await admin.query((await readFile('apps/api/prisma/migrations/0002_p9_context/migration.sql')).toString());
+        await admin.query((await readFile('apps/api/prisma/migrations/0003_p9_provider_receipt/migration.sql')).toString());
+        await admin.query(`CREATE ROLE fl_p9_context LOGIN NOINHERIT PASSWORD '${credentials.context}';
+          CREATE ROLE fl_p9_context_verifier LOGIN NOINHERIT PASSWORD '${credentials.contextVerifier}';
+          CREATE ROLE fl_p9_submit LOGIN NOINHERIT PASSWORD '${credentials.standaloneSubmit}';
+          CREATE ROLE fl_p9_dispatch LOGIN NOINHERIT PASSWORD '${credentials.standaloneDispatch}';
+          CREATE ROLE fl_p9_worker LOGIN NOINHERIT PASSWORD '${credentials.standaloneWorker}';
+          CREATE ROLE fl_p9_other_context LOGIN NOINHERIT PASSWORD '${credentials.context}';
+          GRANT CONNECT ON DATABASE ${database} TO fl_p9_context, fl_p9_context_verifier, fl_p9_other_context,
+            fl_p9_dispatch, fl_p9_worker, fl_p9_submit`);
+        await admin.query((await readFile('tests/fixtures/p9-context-grants.sql')).toString());
+        await admin.query(`GRANT INSERT ("orchestrationMetadata") ON public."GenerationAttempt" TO ${roles.api};
+          GRANT SELECT ("occurredAt") ON public."UsageLedger" TO ${roles.api};
+          GRANT SELECT ON public."GenerationProviderReceipt" TO ${roles.fixture};
+          GRANT EXECUTE ON FUNCTION pg_catalog.pg_control_system() TO ${roles.api}`);
+        await admin.query(`GRANT SELECT ("dispatchAuthorizedAt"), UPDATE ("leaseClaimant")
+          ON public."GenerationAttempt" TO ${roles.fixture}`);
+        await admin.query(`GRANT USAGE ON SCHEMA p9_context TO fl_p9_other_context;
+          GRANT EXECUTE ON FUNCTION p9_context.read_attempt(uuid,integer,integer) TO fl_p9_other_context`);
+      }
       await admin.query('COMMIT');
     } catch (error) {
       await admin.query('ROLLBACK');
       throw error;
     }
     await admin.query(await readFile('tests/m05-local-generation-grants.sql', 'utf8'));
+    if (!browserMode) await admin.query(await readFile('scripts/p9-local-runtime-grants.sql', 'utf8'));
     await admin.query(await readFile('tests/m05-t02-bootstrap.sql', 'utf8'));
     // Prove that the baseline and earlier test grants expose no context reader.
     const worker = restrictedPool('worker', credentials);
@@ -390,7 +422,85 @@ async function verify(pool, name, run) {
   }
 }
 
-async function exercise({ pools, redisUrl, prefix, queue, prisma, run, startServer, startConsumer }) {
+/** Exercise the new function through separate authenticated PostgreSQL logins. */
+async function verifyContextProjection(credentials, attempt, lease, epoch) {
+  const connect = (user, password) => new Pool({ host: '127.0.0.1', port: 55435, database, user, password, max: 1 });
+  const reader = connect('fl_p9_context', credentials.context);
+  const wrong = connect('fl_p9_other_context', credentials.context);
+  const issuer = connect('fl_p9_context_verifier', credentials.contextVerifier);
+  const setup = connect(roles.fixture, credentials.fixture);
+  const read = async (pool, id = attempt, attemptLease = lease, context = epoch) =>
+    (await pool.query('SELECT p9_context.read_attempt($1,$2,$3) AS context', [id, attemptLease, context])).rows[0].context;
+  try {
+    assert.equal(await read(reader), null);
+    await setup.query('UPDATE "GenerationAttempt" SET "leaseClaimant"=$2 WHERE id=$1', [attempt, 'fl_p9_context']);
+    await issuer.query(`INSERT INTO p9_context.context_grant VALUES ($1,$2,$3,clock_timestamp()+interval '2 seconds')`,
+      [attempt, lease, epoch]);
+    assert.equal(await read(wrong), null);
+    assert.equal(await read(reader, randomUUID()), null);
+    assert.equal(await read(reader, attempt, lease + 1), null);
+    assert.equal(await read(reader, attempt, lease, epoch + 1), null);
+    const projection = await leasedContextReader(reader, async (id, claim, context) => {
+      assert.deepEqual([id, claim, context], [attempt, lease, epoch]);
+    })({ id: attempt, contextEpoch: epoch }, { epoch: lease });
+    assert.ok(projection?.current.text);
+    assert.deepEqual(projection.memory, []);
+    assert.ok(projection.previous.length <= 3);
+    assert.equal(await read(reader), null);
+    await issuer.query(`INSERT INTO p9_context.context_grant VALUES ($1,$2,$3,clock_timestamp()-interval '1 second')`,
+      [attempt, lease, epoch]);
+    assert.equal(await read(reader), null);
+    await assert.rejects(reader.query('SELECT content FROM public."Message"'), { code: '42501' });
+    await assert.rejects(reader.query('SELECT * FROM public."MemoryProposal"'), { code: '42501' });
+    await assert.rejects(reader.query('UPDATE public."GenerationAttempt" SET "leaseClaimant"=session_user'), { code: '42501' });
+    await assert.rejects(reader.query('DELETE FROM p9_context.context_grant'), { code: '42501' });
+    await assert.rejects(reader.query('CREATE TABLE p9_context.denied (id integer)'), { code: '42501' });
+    await assert.rejects(issuer.query('SELECT content FROM "Message"'), { code: '42501' });
+  } finally {
+    await Promise.all([reader.end(), wrong.end(), issuer.end(), setup.end()]);
+  }
+}
+
+async function independentAuthority(credentials, primary, reader, admin) {
+  await until(() => admin.query('SELECT 1').catch(() => false));
+  const sql = await readFile('tests/fixtures/suppression-ledger-bootstrap.sql', 'utf8');
+  await admin.query(sql.replace(/^\\getenv .*$/gm, '')
+    .replace(":'reader_password'", "'" + credentials.authorityReader + "'")
+    .replace(":'writer_password'", "'" + credentials.authorityWriter + "'"));
+  const epoch = randomUUID(), integrityKey = randomBytes(32), subjectVersions = [1];
+  const namespace = 'hmac-sha256-v1:' + secret();
+  const seal = versions => createHmac('sha256', integrityKey)
+    .update(JSON.stringify(['suppression-coverage-v2', epoch, versions, namespace])).digest('hex');
+  await admin.query('GRANT EXECUTE ON FUNCTION pg_catalog.pg_control_system() TO ledger_reader');
+  await admin.query('INSERT INTO authority.coverage VALUES(true,$1,$2,$3,$4)', [epoch, seal(subjectVersions), subjectVersions, namespace]);
+  const ledger = createSuppressionLedger(reader, { epoch, integrityKey, subjectVersions, challengeNamespace: namespace });
+  const snapshot = await ledger.runtimeSnapshot();
+  const target = await primary.query(`SELECT system_identifier::text || ':' || d.oid::text AS identity
+    FROM pg_catalog.pg_control_system(), pg_catalog.pg_database d WHERE d.datname=current_database()`);
+  const keys = generateKeyPairSync('ed25519'), recoveryRun = randomUUID();
+  function signed(purpose, changes = {}) {
+    const issuedAt = Date.now();
+    const bytes = Buffer.from(JSON.stringify({ version: 1, purpose: 'founders-lens:local-generation:' + purpose,
+      primaryTarget: target.rows[0].identity, authorityIdentity: snapshot.authorityIdentity, namespace,
+      epoch, recoveryRun, inventoryDigest: snapshot.inventoryDigest, subjectVersions, issuedAt, expiresAt: issuedAt + 120_000,
+      ...changes }));
+    return JSON.stringify({ payload: bytes.toString('base64url'),
+      signature: sign(null, bytes, keys.privateKey).toString('base64url') });
+  }
+  return { ledger, signed, async retained(versions) {
+    await admin.query('UPDATE authority.coverage SET subject_versions=$1,integrity=$2', [versions, seal(versions)]);
+  }, env: { FL_P6_AUTHORITY_EPOCH: epoch, FL_P6_AUTHORITY_NAMESPACE: namespace,
+    FL_P6_INTEGRITY_KEY: integrityKey.toString('hex'),
+    FL_P6_OPERATOR_PUBLIC_KEY: keys.publicKey.export({ format: 'der', type: 'spki' }).toString('base64'),
+    FL_P9_RETAINED_VERSIONS: subjectVersions.join(',') },
+  decision(purpose, connection = primary, changes = {}) {
+    const decision = signed(purpose, changes);
+    return createRuntimeRecoveryClearance({ decision, operatorPublicKey: keys.publicKey, primary: connection,
+      authority: ledger, retainedSubjectVersions: subjectVersions, purpose: 'founders-lens:local-generation:' + purpose }).verifiedDecision;
+  } };
+}
+
+async function exercise({ pools, redisUrl, prefix, queue, prisma, submissionPrisma, run, credentials, trusted, startServer, startConsumer }) {
   const { fixture } = pools;
   const account = randomUUID(), idea = randomUUID(), first = randomUUID(), second = randomUUID();
   const subject = 'fixture-' + account, instance = 'm05-t02-fixture';
@@ -408,13 +518,22 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, run, startServ
     const now = Date.now();
     return { scope, nonce, verdict: 'CLEAR', observedAt: now, validUntil: now + 2000 };
   };
+  let shortAdmission = false, admissionExpiry, useTrusted = false;
   const apiAuthority = { async lookup(scope, query) {
     const proof = evidence(suppressionScopeKey(scope), query);
+    if (shortAdmission && proof) {
+      admissionExpiry ??= proof.observedAt + 400;
+      proof.validUntil = admissionExpiry;
+    }
     return proof && { ...proof, integrity: 'VERIFIED', coverage: 'COMPLETE', authority: 'INDEPENDENT', epoch: run };
   } };
   const fixtureToken = 'test.' + secret() + '.fixture';
   const authenticate = async request => request.get('authorization') === 'Bearer ' + fixtureToken ? principal : null;
   const app = express();
+  const trustedSubmission = trusted && createSubmissionService(createSubmissionRepository(submissionPrisma),
+    trusted.ledger.authority, { clock: () => new Date(), policy: meteredPolicy, executionAdmission: trusted.decision('submit'),
+      cursorSecret: randomBytes(32) });
+  const trustedAdmission = trustedSubmission && submissionRoutes(trustedSubmission, authenticate, { submitOnly: true });
   // The browser proxy can submit on behalf of the fixture. Allow only the
   // scripted message text even if someone manually opens the loopback page.
   app.post('/api/v1/conversations/:conversationId/messages', express.json({ limit: '128kb' }), (req, res, next) => {
@@ -423,6 +542,7 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, run, startServ
     }
     next();
   });
+  if (trustedAdmission) app.use('/api/v1', (req, res, next) => useTrusted ? trustedAdmission(req, res, next) : next());
   app.use('/api/v1', submissionRoutes(createSubmissionService(createSubmissionRepository(prisma), apiAuthority,
     { clock: () => new Date(), policy, cursorSecret: randomBytes(32) }), authenticate));
   app.use('/api/v1', generationRoutes(createGenerationService(createGenerationRepository(prisma, policy), apiAuthority), authenticate));
@@ -444,7 +564,6 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, run, startServ
   const status = id => request('/generations/' + id, 200);
   const cancel = (id, expected = 202) => request('/generations/' + id + '/cancel', expected, { method: 'POST', key: randomUUID() });
   const history = id => request(convo(id) + '/messages', 200);
-  const row = async (table, id) => (await fixture.query('SELECT id,status FROM "' + table + '" WHERE id=$1', [id])).rows[0];
   const ledger = async id => (await fixture.query('SELECT "reservationState","measuredUnits" FROM "UsageLedger" WHERE "reservationId"=$1',
     [id])).rows[0];
   const outbox = async id => {
@@ -454,13 +573,15 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, run, startServ
   };
 
   let fake, lastContext, expire = false, dispatchDenied = false, executions = 0;
-  const allowed = new Set(), work = generationRepository(pools.worker);
+  const allowed = new Set(), work = generationRepository(pools.worker, { singleInvocation: true });
+  const founderProvider = deterministicFounderProvider();
   const worker = generationWorker(work, async (scope, query) => {
     const proof = evidence(scope, query);
     return expire && proof ? { ...proof, validUntil: proof.observedAt } : proof;
-  }, id => allowed.has(id), undefined, Date.now, async context => {
+  }, id => allowed.has(id), undefined, Date.now, async (context, signal) => {
     executions++;
     lastContext = context;
+    if (!browserMode && executions === 1) return (await founderProvider.generate(founderPrompt(context), signal)).text;
     return fake ? fake() : syntheticContextResponse(context);
   });
   const consumer = generationConsumer(redisUrl, prefix, worker);
@@ -506,29 +627,191 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, run, startServ
   assert.equal((await submit(first, 400, randomUUID(),
     { clientSubmissionId: randomUUID(), content: 'Unscripted test sentinel' })).error.code, 'FIXTURE_INPUT_DENIED');
   assert.deepEqual((await history(first)).items, []);
+  // Hold the real account lock until the admitted evidence expires.
+  const blocker = await pools.api.connect();
+  let expiredSubmission;
+  try {
+    await blocker.query('BEGIN');
+    await blocker.query('SELECT id FROM "UserAccount" WHERE id=$1 FOR UPDATE', [account]);
+    shortAdmission = true;
+    expiredSubmission = submit(first, 503);
+    void expiredSubmission.catch(() => {});
+    await until(async () => (await pools.api.query(`SELECT EXISTS (SELECT FROM pg_stat_activity
+      WHERE usename=current_user AND cardinality(pg_blocking_pids(pid))>0) AS waiting`)).rows[0].waiting);
+    await sleep(Math.max(0, admissionExpiry - Date.now()) + 20);
+    await blocker.query('COMMIT');
+    assert.equal((await expiredSubmission).error.code, 'DEPENDENCY_UNAVAILABLE');
+  } finally {
+    shortAdmission = false;
+    try { await blocker.query('ROLLBACK'); } finally { blocker.release(); }
+  }
+  assert.deepEqual((await history(first)).items, []);
+  useTrusted = Boolean(trusted);
   const admitted = await submit(first, 202, key, body);
   const id = admitted.generationId;
   assert.deepEqual(await submit(first, 202, key, body), admitted);
+  if (trusted) {
+    assert.equal((await submit(second, 429)).error.code, 'QUOTA_EXCEEDED');
+    await submit(second, 413, randomUUID(), { clientSubmissionId: randomUUID(), content: correctionMessage });
+    assert.deepEqual(await trustedSubmission.correlate(principal, first, body.clientSubmissionId), {
+      messageId: admitted.messageId, generationId: id
+    });
+    assert.deepEqual((await trustedSubmission.history(principal, first, {})).items.map(item => item.role), ['USER']);
+    const trustedStatus = createGenerationService(createGenerationRepository(submissionPrisma, meteredPolicy),
+      trusted.ledger.authority, async () => (await trusted.decision('status')()).expiresAt);
+    assert.equal((await trustedStatus.status(principal, id)).status, 'PENDING');
+  }
+  useTrusted = false;
   assert.equal((await status(id)).status, 'PENDING');
   assert.equal((await outbox(id)).status, 'PENDING');
   assert.equal((await ledger(id)).reservationState, 'RESERVED');
   assert.equal((await fixture.query('SELECT id FROM "IdempotencyRecord" WHERE "accountId"=$1', [account])).rowCount, 1);
   assert.equal((await fixture.query('SELECT id FROM "Message" WHERE "conversationId"=$1', [first])).rowCount, 1);
-  const job = await delivered(id);
-  const completed = await terminal(id, 'COMPLETED');
-  assert.equal(completed.selected, true);
-  await until(async () => (await job.getState()) === 'completed');
-  await poll(id);
-  // Re-exercise the worker's duplicate-delivery gate with the real broker
-  // envelope. The dispatcher remains the only publisher in this harness.
-  await worker.process(job);
+  if (trusted) {
+    const authorize = decision => createExecutionAuthorizer(pools.contextVerifier, trusted.ledger.authority, decision, 'dispatch')(id);
+    const timestamp = Date.now();
+    for (const changes of [{ primaryTarget: '1:1' }, { authorityIdentity: '2:2' }, { subjectVersions: [1, 2] },
+      { issuedAt: timestamp - 2000, expiresAt: timestamp - 1000 }]) {
+      await assert.rejects(authorize(trusted.decision('dispatch', pools.contextVerifier, changes)));
+    }
+    const env = { ...trusted.env, FL_P9_LOCAL_RUNTIME: 'deterministic', FL_P9_DISPOSABLE: '1', FL_P9_MAX_ADMISSIONS: '1',
+      P9_GEMINI_MODEL: 'gemini-3.1-flash-lite', FL_P9_SYNTHETIC_ACCOUNT: account, FL_P9_SYNTHETIC_CONVERSATION: first,
+      FL_P9_SYNTHETIC_TEXT_SHA256: createHash('sha256').update(body.content).digest('hex'),
+      FL_P9_DISPATCH_DECISION: trusted.signed('dispatch'), FL_P9_EXECUTE_DECISION: trusted.signed('execute'),
+      FL_P9_REDIS_RUN: run, FL_P9_REDIS_URL: redisUrl.href,
+      FL_P9_DISPATCH_DATABASE_URL: `postgresql://fl_p9_dispatch:${credentials.standaloneDispatch}@127.0.0.1:55435/${database}`,
+      FL_P9_WORKER_DATABASE_URL: `postgresql://fl_p9_worker:${credentials.standaloneWorker}@127.0.0.1:55435/${database}`,
+      FL_P9_VERIFIER_DATABASE_URL: `postgresql://fl_p9_context_verifier:${credentials.contextVerifier}@127.0.0.1:55435/${database}`,
+      FL_P9_AUTHORITY_DATABASE_URL: `postgresql://ledger_reader:${credentials.authorityReader}@127.0.0.1:55438/suppression_proof`
+    };
+    await assert.rejects(startLocalGeneration({ ...env, NODE_ENV: 'production' }));
+    await assert.rejects(startLocalGeneration({ ...env, FL_P9_LOCAL_RUNTIME: 'gemini',
+      FL_P9_GEMINI_CONFIRM: 'approve-one-synthetic-invocation' }));
+    await assert.rejects(startLocalGeneration({ ...env, FL_P9_SYNTHETIC_CONVERSATION: randomUUID() }));
+    await assert.rejects(startLocalGeneration({ ...env, FL_P9_DISPATCH_DECISION: undefined }));
+    await assert.rejects(startLocalGeneration({ ...env, FL_P9_EXECUTE_DECISION: trusted.signed('execute',
+      { issuedAt: timestamp - 2000, expiresAt: timestamp - 1000 }) }));
+    await trusted.retained([1, 2]);
+    try {
+      await assert.rejects(startLocalGeneration(env));
+      assert.equal((await outbox(id)).status, 'PENDING');
+    } finally { await trusted.retained([1]); }
+    await pools.authorityAdmin.query('REVOKE SELECT ON authority.coverage FROM ledger_reader');
+    try {
+      await assert.rejects(startLocalGeneration(env));
+      assert.equal((await outbox(id)).status, 'PENDING');
+      assert.equal(executions, 0);
+    } finally {
+      await pools.authorityAdmin.query('GRANT SELECT ON authority.coverage TO ledger_reader');
+    }
+    const broker = new Redis(redisUrl.href, { maxRetriesPerRequest: 0 });
+    const standalone = new Queue('generation', { prefix: 'founders-lens-p9-local-' + run, connection: createIORedisClient(broker) });
+    const restrictedWorker = new Pool({ connectionString: env.FL_P9_WORKER_DATABASE_URL });
+    let runtime;
+    const report = event => { if (event === 'P9_DETERMINISTIC_INVOCATION') executions++; };
+    try {
+      await assert.rejects(restrictedWorker.query('SELECT content FROM public."Message"'), { code: '42501' });
+      await assert.rejects(restrictedWorker.query('SELECT * FROM public."ConfirmedMemory"'), { code: '42501' });
+      await assert.rejects(restrictedWorker.query('DELETE FROM public."GenerationProviderReceipt"'), { code: '42501' });
+      await assert.rejects(restrictedWorker.query('INSERT INTO p9_context.context_grant DEFAULT VALUES'), { code: '42501' });
+      if (p9Fault === 'authority-loss') {
+        const observation = { text: 'Unpublished synthetic answer', responseId: 'offline-authority-loss',
+          usage: { inputTokens: 17, outputTokens: 9, totalTokens: 26 } };
+        runtime = await startLocalGeneration(env, report, {
+          deterministicProvider: { async generate() { executions++; return observation; } },
+          afterOfflineObservation: () => pools.authorityAdmin.query('REVOKE SELECT ON authority.coverage FROM ledger_reader')
+        });
+        try {
+          await until(async () => (await ledger(id)).reservationState === 'SETTLED');
+          const job = await standalone.getJob(id);
+          // Do not restore authority until the worker attempted finalization and returned.
+          await until(async () => (await job.getState()) === 'completed');
+          assert.deepEqual((await history(first)).items.map(item => item.role), ['USER']);
+        } finally {
+          await pools.authorityAdmin.query('GRANT SELECT ON authority.coverage TO ledger_reader');
+        }
+        await terminal(id, 'FAILED');
+        assert.deepEqual(await ledger(id), { reservationState: 'SETTLED', measuredUnits: '26.00000' });
+        assert.equal((await fixture.query(`SELECT "responseId" FROM public."GenerationProviderReceipt"
+          WHERE "attemptId"=$1`, [id])).rows[0].responseId, observation.responseId);
+      } else if (p9Fault === 'crash') {
+        const child = spawn(process.execPath, ['--input-type=module', '-e', `
+          import { startLocalGeneration } from './scripts/p9-local-runtime.mjs';
+          const runtime = await startLocalGeneration(process.env, () => {}, { deterministicProvider: {
+            async generate() {
+              console.log('OFFLINE_PROVIDER_ENTERED');
+              return new Promise(() => {});
+            }
+          } });
+          await runtime.finished;
+        `], { env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'ignore'] });
+        const exited = once(child, 'exit');
+        let entered = false, output = '';
+        child.stdout.setEncoding('utf8').on('data', chunk => {
+          output = (output + chunk).slice(-128);
+          entered ||= output.includes('OFFLINE_PROVIDER_ENTERED');
+        });
+        try {
+          await until(() => entered);
+          executions++;
+          assert.ok((await fixture.query(`SELECT "dispatchAuthorizedAt" FROM public."GenerationAttempt"
+            WHERE id=$1`, [id])).rows[0].dispatchAuthorizedAt);
+        } finally {
+          child.kill('SIGKILL');
+          await exited;
+        }
+        runtime = await startLocalGeneration(env, report);
+        const failed = await terminal(id, 'FAILED');
+        assert.deepEqual(failed.error, { code: 'PROVIDER_OUTCOME_UNKNOWN', retryable: false });
+        assert.deepEqual(await ledger(id), { reservationState: 'RESERVED', measuredUnits: '0.00000' });
+        assert.equal((await fixture.query(`SELECT "responseId" FROM public."GenerationProviderReceipt"
+          WHERE "attemptId"=$1`, [id])).rowCount, 0);
+      }
+      if (p9Fault) {
+        const correlated = await request(convo(first) + '/submissions/' + body.clientSubmissionId, 200);
+        assert.equal(correlated.generationId, id);
+        assert.equal(correlated.messageId, admitted.messageId);
+        assert.deepEqual((await history(first)).items.map(item => item.role), ['USER']);
+        assert.equal(executions, 1);
+        return;
+      }
+      runtime = await startLocalGeneration(env, report);
+      assert.equal((await terminal(id, 'COMPLETED')).selected, true);
+      assert.equal((await outbox(id)).status, 'PUBLISHED');
+      const job = await standalone.getJob(id);
+      assert.deepEqual(job.data, { generationId: id });
+      await until(async () => (await job.getState()) === 'completed');
+      await runtime.close();
+      // Restart the same isolated namespace, then redeliver the completed job.
+      runtime = await startLocalGeneration(env, report);
+      await job.retry('completed');
+      await until(async () => (await job.getState()) === 'completed');
+    } finally {
+      await runtime?.close();
+      await restrictedWorker.end();
+      await standalone.close();
+      broker.disconnect();
+    }
+  } else {
+    const job = await delivered(id);
+    assert.equal((await terminal(id, 'COMPLETED')).selected, true);
+    await until(async () => (await job.getState()) === 'completed');
+    await poll(id);
+    await worker.process(job);
+  }
   assert.equal(executions, 1);
   assert.equal((await cancel(id, 200)).status, 'COMPLETED');
-  assert.deepEqual(await ledger(id), { reservationState: 'SETTLED', measuredUnits: '1.00000' });
+  assert.deepEqual(await ledger(id), { reservationState: 'SETTLED', measuredUnits: trusted ? '26.00000' : '1.00000' });
+  if (trusted) {
+    const { rows } = await fixture.query(`SELECT "responseId","inputTokens","outputTokens","totalTokens"
+      FROM public."GenerationProviderReceipt" WHERE "attemptId"=$1`, [id]);
+    assert.deepEqual(rows, [{ responseId: 'p9-deterministic-observation', inputTokens: 17, outputTokens: 9, totalTokens: 26 }]);
+    await assert.rejects(pools.worker.query('DELETE FROM public."GenerationProviderReceipt"'), { code: '42501' });
+  }
   const initialTranscript = (await history(first)).items;
   assert.deepEqual(initialTranscript.map(item => item.role), ['USER', 'ASSISTANT']);
   assert.equal(initialTranscript[0].content, body.content);
-  assert.match(initialTranscript[1].content, /Current founder statement: .*Synthetic USER/);
+  assert.match(initialTranscript[1].content, /Identify the assumption.*pass threshold/);
 
   fake = async () => 'Regenerated synthetic assistant';
   const regenKey = randomUUID();
@@ -602,6 +885,7 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, run, startServ
   try {
     const active = await work.scope(during);
     const { rows: [{ leaseEpoch }] } = await fixture.query('SELECT "leaseEpoch" FROM "GenerationAttempt" WHERE id=$1', [during]);
+    if (!browserMode) await verifyContextProjection(credentials, during, leaseEpoch, active.contextEpoch);
     const read = (id, epoch, contextEpoch, expiry = Date.now() + 1000) => pools.worker.query(
       'SELECT m06_context.read_attempt($1,$2,$3,$4) AS context', [id, epoch, contextEpoch, expiry])
       .then(({ rows }) => rows[0].context);
@@ -688,13 +972,22 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, run, startServ
     } finally { await fixture.query('DELETE FROM "DataOperation" WHERE id=$1', [operation]); }
   }
   await due();
-  fake = async () => { throw new Error('Synthetic uncertain invocation'); };
+  let uncertainInvocations = 0;
+  fake = async () => {
+    uncertainInvocations++;
+    expire = true;
+    throw new Error('Synthetic uncertain invocation');
+  };
   const unknownJob = await delivered(unknown);
   await until(async () => (await unknownJob.getState()) === 'completed');
+  expire = false;
   await expireLease(unknown);
   await worker.recover([unknown]);
   await worker.recover([unknown]);
-  assert.equal((await row('GenerationAttempt', unknown)).status, 'FAILED');
+  const uncertain = await status(unknown);
+  assert.equal(uncertain.status, 'FAILED');
+  assert.deepEqual(uncertain.error, { code: 'PROVIDER_OUTCOME_UNKNOWN', retryable: false });
+  assert.equal(uncertainInvocations, 1);
   assert.equal((await ledger(unknown)).reservationState, 'RESERVED');
   assert.equal((await submit(first, 429)).error.code, 'QUOTA_EXCEEDED');
 }
@@ -708,10 +1001,12 @@ test('isolated HTTP submission through outbox, BullMQ and the fake generation wo
   }
   const run = randomUUID(), prefix = 'founders-lens-m05-e2e-' + run;
   const network = 'm05-e2e-' + run;
-  const credentials = Object.fromEntries([...Object.keys(roles), 'bootstrap', 'redis'].map(name => [name, secret()]));
+  const credentials = Object.fromEntries([...Object.keys(roles), 'bootstrap', 'redis', 'context', 'contextVerifier',
+    'authorityAdmin', 'authorityReader', 'authorityWriter', 'standaloneSubmit', 'standaloneDispatch',
+    'standaloneWorker'].map(name => [name, secret()]));
   const redisUrl = new URL('redis://:' + credentials.redis + '@127.0.0.1:56381/0');
   const pools = {}, containers = [];
-  let networkId, redis, queue, consumer, prisma, server;
+  let networkId, redis, queue, consumer, prisma, submissionPrisma, server;
   function start(resource, image, hostPort, containerPort, tmpfs, options, command) {
     const binding = { [containerPort + '/tcp']: [{ HostIp: '127.0.0.1', HostPort: hostPort }] };
     const id = docker(['run', '-d', '--pull=never', '--network', networkId, '--name', network + '-' + resource,
@@ -737,6 +1032,20 @@ test('isolated HTTP submission through outbox, BullMQ and the fake generation wo
       pools[name] = restrictedPool(name, credentials);
       await verify(pools[name], name, run);
     }
+    let trusted;
+    if (!browserMode) {
+      const authorityId = start('authority', pgImage, '55438', '5432', '/var/lib/postgresql/data:rw,nosuid,nodev,mode=0700',
+        ['-e', 'POSTGRES_DB=suppression_proof', '-e', 'POSTGRES_PASSWORD_FILE=/tmp/bootstrap',
+          '--entrypoint', 'sh'], ['-ec', 'while [ ! -s /tmp/bootstrap ]; do sleep 1; done; exec docker-entrypoint.sh postgres']);
+      docker(['exec', '-i', authorityId, 'sh', '-ec', 'umask 077; cat > /tmp/bootstrap-new; mv /tmp/bootstrap-new /tmp/bootstrap'],
+        credentials.authorityAdmin);
+      const connect = (port, database, user, password) => new Pool({ host: '127.0.0.1', port, database, user, password,
+        connectionTimeoutMillis: 1000, statement_timeout: 3000 });
+      pools.contextVerifier = connect(55435, database, 'fl_p9_context_verifier', credentials.contextVerifier);
+      pools.authorityAdmin = connect(55438, 'suppression_proof', 'postgres', credentials.authorityAdmin);
+      pools.authorityReader = connect(55438, 'suppression_proof', 'ledger_reader', credentials.authorityReader);
+      trusted = await independentAuthority(credentials, pools.contextVerifier, pools.authorityReader, pools.authorityAdmin);
+    }
     redis = new Redis(redisUrl.href, { maxRetriesPerRequest: 0, connectTimeout: 1000 });
     redis.on('error', () => {});
     await until(() => redis.ping().catch(() => false));
@@ -747,7 +1056,10 @@ test('isolated HTTP submission through outbox, BullMQ and the fake generation wo
     queue = new Queue('generation', { prefix, connection: createIORedisClient(redis) });
     const apiUrl = 'postgresql://' + roles.api + ':' + credentials.api + '@127.0.0.1:55435/' + database;
     prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: apiUrl, statement_timeout: 5000 }) });
-    await exercise({ pools, redisUrl, prefix, queue, prisma, run, startServer: value => { server = value; },
+    if (trusted) submissionPrisma = new PrismaClient({ adapter: new PrismaPg({
+      connectionString: `postgresql://fl_p9_submit:${credentials.standaloneSubmit}@127.0.0.1:55435/${database}`
+    }) });
+    await exercise({ pools, redisUrl, prefix, queue, prisma, submissionPrisma, run, credentials, trusted, startServer: value => { server = value; },
       startConsumer: value => { consumer = value; } });
     assert.equal((await redis.info('server')).match(/^run_id:(\w+)/m)?.[1], liveBroker);
   } finally {
@@ -757,6 +1069,7 @@ test('isolated HTTP submission through outbox, BullMQ and the fake generation wo
       await queue?.close();
       redis?.disconnect();
       await prisma?.$disconnect();
+      await submissionPrisma?.$disconnect();
       await Promise.all(Object.values(pools).map(pool => pool.end()));
     } finally {
       // The entire disposable cluster is the fixture. Reverify every ID

@@ -26,7 +26,8 @@ async function body(request: Request, response: Response) {
   return parsed.data;
 }
 
-export function generationRoutes(service: GenerationService, authenticate: (request: Request) => Promise<Principal | null>) {
+export function generationRoutes(service: GenerationService, authenticate: (request: Request) => Promise<Principal | null>,
+  { statusOnly = false }: { statusOnly?: boolean } = {}) {
   const router = Router();
   router.use(attachRequestContext);
   const handle = (kind: 'status' | 'cancel' | 'regenerate') => async (request: Request, response: Response) => {
@@ -58,7 +59,9 @@ export function generationRoutes(service: GenerationService, authenticate: (requ
     }
   };
   router.get('/generations/:generationId', handle('status'));
-  router.post('/generations/:generationId/cancel', handle('cancel'));
-  router.post('/conversations/:conversationId/regenerations', handle('regenerate'));
+  if (!statusOnly) {
+    router.post('/generations/:generationId/cancel', handle('cancel'));
+    router.post('/conversations/:conversationId/regenerations', handle('regenerate'));
+  }
   return router;
 }

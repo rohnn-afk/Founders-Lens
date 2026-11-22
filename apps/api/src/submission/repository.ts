@@ -20,7 +20,10 @@ function verifiedPolicy(policy: AdmissionPolicy | undefined) {
   if (!policy || typeof policy.unit !== 'string' || !/^[a-z][a-z0-9_]{0,39}$/.test(policy.unit) ||
     typeof policy.operationType !== 'string' || !/^[a-z][a-z0-9_]{0,59}$/.test(policy.operationType) ||
     !positiveInteger(policy.quotaUnits, 99_999_999_999) || !positiveInteger(policy.reservationUnits, policy.quotaUnits) ||
-    !positiveInteger(policy.deadlineMs) || !positiveInteger(policy.receiptTtlMs)) throw unavailable();
+    !positiveInteger(policy.deadlineMs) || !positiveInteger(policy.receiptTtlMs) ||
+    (policy.requestsPerMinute !== undefined && !positiveInteger(policy.requestsPerMinute, 60)) ||
+    (policy.maximumAdmissions !== undefined && !positiveInteger(policy.maximumAdmissions, 100)) ||
+    (policy.currentTurnBytes !== undefined && !positiveInteger(policy.currentTurnBytes, 4096))) throw unavailable();
   return policy;
 }
 function atOffset(now: Date, milliseconds: number) {
@@ -37,6 +40,9 @@ async function lockSubmissionScope(tx: Tx, principal: Principal, command: Submis
     SELECT id FROM "Idea" WHERE id = ${command.ideaId}::uuid AND "ownerId" = ${principal.localUserId}::uuid
     AND status = 'ACTIVE' FOR UPDATE`;
   if (!ideas.length) throw new SecurityError('RESOURCE_NOT_FOUND');
+  if (await tx.dataOperation.findFirst({ where: { kind: 'DELETE_IDEA', ideaId: command.ideaId }, select: { id: true } })) {
+    throw new SecurityError('RESOURCE_NOT_FOUND');
+  }
   const conversations = await tx.$queryRaw<{ nextSequence: number }[]>`
     SELECT "nextSequence" FROM "Conversation" WHERE id = ${command.conversationId}::uuid
     AND "ideaId" = ${command.ideaId}::uuid AND status = 'ACTIVE' FOR UPDATE`;
@@ -100,12 +106,15 @@ async function requireNewAdmission(tx: Tx, accountId: string, conversationId: st
   // conversations. Otherwise concurrent sums can both spend the last unit.
   // An open reservation holds its original units until settlement. Settlement
   // counts actual usage, and release frees capacity only for zero measured usage.
-  const [usage] = await tx.$queryRaw<{ consumed: Prisma.Decimal; inconsistent: boolean }[]>`
+  const [usage] = await tx.$queryRaw<{ consumed: Prisma.Decimal; inconsistent: boolean; recent: bigint; admissions: bigint }[]>`
     SELECT COALESCE(SUM(CASE WHEN valid THEN CASE "reservationState"
       WHEN 'RESERVED' THEN "reservedUnits" WHEN 'SETTLED' THEN "measuredUnits" ELSE 0 END END), 0) AS consumed,
-      COALESCE(BOOL_OR(valid IS NOT TRUE), false) AS inconsistent
+      COALESCE(BOOL_OR(valid IS NOT TRUE), false) AS inconsistent, COUNT(*) AS admissions,
+      ${policy.requestsPerMinute === undefined ? Prisma.sql`0::bigint`
+        : Prisma.sql`COUNT(*) FILTER (WHERE "occurredAt" > clock_timestamp() - interval '1 minute')`} AS recent
     FROM (
       SELECT "reservationState", "reservedUnits", "measuredUnits",
+        ${policy.requestsPerMinute === undefined ? Prisma.empty : Prisma.sql`"occurredAt",`}
         ("reservedUnits" >= 0 AND "reservedUnits" < 'Infinity'::numeric
           AND "measuredUnits" >= 0 AND "measuredUnits" < 'Infinity'::numeric
           AND ("reservationState" = 'SETTLED'
@@ -114,11 +123,17 @@ async function requireNewAdmission(tx: Tx, accountId: string, conversationId: st
       WHERE "accountId" = ${accountId}::uuid AND "operationType" = ${policy.operationType} AND unit = ${policy.unit}
     ) AS ledger`;
   if (!usage || usage.inconsistent) throw unavailable();
+  if (policy.maximumAdmissions !== undefined && usage.admissions >= BigInt(policy.maximumAdmissions)) {
+    throw new SubmissionError('QUOTA_EXCEEDED');
+  }
+  if (policy.requestsPerMinute !== undefined && usage.recent >= BigInt(policy.requestsPerMinute)) {
+    throw new SubmissionError('QUOTA_EXCEEDED');
+  }
   if (usage.consumed.plus(policy.reservationUnits).greaterThan(policy.quotaUnits)) throw new SubmissionError('QUOTA_EXCEEDED');
 }
 
 async function persistAcceptance(tx: Tx, scope: ReceiptKey, command: SubmissionCommand, sequence: number,
-  now: Date, policy: AdmissionPolicy) {
+  now: Date, policy: AdmissionPolicy, principal: Principal) {
   const deadlineAt = atOffset(now, policy.deadlineMs);
   const ref = { messageId: randomUUID(), generationId: randomUUID() };
   // An atomic transaction commits these writes together. If the final outbox
@@ -130,9 +145,27 @@ async function persistAcceptance(tx: Tx, scope: ReceiptKey, command: SubmissionC
     clientSubmissionKey: command.body.clientSubmissionId, submissionSha256: command.contentHash, createdAt: now },
   select: { id: true } });
   // Admission never reads private orchestration metadata or sets worker fences.
-  await tx.$executeRaw`INSERT INTO "GenerationAttempt"
-    (id,"triggerMessageId","conversationId","attemptNumber","createdAt","deadlineAt")
-    VALUES (${ref.generationId}::uuid,${ref.messageId}::uuid,${command.conversationId}::uuid,1,${now},${deadlineAt})`;
+  if (command.executionDecision) {
+    const { primaryTarget, authorityIdentity, namespace, recoveryRun } = command.executionDecision;
+    // Check the identity of this transaction's connection, not just the operator's verifier pool.
+    const [target] = await tx.$queryRaw<{ identity: string }[]>`
+      SELECT system_identifier::text || ':' || d.oid::text AS identity
+      FROM pg_catalog.pg_control_system(), pg_catalog.pg_database d WHERE d.datname=current_database()`;
+    if (target?.identity !== primaryTarget) throw unavailable();
+    // Persist references only. A worker must independently check live CLEAR for every version.
+    const executionScope = { version: 1, primaryTarget, authorityIdentity, namespace, recoveryRun,
+      accountId: scope.accountId, ideaId: command.ideaId, conversationId: command.conversationId,
+      instanceId: principal.clerkInstanceId, ...ref,
+      accountKeys: principal.subjectKeys.map(({ version, digest }) => ({ version, digest })).sort((a, b) => a.version - b.version) };
+    await tx.$executeRaw`INSERT INTO "GenerationAttempt"
+      (id,"triggerMessageId","conversationId","attemptNumber","createdAt","deadlineAt","orchestrationMetadata")
+      VALUES (${ref.generationId}::uuid,${ref.messageId}::uuid,${command.conversationId}::uuid,1,${now},${deadlineAt},
+        ${JSON.stringify({ executionScope })}::jsonb)`;
+  } else {
+    await tx.$executeRaw`INSERT INTO "GenerationAttempt"
+      (id,"triggerMessageId","conversationId","attemptNumber","createdAt","deadlineAt")
+      VALUES (${ref.generationId}::uuid,${ref.messageId}::uuid,${command.conversationId}::uuid,1,${now},${deadlineAt})`;
+  }
   await tx.usageLedger.create({ data: { accountId: scope.accountId, operationType: policy.operationType, unit: policy.unit,
     reservationId: ref.generationId, reconciliationKey: 'message-submission:' + ref.generationId,
     reservationState: 'RESERVED', provider: null, reservedUnits: policy.reservationUnits, measuredUnits: 0, occurredAt: now },
@@ -142,7 +175,8 @@ async function persistAcceptance(tx: Tx, scope: ReceiptKey, command: SubmissionC
   // so publishing later never requires keeping an extra copy of private text.
   await tx.$executeRaw`INSERT INTO "OutboxEvent"
     (id,kind,"aggregateType","aggregateId",payload,"createdAt","nextAttemptAt")
-    VALUES (${randomUUID()}::uuid,'generation.requested','GenerationAttempt',${ref.generationId}::uuid,
+    VALUES (${randomUUID()}::uuid,${command.executionDecision ? 'p9.generation.requested' : 'generation.requested'},
+      'GenerationAttempt',${ref.generationId}::uuid,
       ${JSON.stringify({ generationId: ref.generationId })}::jsonb,${now},${now})`;
   return ref;
 }
@@ -220,10 +254,11 @@ export function createSubmissionRepository(client: PrismaClient): SubmissionRepo
           ORDER BY u.sequence, slots.slot LIMIT ${limit}`;
       }, localReadGuard);
     },
-    async accept(principal, command, clock, policy) {
+    async accept(principal, command, clock, policy, requireFresh) {
       try {
         return await client.$transaction(async tx => {
           const sequence = await lockSubmissionScope(tx, principal, command);
+          requireFresh?.();
           const now = clock();
           if (!(now instanceof Date) || !Number.isFinite(now.getTime())) throw unavailable();
           const scope = { accountId: principal.localUserId, operationType: submissionOperation,
@@ -231,12 +266,18 @@ export function createSubmissionRepository(client: PrismaClient): SubmissionRepo
           // A lost HTTP acknowledgement is not proof of rollback. Resolve its
           // committed IDs before checking whether any new work can be admitted.
           const replay = await resolveReplay(tx, scope, command, now, policy);
+          requireFresh?.();
           if (replay) return replay;
           const admission = verifiedPolicy(policy);
           await requireNewAdmission(tx, scope.accountId, command.conversationId, admission);
-          return persistAcceptance(tx, scope, command, sequence, now, admission);
+          requireFresh?.();
+          const accepted = await persistAcceptance(tx, scope, command, sequence, now, admission, principal);
+          requireFresh?.();
+          return accepted;
         }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
       } catch (error) {
+        // Conflicts expose admission or receipt state, so expiry takes precedence.
+        if (error instanceof SubmissionError) requireFresh?.();
         if (error instanceof Prisma.PrismaClientKnownRequestError ||
           error instanceof Prisma.PrismaClientInitializationError) throw unavailable();
         throw error;

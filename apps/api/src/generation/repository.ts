@@ -55,7 +55,10 @@ function project(row: Attempt): Generation {
     ...(row.outputMessageId && { outputMessageId: row.outputMessageId }),
     ...(row.startedAt && { startedAt: row.startedAt.toISOString() }),
     ...(row.completedAt && { finishedAt: row.completedAt.toISOString() }),
-    ...(status === 'FAILED' && { error: { code: 'GENERATION_FAILED', retryable: false } }) });
+    ...(status === 'FAILED' && { error: {
+      code: row.errorCode === 'PROVIDER_OUTCOME_UNKNOWN' ? 'PROVIDER_OUTCOME_UNKNOWN' : 'GENERATION_FAILED',
+      retryable: false
+    } }) });
 }
 
 async function reserve(tx: Tx, account: string, id: string, policy: Policy, now: Date) {
@@ -125,9 +128,10 @@ export function createGenerationRepository(client: PrismaClient, policy: Policy)
           select: { id: true, ideaId: true, idea: { select: { id: true, ownerId: true, status: true } } } });
       } catch { throw unavailable(); }
     },
-    status(principal, scope, id) {
+    status(principal, scope, id, requireFresh) {
       return transaction(async tx => {
         await lockScope(tx, principal, scope, false);
+        requireFresh?.();
         return project(await attempt(tx, scope, id, false));
       });
     },

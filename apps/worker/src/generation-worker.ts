@@ -3,6 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import { assembleGenerationContext, type GenerationContext } from './generation-context.js';
 import type { Repository, Scope } from './generation-repository.js';
+import type { ProviderResult } from './founder-provider.js';
 
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 type Authority = (scope: string, query: { nonce: string; requestedAt: number }) => Promise<{
@@ -19,12 +20,21 @@ export function generationId(job: { id?: string; name: string; data: unknown }) 
 
 export function generationWorker(repository: Repository, authority: Authority, allowed: (id: string) => boolean,
   fake: (signal: AbortSignal) => Promise<string> = async () => 'This is a deterministic test response.',
-  now = Date.now, contextResponse?: (context: GenerationContext, signal: AbortSignal) => Promise<string>) {
+  now = Date.now, contextResponse?: (context: GenerationContext, signal: AbortSignal) => Promise<string | ProviderResult>,
+  trusted?: {
+    verifyExecution(scope: Scope): Promise<number>;
+    readContext(scope: Scope, lease: { epoch: number }): Promise<unknown>;
+  }) {
+  if (trusted && !contextResponse) throw new Error('Trusted generation requires a context provider');
   let recovering = false;
   const running = new Set<AbortController>();
   let stopping = false;
 
   async function clearance(scope: Scope) {
+    if (trusted) {
+      const deadline = await trusted.verifyExecution(scope).catch(() => undefined);
+      return deadline !== undefined && Number.isSafeInteger(deadline) && deadline > now() ? deadline : undefined;
+    }
     let expiry = Infinity;
     for (const key of [
       JSON.stringify(['ACCOUNT', scope.instanceId, scope.subjectKeyVersion, scope.subjectKey, 'ALL']),
@@ -51,17 +61,23 @@ export function generationWorker(repository: Repository, authority: Authority, a
     if (!lease || stopping) return;
     const readExpiry = await clearance(scope);
     const context = contextResponse && readExpiry && !stopping
-      ? await assembleGenerationContext(() => repository.readContext(scope, lease.epoch, readExpiry), scope.triggerMessageId)
+      ? await assembleGenerationContext(() => trusted ? trusted.readContext(scope, lease)
+        : repository.readContext(scope, lease.epoch, readExpiry), scope.triggerMessageId)
       : undefined;
     // Acquire fresh evidence after the bounded projection. The existing
     // invocation fence rechecks the captured context epoch before execution.
     const invocationExpiry = context && !stopping ? await clearance(scope) : readExpiry;
-    if (!invocationExpiry || stopping || (contextResponse && !context) ||
+    if (!invocationExpiry || stopping || (contextResponse && !context) || (trusted && context?.memory.length) ||
       !await repository.markInvocation(scope, lease.epoch, invocationExpiry)) {
       const expiry = stopping ? undefined : await clearance(scope);
       if (expiry && !stopping) await repository.finish(scope, lease.epoch, null, expiry);
       return;
     }
+
+    // Recheck after the durable marker, which can wait for primary locks.
+    // Failure here leaves the marker conservative and prevents provider I/O.
+    const callExpiry = trusted ? await clearance(scope) : invocationExpiry;
+    if (!callExpiry || stopping || (trusted && !await repository.heartbeat(scope, lease.epoch))) return;
 
     const abort = new AbortController();
     running.add(abort);
@@ -71,9 +87,10 @@ export function generationWorker(repository: Repository, authority: Authority, a
         .then(alive => { if (!alive) abort.abort(); }, () => abort.abort())
         .finally(() => { inFlight = undefined; });
     }, 1000);
-    const timeoutMs = Math.min(3000, lease.remainingMs - (performance.now() - started));
+    const timeoutMs = Math.min(trusted ? 9000 : 3000, lease.remainingMs - (performance.now() - started));
     let timeout: ReturnType<typeof setTimeout> | undefined;
     let result: { id: string; text: string } | null = null;
+    let observation: ProviderResult | undefined;
     try {
       if (timeoutMs > 0 && !stopping) {
         const interrupted = new Promise<never>((_, reject) => {
@@ -82,9 +99,11 @@ export function generationWorker(repository: Repository, authority: Authority, a
         timeout = setTimeout(() => abort.abort(), timeoutMs);
         // Recording invocation can wait for a row lock. Recheck the original
         // evidence immediately before invoking, without an intervening await.
-        if (now() < invocationExpiry) {
+        if (now() < Math.min(invocationExpiry, callExpiry)) {
           const work = contextResponse && context ? contextResponse(context, abort.signal) : fake(abort.signal);
-          const text = await Promise.race([work, interrupted]);
+          const response = await Promise.race([work, interrupted]);
+          if (typeof response !== 'string') observation = response;
+          const text = typeof response === 'string' ? response : response.text;
           if (typeof text === 'string' && text.length > 0 && Array.from(text).length <= 10_000 &&
             text.isWellFormed() && !text.includes('\0')) result = { id: randomUUID(), text };
         }
@@ -98,7 +117,7 @@ export function generationWorker(repository: Repository, authority: Authority, a
     }
     // A known result can outlive permission to publish its content. Persist
     // only the accounting evidence while this worker still owns the lease.
-    if (result && !await repository.recordUsage(scope, lease.epoch)) return;
+    if ((result || observation?.usage) && !await repository.recordUsage(scope, lease.epoch, observation)) return;
     // Evidence is checked again outside the transaction. The final locked
     // write independently verifies scope, cancellation, context and epoch.
     const finalizationExpiry = stopping ? undefined : await clearance(scope);

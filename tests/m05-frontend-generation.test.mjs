@@ -61,6 +61,19 @@ test('single observer respects retry-after and refreshes on confirmed terminal s
   assert.equal(f.updates.at(-1).value.status, 'COMPLETED');
 });
 
+test('poll-only generation never queues cancellation or regeneration commands', async () => {
+  const f = fixture({ status: async () => reply('RUNNING') });
+  f.controller.observe('attempt');
+  await tick();
+  const observed = f.updates.length;
+  await f.controller.cancel();
+  await f.controller.regenerate('user');
+  assert.equal(f.updates.length, observed);
+  await f.advance(1000);
+  assert.equal(f.updates.at(-1).value.status, 'RUNNING');
+  f.controller.stop();
+});
+
 test('bounded observation pauses without manufacturing failure and permits Check status', async () => {
   let calls = 0;
   const f = fixture({ async status() { calls++; return reply('RUNNING'); } });

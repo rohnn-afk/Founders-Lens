@@ -15,7 +15,9 @@ const decisionSchema = z.strictObject({
   version: z.literal(1),
   purpose: z.enum(['founders-lens:local-workspace:read-only', 'founders-lens:local-workspace:create-idea',
     'founders-lens:local-workspace:read-conversations', 'founders-lens:local-workspace:create-conversation',
-    'founders-lens:local-workspace:save-user-message']),
+    'founders-lens:local-workspace:save-user-message',
+    'founders-lens:local-generation:submit', 'founders-lens:local-generation:dispatch',
+    'founders-lens:local-generation:execute', 'founders-lens:local-generation:status']),
   primaryTarget: target,
   authorityIdentity: target,
   namespace: z.string().regex(/^hmac-sha256-v1:[0-9a-f]{64}$/),
@@ -72,7 +74,8 @@ export function createRuntimeRecoveryClearance(deps: {
   readonly operatorPublicKey: KeyObject;
   readonly primary: Pool;
   readonly authority: Pick<ReturnType<typeof createSuppressionLedger>, 'runtimeSnapshot'>;
-  readonly subjectKeys: SubjectKeys;
+  readonly subjectKeys?: SubjectKeys;
+  readonly retainedSubjectVersions?: readonly number[];
   readonly purpose?: RuntimeRecoveryDecision['purpose'];
 }) {
   const { decision: encoded, operatorPublicKey, primary, authority, subjectKeys } = deps;
@@ -83,11 +86,17 @@ export function createRuntimeRecoveryClearance(deps: {
   return {
     /** Resolve only when both live stores still match this independently signed decision. */
     async assertClearance(): Promise<void> { await verifiedDeadline(); },
-    verifiedDeadline
+    verifiedDeadline,
+    verifiedDecision
   };
 
   /** Return the signed deadline for local transaction checks without authority I/O under locks. */
   async function verifiedDeadline(): Promise<number> {
+    return (await verifiedDecision()).expiresAt;
+  }
+
+  /** Return the authenticated binding so downstream callers can compare exact saved scope references. */
+  async function verifiedDecision(): Promise<RuntimeRecoveryDecision> {
       try {
         if (process.env['NODE_ENV'] === 'production' || operatorPublicKey.type !== 'public' ||
           operatorPublicKey.asymmetricKeyType !== 'ed25519' || !primary.options.connectionTimeoutMillis ||
@@ -95,8 +104,10 @@ export function createRuntimeRecoveryClearance(deps: {
         const decision = readDecision(encoded, operatorPublicKey);
         if (decision.purpose !== (deps.purpose ?? 'founders-lens:local-workspace:read-only') ||
           !clockIsValid(decision)) throw new Error('Recovery decision unavailable for this operation');
-        const retained = subjectKeys.derive('recovery_probe', 'user_recovery_probe').map(key => key.version)
-          .sort((a, b) => a - b);
+        if (Boolean(subjectKeys) === Boolean(deps.retainedSubjectVersions)) throw new Error('Missing key policy');
+        const retained = versions.parse(subjectKeys
+          ? subjectKeys.derive('recovery_probe', 'user_recovery_probe').map(key => key.version).sort((a, b) => a - b)
+          : deps.retainedSubjectVersions);
         const sameVersions = (actual: readonly number[]) =>
           actual.length === decision.subjectVersions.length && actual.every((key, index) => key === decision.subjectVersions[index]);
         if (!sameVersions(retained) || await readPrimaryTarget(primary) !== decision.primaryTarget) {
@@ -106,7 +117,7 @@ export function createRuntimeRecoveryClearance(deps: {
         if (current.authorityIdentity !== decision.authorityIdentity || current.namespace !== decision.namespace ||
           current.epoch !== decision.epoch || current.inventoryDigest !== decision.inventoryDigest ||
           !sameVersions(current.subjectVersions) || !clockIsValid(decision)) throw new Error('Authority state changed');
-        return decision.expiresAt;
+        return decision;
       } catch {
         throw new SecurityError('DEPENDENCY_UNAVAILABLE');
       }

@@ -1,6 +1,8 @@
 // PostgreSQL worker adapter. Short fenced transactions own generation state,
 // response selection and settlement. Authority and fake execution stay outside.
 import type { Pool, PoolClient } from 'pg';
+import type { ProviderResult } from './founder-provider.js';
+import { observedUsage, recordObservation } from './provider-accounting.js';
 
 const claims = 2;
 export type Scope = {
@@ -41,27 +43,39 @@ async function knownUsage(tx: PoolClient, scope: Scope) {
   return row?.receipt?.measuredUnits === 1 ? row.receipt : undefined;
 }
 
-async function settle(tx: PoolClient, scope: Scope, usage: 'SETTLED' | 'RELEASED' | 'UNKNOWN') {
+async function settle(tx: PoolClient, scope: Scope, usage: 'SETTLED' | 'RELEASED' | 'UNKNOWN',
+  measured = 1, metered = false) {
   // A crash after the invocation marker can leave usage uncertain. Keep the
   // reservation open in that case, so quota is not accidentally restored.
   const { rows: [reservation] } = await tx.query<{ reservationState: string; reservedUnits: string; measuredUnits: string }>(
     `SELECT "reservationState","reservedUnits","measuredUnits" FROM "UsageLedger"
-      WHERE "accountId"=$1 AND "reservationId"=$2 FOR UPDATE`, [scope.accountId, scope.id]);
+      WHERE "accountId"=$1 AND "reservationId"=$2
+        AND (NOT $3::boolean OR ("operationType"='generation' AND unit='tokens')) FOR UPDATE`, [scope.accountId, scope.id, metered]);
   if (usage === 'SETTLED' && reservation?.reservationState === 'SETTLED' &&
-    Number(reservation.reservedUnits) === 1 && Number(reservation.measuredUnits) === 1) return;
+    (metered || Number(reservation.reservedUnits) === 1) && Number(reservation.measuredUnits) === measured) return;
   if (!reservation || reservation.reservationState !== 'RESERVED' ||
-    Number(reservation.reservedUnits) !== 1 || Number(reservation.measuredUnits) !== 0) {
+    (metered ? Number(reservation.reservedUnits) < 1 : Number(reservation.reservedUnits) !== 1) ||
+    Number(reservation.measuredUnits) !== 0) {
     throw new Error('Generation reservation unavailable');
   }
   if (usage === 'UNKNOWN') return;
   const result = await tx.query(`UPDATE "UsageLedger" SET "reservationState"=$3,"measuredUnits"=$4
     WHERE "accountId"=$1 AND "reservationId"=$2 AND "reservationState"='RESERVED'`,
-  [scope.accountId, scope.id, usage, usage === 'SETTLED' ? 1 : 0]);
+  [scope.accountId, scope.id, usage, usage === 'SETTLED' ? measured : 0]);
   if (result.rowCount !== 1) throw new Error('Generation settlement unavailable');
 }
 
-export function generationRepository(pool: Pool) {
-  async function locked<T>(scope: Scope, action: (tx: PoolClient, state: State) => Promise<T>) {
+/** Use single invocation for a run that cannot safely repeat an external side effect. */
+export function generationRepository(pool: Pool, { singleInvocation = false, bindClaimant = false, metered = false,
+  oneInvocationReservation }: { singleInvocation?: boolean; bindClaimant?: boolean; metered?: boolean;
+    oneInvocationReservation?: number } = {}) {
+  if (metered && (!singleInvocation || !bindClaimant)) throw new Error('Metering requires a single claimant invocation');
+  if (oneInvocationReservation !== undefined && (!metered || !Number.isSafeInteger(oneInvocationReservation) ||
+    oneInvocationReservation < 1)) throw new Error('Invalid single-invocation budget');
+  const usageFor = (tx: PoolClient, scope: Scope) => metered ? observedUsage(tx, scope.id) : knownUsage(tx, scope);
+  const measuredUnits = (receipt: Awaited<ReturnType<typeof usageFor>>) =>
+    receipt && 'totalTokens' in receipt ? receipt.totalTokens : 1;
+  async function locked<T>(scope: Scope, action: (tx: PoolClient, state: State) => Promise<T>, claiming = false) {
     const tx = await pool.connect();
     try {
       await tx.query('BEGIN');
@@ -72,7 +86,8 @@ export function generationRepository(pool: Pool) {
       const { rows: [state] } = await tx.query<State>(`SELECT status,"leaseEpoch","executionAttempts","contextEpoch",
         COALESCE("leaseUntil">clock_timestamp(),false) AS live, "dispatchAuthorizedAt" IS NOT NULL AS started,
         greatest(0, least(2147483647, floor(extract(epoch FROM "deadlineAt"-clock_timestamp())*1000)))::int AS "remainingMs"
-        FROM "GenerationAttempt" WHERE id=$1 FOR UPDATE`, [scope.id]);
+        FROM "GenerationAttempt" WHERE id=$1
+        ${bindClaimant && !claiming ? 'AND "leaseClaimant"=session_user::text' : ''} FOR UPDATE`, [scope.id]);
       const { rows: [current] } = await tx.query<Scope>(scopeSql, [scope.id]);
       const result = state && current && JSON.stringify(current) === JSON.stringify(scope)
         ? await action(tx, state) : undefined;
@@ -99,9 +114,10 @@ export function generationRepository(pool: Pool) {
     claim(scope: Scope, recover: boolean, clearanceExpiry: number) {
       return locked(scope, async (tx, state) => {
         if (!['PENDING', 'RUNNING', 'CANCEL_REQUESTED'].includes(state.status)) {
-          if (recover && ['FAILED', 'CANCELLED'].includes(state.status) &&
-            await clearanceCurrent(tx, clearanceExpiry) && await knownUsage(tx, scope)) {
-            await settle(tx, scope, 'SETTLED');
+          const receipt = recover && ['FAILED', 'CANCELLED'].includes(state.status)
+            ? await usageFor(tx, scope) : undefined;
+          if (receipt && await clearanceCurrent(tx, clearanceExpiry)) {
+            await settle(tx, scope, 'SETTLED', measuredUnits(receipt), metered);
             if (!await clearanceCurrent(tx, clearanceExpiry)) throw new Error('Generation clearance expired');
           }
           return;
@@ -109,16 +125,17 @@ export function generationRepository(pool: Pool) {
         if (state.live || (state.status !== 'PENDING' && !recover)) return;
         if (!await clearanceCurrent(tx, clearanceExpiry)) return;
         const cancelled = state.status === 'CANCEL_REQUESTED';
-        const receipt = state.started ? await knownUsage(tx, scope) : undefined;
+        const receipt = state.started ? await usageFor(tx, scope) : undefined;
         // A durable result proves usage even if its response was lost. A
         // recovery does not invoke again merely to reconstruct that response.
-        if (receipt || cancelled || !state.remainingMs || state.executionAttempts >= claims ||
+        if (receipt || (singleInvocation && state.started) || cancelled || !state.remainingMs || state.executionAttempts >= claims ||
           (state.status === 'RUNNING' && state.contextEpoch !== scope.contextEpoch)) {
-          await settle(tx, scope, receipt ? 'SETTLED' : state.started ? 'UNKNOWN' : 'RELEASED');
+          await settle(tx, scope, receipt ? 'SETTLED' : state.started ? 'UNKNOWN' : 'RELEASED', measuredUnits(receipt), metered);
           const result = await tx.query(`UPDATE "GenerationAttempt" SET status=$2::"GenerationStatus","completedAt"=clock_timestamp(),
             "leaseEpoch"="leaseEpoch"+1,"leaseUntil"=NULL,"errorCode"=$3 WHERE id=$1
             AND clock_timestamp()<to_timestamp($4::double precision/1000)`,
-          [scope.id, cancelled ? 'CANCELLED' : 'FAILED', cancelled ? null : 'GENERATION_EXHAUSTED', clearanceExpiry]);
+          [scope.id, cancelled ? 'CANCELLED' : 'FAILED', cancelled ? null :
+            singleInvocation && state.started && !receipt ? 'PROVIDER_OUTCOME_UNKNOWN' : 'GENERATION_EXHAUSTED', clearanceExpiry]);
           if (result.rowCount !== 1) throw new Error('Generation clearance expired');
           return;
         }
@@ -128,16 +145,25 @@ export function generationRepository(pool: Pool) {
           "leaseEpoch"="leaseEpoch"+1,"executionAttempts"="executionAttempts"+1,
           "leaseUntil"=least("deadlineAt",clock_timestamp()+interval '5 seconds'),
           "lastHeartbeatAt"=clock_timestamp(),"startedAt"=COALESCE("startedAt",clock_timestamp()),"contextEpoch"=$2
+          ${bindClaimant ? ',"leaseClaimant"=session_user::text' : ''}
           WHERE id=$1 AND "deadlineAt">clock_timestamp()
             AND clock_timestamp()<to_timestamp($4::double precision/1000)
           RETURNING "leaseEpoch" AS epoch,$3::int AS "remainingMs"`,
         [scope.id,scope.contextEpoch,state.remainingMs,clearanceExpiry])).rows[0];
-      });
+      }, true);
     },
-    recordUsage(scope: Scope, epoch: number) {
+    recordUsage(scope: Scope, epoch: number, observation?: ProviderResult) {
       return locked(scope, async (tx, state) => {
         if (!state.live || !state.remainingMs || state.leaseEpoch !== epoch ||
           state.contextEpoch !== scope.contextEpoch) return false;
+        if (metered) {
+          const claimant = await tx.query(`SELECT id FROM "GenerationAttempt"
+            WHERE id=$1 AND "leaseClaimant"=session_user::text AND "leaseEpoch"=$2
+              AND "dispatchAuthorizedAt" IS NOT NULL AND "leaseUntil">clock_timestamp()`, [scope.id, epoch]);
+          if (!claimant.rowCount || !observation?.usage || !await recordObservation(tx, scope.id, epoch, observation)) return false;
+          await settle(tx, scope, 'SETTLED', observation.usage.totalTokens, true);
+          return true;
+        }
         const { rows: [row] } = await tx.query<{ recorded: boolean }>(
           'SELECT t02_receipts.record_usage($1,$2) AS recorded', [scope.id, epoch]);
         return row?.recorded === true;
@@ -145,8 +171,22 @@ export function generationRepository(pool: Pool) {
     },
     markInvocation(scope: Scope, epoch: number, clearanceExpiry: number) {
       return locked(scope, async (tx, state) => {
-        if (state.status !== 'RUNNING' || !state.live || !state.remainingMs ||
+        if (state.status !== 'RUNNING' || !state.live || !state.remainingMs || (singleInvocation && state.started) ||
           state.leaseEpoch !== epoch || state.contextEpoch !== scope.contextEpoch) return false;
+        // The account lock serializes this check with every approved generation
+        // marker. Any prior marker consumes the cap even when no receipt exists.
+        if (oneInvocationReservation !== undefined) {
+          const { rows: [budget] } = await tx.query<{ permitted: boolean }>(`SELECT EXISTS (
+            SELECT 1 FROM public."UsageLedger" WHERE "reservationId"=$1 AND "accountId"=$2
+              AND unit='tokens' AND "operationType"='generation' AND "reservationState"='RESERVED'
+              AND "reservedUnits"=$3 AND "measuredUnits"=0
+          ) AND NOT EXISTS (
+            SELECT 1 FROM public."GenerationAttempt" g JOIN public."Conversation" c ON c.id=g."conversationId"
+            JOIN public."Idea" i ON i.id=c."ideaId"
+            WHERE i."ownerId"=$2 AND g."dispatchAuthorizedAt" IS NOT NULL
+          ) AS permitted`, [scope.id, scope.accountId, oneInvocationReservation]);
+          if (budget?.permitted !== true) return false;
+        }
         const result = await tx.query(`UPDATE "GenerationAttempt" SET "dispatchAuthorizedAt"=clock_timestamp()
           WHERE id=$1 AND "leaseUntil">clock_timestamp() AND "deadlineAt">clock_timestamp()
             AND clock_timestamp()<to_timestamp($2::double precision/1000)`, [scope.id,clearanceExpiry]);
@@ -168,12 +208,12 @@ export function generationRepository(pool: Pool) {
         if (state.leaseEpoch !== epoch || !state.live || state.contextEpoch !== scope.contextEpoch) return false;
         const cancelled = state.status === 'CANCEL_REQUESTED';
         if (!cancelled && (state.status !== 'RUNNING' || !state.remainingMs)) return false;
-        if (!cancelled && !completion && state.executionAttempts < claims) {
+        if (!cancelled && !completion && !singleInvocation && state.executionAttempts < claims) {
           // Leave the lease recoverable after a fake-only failure.
           return false;
         }
         if (!await clearanceCurrent(tx, clearanceExpiry)) return false;
-        const receipt = state.started ? await knownUsage(tx, scope) : undefined;
+        const receipt = state.started ? await usageFor(tx, scope) : undefined;
         if (!cancelled && completion) {
           if (receipt?.leaseEpoch !== epoch) return false;
           const { rows: [row] } = await tx.query<{ sequence: number }>(`UPDATE "Conversation"
@@ -186,14 +226,15 @@ export function generationRepository(pool: Pool) {
           await tx.query(`UPDATE "GenerationAttempt" SET "selectedAt"=NULL
             WHERE "triggerMessageId"=$1 AND "conversationId"=$2 AND "selectedAt" IS NOT NULL`, [scope.triggerMessageId,scope.conversationId]);
         }
-        await settle(tx, scope, receipt ? 'SETTLED' : state.started ? 'UNKNOWN' : 'RELEASED');
+        await settle(tx, scope, receipt ? 'SETTLED' : state.started ? 'UNKNOWN' : 'RELEASED', measuredUnits(receipt), metered);
         const status = cancelled ? 'CANCELLED' : completion ? 'COMPLETED' : 'FAILED';
         const result = await tx.query(`UPDATE "GenerationAttempt" SET status=$2::"GenerationStatus","completedAt"=clock_timestamp(),
           "selectedAt"=CASE WHEN $2::"GenerationStatus"='COMPLETED' THEN clock_timestamp() END,
           "leaseUntil"=NULL,"errorCode"=$3 WHERE id=$1 AND "leaseUntil">clock_timestamp()
             AND ($2::"GenerationStatus"='CANCELLED' OR "deadlineAt">clock_timestamp())
             AND clock_timestamp()<to_timestamp($4::double precision/1000)`,
-        [scope.id,status,status==='FAILED'?'FAKE_EXECUTION_FAILED':null,clearanceExpiry]);
+        [scope.id,status,status==='FAILED' ? singleInvocation && state.started && !receipt
+          ? 'PROVIDER_OUTCOME_UNKNOWN' : 'FAKE_EXECUTION_FAILED' : null,clearanceExpiry]);
         if (result.rowCount !== 1) throw new Error('Generation fence expired');
         return true;
       });

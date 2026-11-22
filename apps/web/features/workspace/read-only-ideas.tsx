@@ -68,9 +68,21 @@ function LocalConversationSession({ account, getToken, children }: {
   const tokenSource = useRef(getToken);
   useEffect(() => { tokenSource.current = getToken; }, [getToken]);
   const adapters = useMemo(() => createLocalConversationApi(() => tokenSource.current()), []);
+  const conversationId = /\/conversations\/([a-f0-9-]+)$/.exec(usePathname())?.[1];
+  const [generationConversation, setGenerationConversation] = useState<string>();
+  useEffect(() => {
+    if (!conversationId) return;
+    const controller = new AbortController();
+    void adapters.generationEnabled(conversationId, controller.signal).then(enabled => {
+      if (!controller.signal.aborted) setGenerationConversation(enabled ? conversationId : undefined);
+    }).catch(() => { if (!controller.signal.aborted) setGenerationConversation(undefined); });
+    return () => controller.abort();
+  }, [adapters, conversationId]);
   const session = useMemo<SessionSource>(() => ({ getSnapshot: () => ({ localAccountId: account }), subscribe: () => () => {},
     async revalidate() { if (!await tokenSource.current()) throw new Error('Session unavailable'); } }), [account]);
-  return <WorkspaceProvider session={session} api={adapters.api} savedMessages={adapters.savedMessages}>{children}</WorkspaceProvider>;
+  return <WorkspaceProvider session={session} api={adapters.api} savedMessages={adapters.savedMessages}
+    {...(conversationId && generationConversation === conversationId &&
+      { messageApi: adapters.messageApi, recoveryTtl: 300_000 })}>{children}</WorkspaceProvider>;
 }
 
 function IdeasForSession({ account, getToken }: { account: string; getToken: () => Promise<string | null> }) {

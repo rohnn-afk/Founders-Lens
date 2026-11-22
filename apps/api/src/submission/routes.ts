@@ -1,6 +1,6 @@
 // Isolated HTTP adapter for submission. The caller injects verified identity
 // and a service; this factory is never mounted by the application shell.
-import { json, Router, type Request, type Response } from 'express';
+import { json, Router, type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { bearerToken } from '../security/bearer.js';
 import { SecurityError, securityFailure } from '../security/errors.js';
@@ -31,11 +31,14 @@ function readBody(request: Request, response: Response): Promise<void> {
   }));
 }
 
-export function submissionRoutes(service: SubmissionService, authenticate: (request: Request) => Promise<Principal | null>) {
+export function submissionRoutes(service: SubmissionService, authenticate: (request: Request) => Promise<Principal | null>,
+  { submitOnly = false, readDeadline, readConversation }: { submitOnly?: boolean; readDeadline?: () => Promise<number>;
+    readConversation?: string } = {}) {
   const router = Router();
   router.use(attachRequestContext);
   const read = (action: (request: Request, principal: Principal) => Promise<unknown>) =>
-    async (request: Request, response: Response) => {
+    async (request: Request, response: Response, next: NextFunction) => {
+      if (readConversation && request.params['conversationId'] !== readConversation) return next('router');
       response.set('Cache-Control', 'no-store');
       const { requestId } = requestContext(response);
       try {
@@ -45,7 +48,9 @@ export function submissionRoutes(service: SubmissionService, authenticate: (requ
         if (request.get('transfer-encoding') || Number(request.get('content-length') ?? 0) > 0) {
           throw new SubmissionError('VALIDATION_ERROR');
         }
+        const deadline = await readDeadline?.();
         const dto = await action(request, principal);
+        if (deadline !== undefined && Date.now() >= deadline) throw new SecurityError('DEPENDENCY_UNAVAILABLE');
         response.status(200).type('application/json').end(JSON.stringify(dto));
       } catch (error) {
         const mapped = error instanceof SecurityError && error.code === 'RESOURCE_NOT_FOUND'
@@ -54,7 +59,7 @@ export function submissionRoutes(service: SubmissionService, authenticate: (requ
         response.status(failure.status).json(failure.body);
       }
     };
-  router.get('/conversations/:conversationId/submissions/:clientSubmissionId', read(async (request, principal) => {
+  if (!submitOnly) router.get('/conversations/:conversationId/submissions/:clientSubmissionId', read(async (request, principal) => {
     if (Object.keys(request.query).length) throw new SubmissionError('VALIDATION_ERROR');
     const conversationId = validate(uuid, request.params['conversationId']);
     const clientSubmissionId = validate(uuid, request.params['clientSubmissionId']);
@@ -62,7 +67,7 @@ export function submissionRoutes(service: SubmissionService, authenticate: (requ
     const { statusUrl, eventsUrl } = acceptance({ messageId, generationId });
     return { clientSubmissionId, messageId, generationId, statusUrl, eventsUrl };
   }));
-  router.get('/conversations/:conversationId/messages', read((request, principal) =>
+  if (!submitOnly) router.get('/conversations/:conversationId/messages', read((request, principal) =>
     service.history(principal, validate(uuid, request.params['conversationId']), validate(transcriptQuery, request.query))));
   router.post('/conversations/:conversationId/messages', async (request, response) => {
     response.set('Cache-Control', 'no-store');
