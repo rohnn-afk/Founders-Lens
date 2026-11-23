@@ -91,9 +91,36 @@ function validGeminiKey(value: string): boolean {
     !/^(?:placeholder|replace[_-]?me|your[_-]?(?:gemini[_-]?)?api[_-]?key)(?:[_-]|$)/i.test(payload);
 }
 
+type GeminiRejection = 'INVALID_ARGUMENT' | 'FAILED_PRECONDITION' | 'INVALID_API_KEY' | 'NOT_FOUND' | 'RESOURCE_EXHAUSTED';
+type GeminiDiagnostic = 'GEMINI_REQUEST_REJECTED_400' | `GEMINI_REQUEST_REJECTED_${GeminiRejection}`;
+
+/** SDK 3.6.1 places the REST JSON envelope in ApiError.message. Inspect only structured enum fields. */
+function geminiRejection(error: ApiError): GeminiRejection | undefined {
+  if (![400, 401, 403, 404, 429].includes(error.status) || error.message.length > 16_384) return;
+  let envelope: unknown;
+  try { envelope = JSON.parse(error.message); }
+  catch { return; }
+  if (typeof envelope !== 'object' || !envelope || !('error' in envelope)) return;
+  const details = envelope.error;
+  if (typeof details !== 'object' || !details || !('code' in details) || details.code !== error.status ||
+    !('status' in details)) return;
+  if (((error.status === 400 && details.status === 'INVALID_ARGUMENT') ||
+    (error.status === 401 && details.status === 'UNAUTHENTICATED') ||
+    (error.status === 403 && details.status === 'PERMISSION_DENIED')) &&
+    'details' in details && Array.isArray(details.details) && details.details.some((entry: unknown) =>
+      typeof entry === 'object' && entry !== null && '@type' in entry &&
+      entry['@type'] === 'type.googleapis.com/google.rpc.ErrorInfo' &&
+      'domain' in entry && entry.domain === 'googleapis.com' &&
+      'reason' in entry && entry.reason === 'API_KEY_INVALID')) return 'INVALID_API_KEY';
+  if (error.status === 400 && details.status === 'INVALID_ARGUMENT') return 'INVALID_ARGUMENT';
+  if (error.status === 400 && details.status === 'FAILED_PRECONDITION') return 'FAILED_PRECONDITION';
+  if (error.status === 404 && details.status === 'NOT_FOUND') return 'NOT_FOUND';
+  if (error.status === 429 && details.status === 'RESOURCE_EXHAUSTED') return 'RESOURCE_EXHAUSTED';
+}
+
 /** Construct the worker-only SDK. Report only fixed diagnostics, never the SDK error or request. */
 export function geminiFounderProvider(env: NodeJS.ProcessEnv, transport?: typeof fetch,
-  report: (event: 'GEMINI_REQUEST_REJECTED_400') => void = () => {}): FounderProvider {
+  report: (event: GeminiDiagnostic) => void = () => {}): FounderProvider {
   const apiKey = env['P9_GEMINI_API_KEY'];
   const model = env['P9_GEMINI_MODEL'];
   if (!apiKey || !validGeminiKey(apiKey) || model !== 'gemini-3.1-flash-lite') {
@@ -136,10 +163,14 @@ export function geminiFounderProvider(env: NodeJS.ProcessEnv, transport?: typeof
           && usage && usage.inputTokens <= inputBytes && usage.outputTokens <= outputTokens ? text : null, usage, responseId };
       } catch (error) {
         // SDK error objects can contain request or response data. Do not retain the cause.
-        if (error instanceof ApiError && error.status === 400) {
-          // HTTP rejection identifies the failure category, but is not a usage receipt.
-          report('GEMINI_REQUEST_REJECTED_400');
-          throw new Error('Gemini rejected the generation request (HTTP 400)');
+        if (error instanceof ApiError) {
+          const category = geminiRejection(error);
+          // A rejection diagnostic supplies no metering evidence. Preserve conservative accounting.
+          if (category) report(`GEMINI_REQUEST_REJECTED_${category}`);
+          if (error.status === 400) {
+            if (!category) report('GEMINI_REQUEST_REJECTED_400');
+            throw new Error('Gemini rejected the generation request (HTTP 400)');
+          }
         }
         throw new Error('Gemini invocation outcome is unavailable');
       }

@@ -125,24 +125,36 @@ test('ambiguous Gemini HTTP failure is sanitized and not retried', async t => {
   assert.throws(() => geminiFounderProvider({}), /configuration is unavailable/);
 });
 
-test('Gemini HTTP 400 emits a fixed rejection event without reporting metering or provider data', async t => {
+test('Gemini emits only allowlisted rejection events supported by structured HTTP errors', async t => {
   t.mock.method(globalThis, 'fetch', async () => { throw new Error('Ambient network disabled'); });
-  for (const status of ['INVALID_ARGUMENT', 'FAILED_PRECONDITION']) {
+  const invalidKey = { '@type': 'type.googleapis.com/google.rpc.ErrorInfo',
+    domain: 'googleapis.com', reason: 'API_KEY_INVALID' };
+  for (const [httpStatus, status, category, details = [], code = httpStatus] of [
+    [400, 'INVALID_ARGUMENT', 'INVALID_ARGUMENT'],
+    [400, 'FAILED_PRECONDITION', 'FAILED_PRECONDITION'],
+    [400, 'INVALID_ARGUMENT', 'INVALID_API_KEY', [invalidKey]],
+    [404, 'NOT_FOUND', 'NOT_FOUND'],
+    [429, 'RESOURCE_EXHAUSTED', 'RESOURCE_EXHAUSTED'],
+    [400, 'FAILED_PRECONDITION', '400', [], 429],
+    [403, 'PERMISSION_DENIED', null, [{ ...invalidKey, domain: 'fixture.invalid' }]],
+    [503, 'UNAVAILABLE', null],
+  ]) {
     let calls = 0;
     const events = [];
     const provider = geminiFounderProvider(env, async () => {
       calls++;
-      return Response.json({ error: { code: 400, status,
-        message: 'Synthetic private prompt ' + standardKey, details: [{ responseId: 'fixture.response' }] } },
-      { status: 400 });
+      return Response.json({ error: { code, status,
+        message: 'API_KEY_INVALID Synthetic private prompt ' + standardKey,
+        details: [...details, { responseId: 'fixture.response' }] } }, { status: httpStatus });
     }, event => events.push(event));
     await assert.rejects(provider.generate(input('Synthetic founder turn'), new AbortController().signal), error => {
-      assert.equal(error.message, 'Gemini rejected the generation request (HTTP 400)');
+      assert.equal(error.message, httpStatus === 400 ? 'Gemini rejected the generation request (HTTP 400)'
+        : 'Gemini invocation outcome is unavailable');
       assert.equal(error.cause, undefined);
       return true;
     });
     assert.equal(calls, 1);
-    assert.deepEqual(events, ['GEMINI_REQUEST_REJECTED_400']);
+    assert.deepEqual(events, category ? [`GEMINI_REQUEST_REJECTED_${category}`] : []);
   }
 });
 
