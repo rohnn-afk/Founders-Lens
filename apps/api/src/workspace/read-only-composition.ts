@@ -77,6 +77,10 @@ export function workspaceIdeasCors(allowCreate: boolean, conversations?: { creat
 /** Open the fixed P6 read endpoints and validate signed clearance before mounting. */
 export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
   if (env['FL_P6_READ_ONLY'] !== '1' || env['NODE_ENV'] === 'production') return;
+  const isolated = env['FL_P9_ISOLATED'] === '1';
+  const primaryPort = isolated ? 55435 : 55437;
+  const authorityPort = isolated ? 55438 : 55436;
+  const primaryDatabase = isolated ? 'founders_lens_p9_local' : 'founders_lens_p6_local';
   const required = (name: string) => {
     const value = env[name];
     if (!value) throw new Error('Local workspace configuration unavailable');
@@ -97,8 +101,8 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
     connectionTimeoutMillis: 1500, statement_timeout: 4000, query_timeout: 4500
   });
   const readerPassword = required('FL_SUPPRESSION_READER_PASSWORD');
-  const primary = pool(55437, 'founders_lens_p6_local', 'fl_p6_workspace', required('FL_P6_WORKSPACE_PASSWORD'));
-  const authorityPool = pool(55436, 'suppression_proof', 'ledger_reader', readerPassword);
+  const primary = pool(primaryPort, primaryDatabase, 'fl_p6_workspace', required('FL_P6_WORKSPACE_PASSWORD'));
+  const authorityPool = pool(authorityPort, 'suppression_proof', 'ledger_reader', readerPassword);
   primary.on('error', () => {});
   authorityPool.on('error', () => {});
   const prisma = new PrismaClient({ adapter: new PrismaPg(primary), log: [], errorFormat: 'minimal' });
@@ -136,7 +140,7 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
     if (env['FL_P7_CREATE_IDEA'] === '1') {
       try {
         const decision = required('FL_P7_CREATE_IDEA_DECISION');
-        writePool = pool(55437, 'founders_lens_p6_local', 'fl_p7_idea_create', required('FL_P7_IDEA_CREATE_PASSWORD'));
+        writePool = pool(primaryPort, primaryDatabase, 'fl_p7_idea_create', required('FL_P7_IDEA_CREATE_PASSWORD'));
         writePool.on('error', () => {});
         const writeClearance = createRuntimeRecoveryClearance({ decision, operatorPublicKey,
           primary: writePool, authority, subjectKeys, purpose: 'founders-lens:local-workspace:create-idea' });
@@ -152,7 +156,7 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
     let conversations: LocalConversationOperations | undefined;
     if (env['FL_P8_CONVERSATIONS'] === '1') {
       try {
-        const target = pool(55437, 'founders_lens_p6_local', 'fl_p8_conversations', required('FL_P8_CONVERSATIONS_PASSWORD'));
+        const target = pool(primaryPort, primaryDatabase, 'fl_p8_conversations', required('FL_P8_CONVERSATIONS_PASSWORD'));
         conversationPool = target;
         target.on('error', () => {});
         const permission = async (name: string, purpose: RuntimeRecoveryDecision['purpose']) => {
@@ -178,15 +182,16 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
     let generationConversation: string | undefined;
     if (env['FL_P9_SUBMIT'] === '1') {
       try {
-        const target = pool(55437, 'founders_lens_p6_local', 'fl_p9_submit', required('FL_P9_SUBMIT_PASSWORD'));
+        const target = pool(primaryPort, primaryDatabase, 'fl_p9_submit', required('FL_P9_SUBMIT_PASSWORD'));
         submissionPool = target;
         target.on('error', () => {});
         const admission = createRuntimeRecoveryClearance({ decision: required('FL_P9_SUBMIT_DECISION'),
           operatorPublicKey, primary: target, authority, subjectKeys, purpose: 'founders-lens:local-generation:submit' });
-        await admission.assertClearance();
+        const submitDecision = await admission.verifiedDecision();
         const status = createRuntimeRecoveryClearance({ decision: required('FL_P9_STATUS_DECISION'),
           operatorPublicKey, primary: target, authority, subjectKeys, purpose: 'founders-lens:local-generation:status' });
-        await status.assertClearance();
+        const statusDecision = await status.verifiedDecision();
+        if (submitDecision.recoveryRun !== statusDecision.recoveryRun) throw new Error('Generation decisions differ');
         const approvedConversation = required('FL_P9_SYNTHETIC_CONVERSATION');
         const { policy, allows } = localGenerationPolicy({
           model: required('P9_GEMINI_MODEL'), priceVersion: required('FL_P9_PRICE_VERSION'),

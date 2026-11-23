@@ -57,7 +57,7 @@
 
 .shell a { color: var(--workspace-link); }
 
-.shell :is(a, button, input, select):focus-visible, .main:focus-visible {
+.shell :is(a, button, input, select, textarea):focus-visible, .main:focus-visible {
   outline: 3px solid var(--workspace-focus);
   outline-offset: 3px;
 }

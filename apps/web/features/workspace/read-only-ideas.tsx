@@ -1,15 +1,23 @@
 'use client';
 
-import { useAuth } from '@clerk/nextjs';
+import { SignOutButton, useAuth } from '@clerk/nextjs';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Idea, IdeaCreate, Page, Reply, SessionSource } from './contracts';
 import { createIdeaCommandController } from './create-controller';
 import { createLocalConversationApi } from './local-conversation-api';
+import { createRecoveryStorage } from './submission-recovery-storage';
 import { WorkspaceProvider } from './workspace-provider';
 
 const endpoint = 'http://127.0.0.1:3001/api/v1/ideas';
+
+/** Clear opaque recovery references before Clerk redirects away from the shell. */
+export function WorkspaceSignOut() {
+  return <span onClickCapture={() => createRecoveryStorage(() => window.sessionStorage, 300_000).clear()}>
+    <SignOutButton redirectUrl="/sign-in"><button type="button">Sign out</button></SignOutButton>
+  </span>;
+}
 type View = { kind: 'loading' | 'unavailable' } | { kind: 'ready'; ideas: Idea[]; cursor: string | null; conversations: boolean };
 
 /** Decode the list projection before rendering any private values. */
@@ -57,13 +65,13 @@ export function LocalWorkspace({ children }: { children: ReactNode }) {
   const { isLoaded, userId, sessionId, getToken } = useAuth();
   if (pathname === '/app') return <ReadOnlyIdeas />;
   if (!isLoaded || !userId || !sessionId) return <p role="status">Workspace data is unavailable.</p>;
-  return <LocalConversationSession key={JSON.stringify([userId, sessionId])} account={userId} getToken={getToken}>
+  return <LocalConversationSession key={JSON.stringify([userId, sessionId])} account={userId} sessionId={sessionId} getToken={getToken}>
     {children}
   </LocalConversationSession>;
 }
 
-function LocalConversationSession({ account, getToken, children }: {
-  account: string; getToken: () => Promise<string | null>; children: ReactNode;
+function LocalConversationSession({ account, sessionId, getToken, children }: {
+  account: string; sessionId: string; getToken: () => Promise<string | null>; children: ReactNode;
 }) {
   const tokenSource = useRef(getToken);
   useEffect(() => { tokenSource.current = getToken; }, [getToken]);
@@ -80,7 +88,7 @@ function LocalConversationSession({ account, getToken, children }: {
   }, [adapters, conversationId]);
   const session = useMemo<SessionSource>(() => ({ getSnapshot: () => ({ localAccountId: account }), subscribe: () => () => {},
     async revalidate() { if (!await tokenSource.current()) throw new Error('Session unavailable'); } }), [account]);
-  return <WorkspaceProvider session={session} api={adapters.api} savedMessages={adapters.savedMessages}
+  return <WorkspaceProvider session={session} api={adapters.api} savedMessages={adapters.savedMessages} recoverySessionId={sessionId}
     {...(conversationId && generationConversation === conversationId &&
       { messageApi: adapters.messageApi, recoveryTtl: 300_000 })}>{children}</WorkspaceProvider>;
 }

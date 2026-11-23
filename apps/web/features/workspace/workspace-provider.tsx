@@ -83,9 +83,9 @@ type Workspace = {
 };
 const WorkspaceContext = createContext<Workspace | null>(null);
 
-export function WorkspaceProvider({ children, api, session, messageApi, recoveryTtl, savedMessages }: {
+export function WorkspaceProvider({ children, api, session, messageApi, recoveryTtl, savedMessages, recoverySessionId }: {
   children: ReactNode; api?: WorkspaceApi; session?: SessionSource;
-  messageApi?: MessageApi; recoveryTtl?: number; savedMessages?: SavedMessageApi;
+  messageApi?: MessageApi; recoveryTtl?: number; savedMessages?: SavedMessageApi; recoverySessionId?: string;
 }) {
   const pathname = usePathname();
   const reads = useMemo(createReadController, []);
@@ -93,7 +93,8 @@ export function WorkspaceProvider({ children, api, session, messageApi, recovery
   // Normal composition supplies neither, so it cannot fetch protected data.
   const commands = useMemo(() => api ? createCommandController(api, reads.isCurrent) : null, [api, reads]);
   const recovery = useMemo(() => messageApi && recoveryTtl
-    ? createRecoveryStorage(() => window.sessionStorage, recoveryTtl) : undefined, [messageApi, recoveryTtl]);
+    ? createRecoveryStorage(() => window.sessionStorage, recoveryTtl, Date.now, recoverySessionId) : undefined,
+  [messageApi, recoveryTtl, recoverySessionId]);
   const [view, setView] = useState<{ pathname: string; scope: Scope | null } | null>(null);
   const [sessionRevision, setSessionRevision] = useState(0);
 

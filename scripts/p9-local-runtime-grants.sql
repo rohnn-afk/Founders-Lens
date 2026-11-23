@@ -4,7 +4,7 @@
 BEGIN;
 DO $verify$
 BEGIN
-  IF current_database() NOT IN ('founders_lens_p6_local','founders_lens_m05_e2e_test') THEN
+  IF current_database() NOT IN ('founders_lens_p6_local','founders_lens_m05_e2e_test','founders_lens_p9_local') THEN
     RAISE EXCEPTION 'Unexpected local generation target';
   END IF;
 END

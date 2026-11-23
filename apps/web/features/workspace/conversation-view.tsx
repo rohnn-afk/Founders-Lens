@@ -144,10 +144,13 @@ function MessagePanel({ api, recovery, ideaId, conversationId, archived }: {
     const next = createGenerationController(api.generation, scope, conversationId, reads.isCurrent, value => {
       setGeneration(value);
       if (value.observation === 'blocked') setDraft('');
+      if (value.observation === 'blocked' || (value.value && isTerminal(value.value.status))) controller.clearPendingAttempt();
     }, reloadHistory, invalidateSession);
     observer.current = next;
+    const pending = controller.pendingAttempt();
+    if (pending) next.observe(pending);
     return () => { observer.current = null; next.stop(); };
-  }, [api.generation, conversationId, invalidateSession, reads, reloadHistory, scope]);
+  }, [api.generation, controller, conversationId, invalidateSession, reads, reloadHistory, scope]);
   const load = useCallback((workspace: ReturnType<typeof useWorkspace>) => {
     void revision;
     return workspace.reads.read(workspace.scope, ['messages', ideaId, conversationId, cursor], async signal => {
@@ -163,9 +166,10 @@ function MessagePanel({ api, recovery, ideaId, conversationId, archived }: {
   useEffect(() => {
     if (!historyUnavailable) return;
     observer.current?.stop();
+    controller.clearPendingAttempt();
     setGeneration({ observation: 'idle' });
     setDraft('');
-  }, [historyUnavailable]);
+  }, [historyUnavailable, controller]);
 
   async function act(action: 'send' | 'check') {
     const work = action === 'send' ? controller.send(draft) : controller.check();
@@ -212,6 +216,7 @@ function MessagePanel({ api, recovery, ideaId, conversationId, archived }: {
       {state === 'checking' && 'Checking whether it was saved…'}
       {state === 'history-only' && 'Acceptance cannot be confirmed from this tab. Review saved messages.'}
       {state === 'rejected' && 'The message was rejected.'}
+      {state === 'quota' && 'Generation capacity is unavailable. Your draft is still here.'}
     </div>
     {api.generation && <div className={styles['generationActions']}>
       <div role="status">

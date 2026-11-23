@@ -72,6 +72,26 @@ restarts the same runtime and namespace.
 
 ## Gemini mode after separate authorization
 
+Set `FL_P9_ISOLATED=1` in both API and worker environments. This separately
+approved profile pins the primary to `127.0.0.1:55435/founders_lens_p9_local`
+and its independent authority to `127.0.0.1:55438/suppression_proof`. It
+requires its own authenticated genesis in the ignored files
+`.env.p9-primary.runtime.local` and `.env.p9-primary.operator.local`.
+Keep the existing P6–P8 target separate.
+
+On that approved target, set `P6_OPERATOR_CONFIRM=approve-p9-isolated-runtime`
+and the existing `P6_OPERATOR_PRIVATE_KEY_FILE` and
+`P6_OPERATOR_PUBLIC_KEY_FILE` variables to operator-owned key paths. Then run:
+
+```powershell
+node --test-name-pattern '^P9 operator signs isolated runtime permissions$' tests/clerk-session-browser.test.mjs --p9-sign-isolated
+```
+
+This verifies exact genesis, retained keys and authority inventory, then
+creates `.env.p9.decisions.local` with four five-minute permissions sharing
+one recovery run. It refuses to overwrite an existing file. Load only the
+relevant decisions into each process, and keep the private key outside both.
+
 Use a fresh dedicated synthetic account and conversation on an approved
 local target with the same verified controls above. Keep the API configuration
 separate. Only the worker's ignored env file should contain `P9_GEMINI_API_KEY`.

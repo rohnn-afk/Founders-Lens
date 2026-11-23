@@ -1,11 +1,10 @@
 // Workspace route boundary. A verified Clerk session can reach the shell.
 // The existing workspace provider receives no private data or API adapters.
-import { SignOutButton } from '@clerk/nextjs';
 import { auth } from '@clerk/nextjs/server';
 import { redirect } from 'next/navigation';
 import { Suspense, type ReactNode } from 'react';
 import { WorkspaceProvider } from '../../features/workspace/workspace-provider';
-import { LocalWorkspace } from '../../features/workspace/read-only-ideas';
+import { LocalWorkspace, WorkspaceSignOut } from '../../features/workspace/read-only-ideas';
 
 async function SignedInShell({ children }: { children: ReactNode }) {
   let signedIn: boolean;
@@ -24,7 +23,7 @@ async function SignedInShell({ children }: { children: ReactNode }) {
       <h1>Workspace</h1>
       <p>You are signed in.</p>
       <LocalWorkspace>{children}</LocalWorkspace>
-      <SignOutButton redirectUrl="/sign-in"><button type="button">Sign out</button></SignOutButton>
+      <WorkspaceSignOut />
     </div>
   );
 }

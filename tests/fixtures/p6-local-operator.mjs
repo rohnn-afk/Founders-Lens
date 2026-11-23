@@ -144,9 +144,10 @@ async function prepareWorkspaceRole(context, role, grantFile, environmentFile, p
   }
 }
 
-export async function p6Operator(t) {
-  const local = parseEnv(await readFile('.env.p6.runtime.local', 'utf8'));
-  const operator = parseEnv(await readFile('.env.p6.operator.local', 'utf8'));
+export async function p6Operator(t, { isolated = false } = {}) {
+  const envPrefix = isolated ? '.env.p9-primary.' : '.env.p6.';
+  const local = parseEnv(await readFile(envPrefix + 'runtime.local', 'utf8'));
+  const operator = parseEnv(await readFile(envPrefix + 'operator.local', 'utf8'));
   const { record, integrity } = JSON.parse(Buffer.from(local.FL_P6_GENESIS, 'base64url').toString('utf8'));
   assert.ok(integrity === createHmac('sha256', Buffer.from(operator.FL_P6_GENESIS_KEY, 'hex'))
     .update(JSON.stringify(['p6-fresh-genesis-v1', record])).digest('hex'), 'Genesis could not be authenticated');
@@ -160,9 +161,11 @@ export async function p6Operator(t) {
     t.after(() => result.end());
     return result;
   };
-  const primary = pool(55437, 'founders_lens_p6_local', 'postgres', operator.FL_P6_PRIMARY_ADMIN_PASSWORD);
-  const authority = pool(55436, 'suppression_proof', 'postgres', operator.FL_SUPPRESSION_ADMIN_PASSWORD, 2);
-  const reader = pool(55436, 'suppression_proof', 'ledger_reader', local.FL_SUPPRESSION_READER_PASSWORD);
+  const primaryPort = isolated ? 55435 : 55437, authorityPort = isolated ? 55438 : 55436;
+  const primaryDatabase = isolated ? 'founders_lens_p9_local' : 'founders_lens_p6_local';
+  const primary = pool(primaryPort, primaryDatabase, 'postgres', operator.FL_P6_PRIMARY_ADMIN_PASSWORD);
+  const authority = pool(authorityPort, 'suppression_proof', 'postgres', operator.FL_SUPPRESSION_ADMIN_PASSWORD, 2);
+  const reader = pool(authorityPort, 'suppression_proof', 'ledger_reader', local.FL_SUPPRESSION_READER_PASSWORD);
   const subjectKeys = new SubjectKeys(1, new Map([[1, Buffer.from(local.FL_P6_SUBJECT_KEY_V1, 'hex')]]));
   assert.ok(local.FL_P6_SUBJECT_KEY_V1 === operator.FL_P6_SUBJECT_KEY_V1, 'Retained key mismatch');
   const ledger = createSuppressionLedger(reader, { epoch: record.epoch, challengeNamespace: record.namespace,
@@ -181,8 +184,8 @@ export async function p6Operator(t) {
     return { primaryTarget, snapshot };
   }
   await verify();
-  return { primary, authority, ledger, subjectKeys, verify,
-    provision: password => pool(55437, 'founders_lens_p6_local', 'fl_p6_provision', password) };
+  return { primary, authority, ledger, subjectKeys, verify, isolated,
+    provision: password => pool(primaryPort, primaryDatabase, 'fl_p6_provision', password) };
 }
 
 /** Issue a five-minute decision only after the operator explicitly invokes signing. */
@@ -205,6 +208,22 @@ export async function signP8Clearances(context, privateKeyPath, publicKeyPath, c
 }
 
 async function signWorkspaceDecision(context, privateKeyPath, publicKeyPath, purpose) {
+  const { pinned, envelopes } = await signDecisions(context, privateKeyPath, publicKeyPath,
+    ['founders-lens:local-workspace:' + purpose]);
+  return { pinned, envelope: envelopes[0] };
+}
+
+/** Bind all four generation permissions to the same verified inventory and recovery run. */
+export async function signP9Clearances(context, privateKeyPath, publicKeyPath, confirmation) {
+  assert.ok(context.isolated && confirmation === 'approve-p9-isolated-runtime', 'Isolated P9 approval required');
+  const purposes = ['submit', 'status', 'dispatch', 'execute'];
+  const { pinned, envelopes } = await signDecisions(context, privateKeyPath, publicKeyPath,
+    purposes.map(purpose => 'founders-lens:local-generation:' + purpose));
+  return { FL_P6_OPERATOR_PUBLIC_KEY: pinned.toString('base64'),
+    ...Object.fromEntries(purposes.map((purpose, index) => ['FL_P9_' + purpose.toUpperCase() + '_DECISION', envelopes[index]])) };
+}
+
+async function signDecisions(context, privateKeyPath, publicKeyPath, purposes) {
   const privateKey = createPrivateKey(await readFile(privateKeyPath));
   const publicKey = createPublicKey(await readFile(publicKeyPath));
   const pinned = publicKey.export({ type: 'spki', format: 'der' });
@@ -212,10 +231,13 @@ async function signWorkspaceDecision(context, privateKeyPath, publicKeyPath, pur
     .export({ type: 'spki', format: 'der' })), 'Operator key does not match the pinned public key');
   const { primaryTarget, snapshot } = await context.verify();
   const issuedAt = Date.now();
-  const bytes = Buffer.from(JSON.stringify({ version: 1, purpose: 'founders-lens:local-workspace:' + purpose,
-    primaryTarget, authorityIdentity: snapshot.authorityIdentity, namespace: snapshot.namespace, epoch: snapshot.epoch,
-    recoveryRun: randomUUID(), inventoryDigest: snapshot.inventoryDigest, subjectVersions: snapshot.subjectVersions,
-    issuedAt, expiresAt: issuedAt + 300_000 }));
-  const envelope = JSON.stringify({ payload: bytes.toString('base64url'), signature: sign(null, bytes, privateKey).toString('base64url') });
-  return { pinned, envelope };
+  const recoveryRun = randomUUID();
+  const envelopes = purposes.map(purpose => {
+    const bytes = Buffer.from(JSON.stringify({ version: 1, purpose,
+      primaryTarget, authorityIdentity: snapshot.authorityIdentity, namespace: snapshot.namespace, epoch: snapshot.epoch,
+      recoveryRun, inventoryDigest: snapshot.inventoryDigest, subjectVersions: snapshot.subjectVersions,
+      issuedAt, expiresAt: issuedAt + 300_000 }));
+    return JSON.stringify({ payload: bytes.toString('base64url'), signature: sign(null, bytes, privateKey).toString('base64url') });
+  });
+  return { pinned, envelopes };
 }

@@ -12,7 +12,7 @@ export type Scope = {
 export type Lease = { epoch: number; remainingMs: number };
 type State = {
   status: string; leaseEpoch: number; live: boolean; remainingMs: number;
-  executionAttempts: number; contextEpoch: number | null; started: boolean;
+  executionAttempts: number; contextEpoch: number | null; started: boolean; expired: boolean;
 };
 
 async function clearanceCurrent(tx: PoolClient, expiry: number) {
@@ -85,6 +85,7 @@ export function generationRepository(pool: Pool, { singleInvocation = false, bin
       await tx.query('SELECT id FROM "Conversation" WHERE id=$1 FOR UPDATE', [scope.conversationId]);
       const { rows: [state] } = await tx.query<State>(`SELECT status,"leaseEpoch","executionAttempts","contextEpoch",
         COALESCE("leaseUntil">clock_timestamp(),false) AS live, "dispatchAuthorizedAt" IS NOT NULL AS started,
+        "deadlineAt"<=clock_timestamp() AS expired,
         greatest(0, least(2147483647, floor(extract(epoch FROM "deadlineAt"-clock_timestamp())*1000)))::int AS "remainingMs"
         FROM "GenerationAttempt" WHERE id=$1
         ${bindClaimant && !claiming ? 'AND "leaseClaimant"=session_user::text' : ''} FOR UPDATE`, [scope.id]);
@@ -101,6 +102,21 @@ export function generationRepository(pool: Pool, { singleInvocation = false, bin
 
   return {
     async scope(id: string) { return (await pool.query<Scope>(scopeSql, [id])).rows[0]; },
+    /** Terminalize expired attempts without opening context or provider access. */
+    async expireMetered(id: string, approved: { accountId: string; conversationId: string }) {
+      if (!metered) throw new Error('Metered recovery unavailable');
+      const { rows: [scope] } = await pool.query<Scope>(scopeSql, [id]);
+      if (!scope || scope.accountId !== approved.accountId || scope.conversationId !== approved.conversationId) return;
+      return locked(scope, async (tx, state) => {
+        if (!state.expired || state.live || !['PENDING', 'RUNNING', 'CANCEL_REQUESTED'].includes(state.status)) return;
+        const receipt = await usageFor(tx, scope);
+        if (receipt && !state.started) throw new Error('Inconsistent invocation receipt');
+        await settle(tx, scope, receipt ? 'SETTLED' : state.started ? 'UNKNOWN' : 'RELEASED', measuredUnits(receipt), true);
+        await tx.query(`UPDATE public."GenerationAttempt" SET status='FAILED',"completedAt"=clock_timestamp(),
+          "leaseEpoch"="leaseEpoch"+1,"leaseUntil"=NULL,"errorCode"=$2 WHERE id=$1`,
+        [id, state.started && !receipt ? 'PROVIDER_OUTCOME_UNKNOWN' : 'GENERATION_EXHAUSTED']);
+      }, true);
+    },
     readContext(scope: Scope, epoch: number, clearanceExpiry: number) {
       return locked(scope, async (tx, state) => {
         if (state.status !== 'RUNNING' || !state.live || !state.remainingMs || state.leaseEpoch !== epoch ||

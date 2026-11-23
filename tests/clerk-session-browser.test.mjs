@@ -22,9 +22,19 @@ const workspaceCreateLive = process.argv.includes('--p7-create-browser-live');
 const p8Prepare = process.argv.includes('--p8-prepare-role');
 const p8Sign = process.argv.includes('--p8-sign-conversations');
 const p8Live = process.argv.includes('--p8-conversations-browser-live');
-const modes = [browserLive, reverificationLive, p6Bind, p6Sign, p7Sign, p7Prepare, workspaceCreateLive, p8Prepare, p8Sign, p8Live];
+const p9Sign = process.argv.includes('--p9-sign-isolated');
+const modes = [browserLive, reverificationLive, p6Bind, p6Sign, p7Sign, p7Prepare, workspaceCreateLive, p8Prepare, p8Sign, p8Live, p9Sign];
 const interactiveMode = modes.some(Boolean);
 if (modes.filter(Boolean).length > 1) throw new Error('Select exactly one Clerk test mode.');
+
+test('P9 operator signs isolated runtime permissions', { skip: !p9Sign, timeout: 25_000 }, async t => {
+  assert.equal(process.env.P6_OPERATOR_CONFIRM, 'approve-p9-isolated-runtime');
+  const { p6Operator, signP9Clearances } = await import('./fixtures/p6-local-operator.mjs');
+  const values = await signP9Clearances(await p6Operator(t, { isolated: true }),
+    process.env.P6_OPERATOR_PRIVATE_KEY_FILE, process.env.P6_OPERATOR_PUBLIC_KEY_FILE, process.env.P6_OPERATOR_CONFIRM);
+  await writeFile('.env.p9.decisions.local', Object.entries(values).map(([key, value]) => `${key}='${value}'`).join('\n') + '\n',
+    { flag: 'wx', mode: 0o600 });
+});
 
 test('P8 operator prepares restricted conversation role', { skip: !p8Prepare, timeout: 25_000 }, async t => {
   const { p6Operator, prepareP8Conversations } = await import('./fixtures/p6-local-operator.mjs');

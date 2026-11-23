@@ -53,7 +53,8 @@ const meteredPolicy = { ...policy, unit: 'tokens', reservationUnits: 4608,
 const secret = () => randomBytes(32).toString('hex');
 const browserMode = process.argv.includes('--browser');
 const p9Fault = process.argv.includes('--p9-crash') ? 'crash' :
-  process.argv.includes('--p9-authority-loss') ? 'authority-loss' : undefined;
+  process.argv.includes('--p9-authority-loss') ? 'authority-loss' :
+  process.argv.includes('--p9-expiry') ? 'expiry' : undefined;
 const edge = process.env.WORKSPACE_EDGE ?? 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe';
 const browserMessage = 'Browser founder message';
 const correction = 'Correction: the pilot serves clinics.';
@@ -361,7 +362,7 @@ async function postgres(id, run, credentials) {
           GRANT SELECT ("occurredAt") ON public."UsageLedger" TO ${roles.api};
           GRANT SELECT ON public."GenerationProviderReceipt" TO ${roles.fixture};
           GRANT EXECUTE ON FUNCTION pg_catalog.pg_control_system() TO ${roles.api}`);
-        await admin.query(`GRANT SELECT ("dispatchAuthorizedAt"), UPDATE ("leaseClaimant")
+        await admin.query(`GRANT SELECT ("dispatchAuthorizedAt"), UPDATE ("leaseClaimant","deadlineAt")
           ON public."GenerationAttempt" TO ${roles.fixture}`);
         await admin.query(`GRANT USAGE ON SCHEMA p9_context TO fl_p9_other_context;
           GRANT EXECUTE ON FUNCTION p9_context.read_attempt(uuid,integer,integer) TO fl_p9_other_context`);
@@ -714,7 +715,15 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, submissionPris
       await assert.rejects(restrictedWorker.query('SELECT * FROM public."ConfirmedMemory"'), { code: '42501' });
       await assert.rejects(restrictedWorker.query('DELETE FROM public."GenerationProviderReceipt"'), { code: '42501' });
       await assert.rejects(restrictedWorker.query('INSERT INTO p9_context.context_grant DEFAULT VALUES'), { code: '42501' });
-      if (p9Fault === 'authority-loss') {
+      const expireAttempt = () => fixture.query(`UPDATE "GenerationAttempt"
+        SET "deadlineAt"=clock_timestamp()-interval '1 second' WHERE id=$1`, [id]);
+      if (p9Fault === 'expiry') {
+        await expireAttempt();
+        runtime = await startLocalGeneration(env, report);
+        await terminal(id, 'FAILED');
+        assert.deepEqual(await ledger(id), { reservationState: 'RELEASED', measuredUnits: '0.00000' });
+        assert.equal(await standalone.getJob(id), undefined);
+      } else if (p9Fault === 'authority-loss') {
         const observation = { text: 'Unpublished synthetic answer', responseId: 'offline-authority-loss',
           usage: { inputTokens: 17, outputTokens: 9, totalTokens: 26 } };
         runtime = await startLocalGeneration(env, report, {
@@ -727,6 +736,7 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, submissionPris
           // Do not restore authority until the worker attempted finalization and returned.
           await until(async () => (await job.getState()) === 'completed');
           assert.deepEqual((await history(first)).items.map(item => item.role), ['USER']);
+          await expireAttempt();
         } finally {
           await pools.authorityAdmin.query('GRANT SELECT ON authority.coverage TO ledger_reader');
         }
@@ -760,6 +770,7 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, submissionPris
           child.kill('SIGKILL');
           await exited;
         }
+        await expireAttempt();
         runtime = await startLocalGeneration(env, report);
         const failed = await terminal(id, 'FAILED');
         assert.deepEqual(failed.error, { code: 'PROVIDER_OUTCOME_UNKNOWN', retryable: false });
@@ -772,9 +783,13 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, submissionPris
         assert.equal(correlated.generationId, id);
         assert.equal(correlated.messageId, admitted.messageId);
         assert.deepEqual((await history(first)).items.map(item => item.role), ['USER']);
-        assert.equal(executions, 1);
+        assert.equal(executions, p9Fault === 'expiry' ? 0 : 1);
         return;
       }
+      // Simulate a published outbox event that Redis lost before any claim.
+      await pools.dispatch.query(`UPDATE "OutboxEvent" SET status='PUBLISHED',"publishedAt"=clock_timestamp()
+        WHERE id=$1`, [(await outbox(id)).id]);
+      assert.equal(await standalone.getJob(id), undefined);
       runtime = await startLocalGeneration(env, report);
       assert.equal((await terminal(id, 'COMPLETED')).selected, true);
       assert.equal((await outbox(id)).status, 'PUBLISHED');

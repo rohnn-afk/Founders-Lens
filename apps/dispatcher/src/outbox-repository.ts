@@ -49,6 +49,14 @@ export function outboxRepository(pool: Pool, selection: Selection) {
 
   return {
     assertFixtures(requested: readonly string[]) { requested.forEach(allowed); },
+    /** Discover only scoped published jobs still eligible for delivery. */
+    async publishedCandidates() {
+      const { rows } = await pool.query<{ id: string }>(`SELECT e.id FROM "OutboxEvent" e
+        WHERE ${selectScope} AND e.status='PUBLISHED' AND e."dispatchAttempts"<${policy.attempts}
+          AND ${deadline('e')} AND EXISTS (SELECT 1 ${lifecycle})
+        ORDER BY e."createdAt", e.id LIMIT ${policy.batch}`, filters);
+      return rows.map(row => row.id);
+    },
     async claim() {
       const client = await pool.connect();
       try {

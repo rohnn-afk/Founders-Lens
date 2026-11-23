@@ -3,7 +3,7 @@
 import type { Acceptance, MessageApi, Scope } from './contracts';
 import type { RecoveryRecord, RecoveryStorage } from './submission-recovery-storage';
 
-type MessageState = 'editing' | 'sending' | 'accepted' | 'unknown' | 'checking' | 'history-only' | 'rejected';
+type MessageState = 'editing' | 'sending' | 'accepted' | 'unknown' | 'checking' | 'history-only' | 'rejected' | 'quota';
 
 function validAcceptance(value: Acceptance) {
   const id = /^[\da-f]{8}-[\da-f]{4}-[1-8][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i;
@@ -44,7 +44,7 @@ export function createMessageController(api: MessageApi, storage: RecoveryStorag
 
   async function send(content: string): Promise<MessageState | undefined> {
     restore();
-    if (!isCurrent(scope) || record || !['editing', 'accepted', 'rejected'].includes(state)) return;
+    if (!isCurrent(scope) || record || !['editing', 'accepted', 'rejected', 'quota'].includes(state)) return;
     if (!content.length || Array.from(content).length > 10_000 || !content.isWellFormed() || content.includes('\0')) {
       return state = 'rejected';
     }
@@ -59,12 +59,17 @@ export function createMessageController(api: MessageApi, storage: RecoveryStorag
       if (!isCurrent(scope) || blocked(reply.status)) return;
       if (reply.status === 202 && reply.data.status === 'PENDING' && validAcceptance(reply.data)) {
         acceptance = reply.data;
+        storage.saveAccepted(target, acceptance.generationId);
         resolveRecord();
         return state = 'accepted';
       }
       if ([400, 404, 409, 413, 415].includes(reply.status)) {
         resolveRecord();
         return state = 'rejected';
+      }
+      if (reply.status === 429) {
+        resolveRecord();
+        return state = 'quota';
       }
     } catch {
       if (!isCurrent(scope)) return;
@@ -87,6 +92,7 @@ export function createMessageController(api: MessageApi, storage: RecoveryStorag
       if (!isCurrent(scope) || blocked(reply.status)) return;
       if (reply.status === 200 && reply.data.clientSubmissionId === record.clientSubmissionId && validAcceptance(reply.data)) {
         acceptance = reply.data;
+        storage.saveAccepted(target, acceptance.generationId);
         resolveRecord();
         return state = 'accepted';
       }
@@ -98,5 +104,7 @@ export function createMessageController(api: MessageApi, storage: RecoveryStorag
   }
 
   return { restore, send, check, state: () => state,
+    pendingAttempt: () => isCurrent(scope) ? storage.readAccepted(target) : undefined,
+    clearPendingAttempt: () => storage.clearAccepted(target),
     acceptance: () => isCurrent(scope) ? acceptance : undefined };
 }

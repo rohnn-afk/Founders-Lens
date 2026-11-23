@@ -85,7 +85,7 @@ test('explicit reconciliation requires a confirmed miss, and closed dispatchers 
   await healthy.coordinator.reconcile([healthy.event.id]);
   assert.ok(healthy.calls.includes('reclaim'));
   assert.deepEqual(healthy.calls.find(Array.isArray), ['publish', healthy.event.aggregateId]);
-  for (const lookup of [async () => 'failed', async () => { throw new Error('offline'); }]) {
+  for (const lookup of [async () => 'retained', async () => 'failed', async () => { throw new Error('offline'); }]) {
     const { coordinator, calls, event } = setup({ queue: { lookup } });
     await coordinator.reconcile([event.id]);
     assert.equal(calls.includes('reclaim'), false);

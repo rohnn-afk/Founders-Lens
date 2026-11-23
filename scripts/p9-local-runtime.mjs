@@ -37,9 +37,11 @@ function localUrl(input, protocol, port) {
 export async function startLocalGeneration(env, report = () => {}, { deterministicProvider, afterOfflineObservation } = {}) {
   const gemini = env.FL_P9_LOCAL_RUNTIME === 'gemini';
   const test = env.FL_P9_DISPOSABLE === '1';
+  const isolated = env.FL_P9_ISOLATED === '1';
   if (env.NODE_ENV === 'production' || (!gemini && env.FL_P9_LOCAL_RUNTIME !== 'deterministic') ||
     env.P9_GEMINI_MODEL !== 'gemini-3.1-flash-lite' ||
-    (gemini ? test || env.FL_P9_GEMINI_CONFIRM !== 'approve-one-synthetic-invocation' || env.FL_P9_MAX_ADMISSIONS !== '1'
+    (test && isolated) ||
+    (gemini ? test || !isolated || env.FL_P9_GEMINI_CONFIRM !== 'approve-one-synthetic-invocation' || env.FL_P9_MAX_ADMISSIONS !== '1'
       : Boolean(env.P9_GEMINI_API_KEY)) || ((deterministicProvider || afterOfflineObservation) && (gemini || !test))) {
     throw new Error('Local generation runtime unavailable');
   }
@@ -63,8 +65,8 @@ export async function startLocalGeneration(env, report = () => {}, { determinist
   const redis = localUrl(required('FL_P9_REDIS_URL'), 'redis:', '56381');
   if (redis.pathname !== '/0' || redis.username || !/^[a-f0-9]{64}$/.test(redis.password)) throw new Error('Invalid local broker');
   const prefix = 'founders-lens-p9-local-' + run;
-  const primaryPort = test ? '55435' : '55437', authorityPort = test ? '55438' : '55436';
-  const database = test ? '/founders_lens_m05_e2e_test' : '/founders_lens_p6_local';
+  const primaryPort = test || isolated ? '55435' : '55437', authorityPort = test || isolated ? '55438' : '55436';
+  const database = test ? '/founders_lens_m05_e2e_test' : isolated ? '/founders_lens_p9_local' : '/founders_lens_p6_local';
   const resources = [];
   function pool(url, path) {
     if (url.pathname !== path || !/^[a-z][a-z0-9_]{0,62}$/.test(url.username)) throw new Error('Invalid database login');
@@ -79,9 +81,11 @@ export async function startLocalGeneration(env, report = () => {}, { determinist
   const close = () => closing ??= (async () => {
     abort.abort();
     clearTimeout(expiryTimer);
-    await Promise.allSettled([pump?.close(), consumer?.close(), running]);
-    const results = await Promise.allSettled(resources.map(value => value.end()));
-    if (results.some(result => result.status === 'rejected')) report('P9_DATABASE_CLOSE_FAILED');
+    const loops = await Promise.allSettled([pump?.close(), consumer?.close(), running]);
+    const pools = await Promise.allSettled(resources.map(value => value.end()));
+    if ([...loops.slice(0, 2), ...pools].some(result => result.status === 'rejected')) {
+      throw new Error('Local generation cleanup failed');
+    }
   })();
   try {
     const urls = ['DISPATCH', 'VERIFIER', 'WORKER'].map(role =>
@@ -153,26 +157,43 @@ export async function startLocalGeneration(env, report = () => {}, { determinist
       clearTimeout(brokerTimer);
       abort.signal.removeEventListener('abort', onAbort);
     }
-    pump = dispatcher(outboxRepository(dispatchPool, approved), generationQueue(redis, prefix),
+    const outbox = outboxRepository(dispatchPool, approved);
+    pump = dispatcher(outbox, generationQueue(redis, prefix),
       () => Promise.reject(new Error('Independent verification required')), outcome => report(outcome), {
         verifyExecution: createExecutionAuthorizer(verifier, ledger.authority, dispatchPermission, 'dispatch', approved)
       });
     const duration = Math.min(dispatch.expiresAt, execution.expiresAt) - Date.now();
     if (duration <= 0) throw new Error('Local execution window expired');
-    expiryTimer = setTimeout(() => { report('P9_PERMISSION_EXPIRED'); void close(); }, duration);
+    expiryTimer = setTimeout(() => {
+      report('P9_PERMISSION_EXPIRED');
+      // The CLI's finally block observes the same memoized shutdown promise.
+      void close().catch(() => {});
+    }, duration);
     // Redis may have acknowledged delivery before a claimant exited. Recover
     // only expired leases from the approved conversation, through the same
     // authorization and single-invocation fences as normal delivery.
     async function recoverExpiredLeases() {
       while (!abort.signal.aborted) {
         try {
-          const { rows } = await workerPool.query(`SELECT g.id FROM public."GenerationAttempt" g
+          const { rows } = await workerPool.query(`SELECT g.id,g."deadlineAt"<=clock_timestamp() AS expired
+            FROM public."GenerationAttempt" g
             JOIN public."Conversation" c ON c.id=g."conversationId"
             JOIN public."Idea" i ON i.id=c."ideaId"
-            WHERE c.id=$1 AND i."ownerId"=$2 AND g.status='RUNNING'
-              AND g."leaseUntil"<=clock_timestamp() AND g."deadlineAt">clock_timestamp()
+            JOIN public."UsageLedger" u ON u."reservationId"=g.id AND u."accountId"=i."ownerId"
+            WHERE c.id=$1 AND i."ownerId"=$2 AND u.unit='tokens' AND u."operationType"='generation'
+              AND (g."leaseUntil" IS NULL OR g."leaseUntil"<=clock_timestamp())
+              AND (g.status='RUNNING' OR
+                (g.status IN ('PENDING','CANCEL_REQUESTED') AND g."deadlineAt"<=clock_timestamp()))
             ORDER BY g."leaseUntil",g.id LIMIT 4`, [approved.conversationId, approved.accountId]);
-          if (!abort.signal.aborted && rows.length > 0) await worker.recover(rows.map(row => row.id));
+          for (const row of rows) {
+            if (abort.signal.aborted) break;
+            if (row.expired) await work.expireMetered(row.id, approved);
+            else await worker.recover([row.id]);
+          }
+          if (!abort.signal.aborted) {
+            const published = await outbox.publishedCandidates();
+            if (published.length) await pump.reconcile(published);
+          }
         } catch { report('P9_RECOVERY_UNAVAILABLE'); }
         if (!abort.signal.aborted) await sleep(1000, undefined, { signal: abort.signal }).catch(error => {
           if (error.name !== 'AbortError') throw error;
@@ -183,19 +204,31 @@ export async function startLocalGeneration(env, report = () => {}, { determinist
     report('P9_LOCAL_READY');
     return { close, finished: running };
   } catch (error) {
-    await close();
+    try { await close(); } catch { report('P9_SHUTDOWN_FAILED'); }
     throw error;
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+/** Keep startup, loop failures, and resource cleanup observable without leaking configuration. */
+export async function runLocalGeneration(start, report) {
+  let runtime;
+  const stop = () => { if (runtime) void runtime.close().catch(() => {}); };
   try {
-    const runtime = await startLocalGeneration(process.env, event => console.log(JSON.stringify({ event })));
-    for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => void runtime.close());
+    runtime = await start();
+    for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, stop);
     await runtime.finished;
-    await runtime.close();
   } catch {
-    console.error(JSON.stringify({ event: 'P9_LOCAL_STARTUP_DENIED' }));
-    process.exitCode = 1;
+    report(runtime ? 'P9_RUNTIME_FAILED' : 'P9_LOCAL_STARTUP_DENIED');
+  } finally {
+    for (const signal of ['SIGINT', 'SIGTERM']) process.removeListener(signal, stop);
+    try { await runtime?.close(); }
+    catch { report('P9_SHUTDOWN_FAILED'); }
   }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await runLocalGeneration(() => startLocalGeneration(process.env, event => console.log(JSON.stringify({ event }))), event => {
+    console.error(JSON.stringify({ event }));
+    process.exitCode = 1;
+  });
 }

@@ -37,11 +37,36 @@ function setup(options = {}) {
   const recovery = createRecoveryStorage(() => {
     if (options.denied) throw Error('Storage denied');
     return storage;
-  }, 600_000, () => time);
+  }, 600_000, () => time, options.sessionId);
   const controller = (api, currentScope = scope) => createMessageController(api, recovery, currentScope,
     ideaId, conversationId, stale.isCurrent, () => { stale.enter(null); recovery.clear(); }, () => time);
-  return { records, target, scope, recovery, stale, controller, advance(ms) { time += ms; } };
+  return { records, storage, target, scope, recovery, stale, controller, advance(ms) { time += ms; } };
 }
+
+test('accepted attempt survives refresh only in the original session and requires no second POST', async () => {
+  const fixture = setup({ sessionId: 'sess_original' });
+  let posts = 0;
+  const acceptance = { ...correlation(randomUUID()), status: 'PENDING' };
+  const api = { async submit() { posts++; return { status: 202, data: acceptance }; } };
+  assert.equal(await fixture.controller(api).send('transient text'), 'accepted');
+  const restored = fixture.controller(api, fixture.stale.enter(fixture.scope.account));
+  assert.equal(restored.pendingAttempt(), acceptance.generationId);
+  assert.equal(createRecoveryStorage(() => fixture.storage, 600_000, () => 10_000, 'sess_other')
+    .readAccepted(fixture.target), undefined);
+  assert.equal(posts, 1);
+  fixture.recovery.clear();
+  assert.equal(restored.pendingAttempt(), undefined);
+});
+
+test('definitive quota rejection leaves no uncertain record and permits a later Send', async () => {
+  const { controller, records } = setup({ sessionId: 'sess_original' });
+  const sent = [];
+  const instance = controller({ async submit(_id, body) { sent.push(body.content); return { status: 429 }; } });
+  assert.equal(await instance.send('draft'), 'quota');
+  assert.equal(records.size, 0);
+  assert.equal(await instance.send('draft'), 'quota');
+  assert.deepEqual(sent, ['draft', 'draft']);
+});
 
 function correlation(clientSubmissionId) {
   const generationId = randomUUID(), statusUrl = '/api/v1/generations/' + generationId;
