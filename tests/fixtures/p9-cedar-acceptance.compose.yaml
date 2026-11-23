@@ -1,0 +1,33 @@
+name: fl-p9-cedar-acceptance
+services:
+  primary:
+    image: docker.io/library/postgres:17.12-bookworm@sha256:40865bc877a289da75963d97d72b59633f639fc5af7a4e856bfa3714cae5b536
+    environment:
+      POSTGRES_DB: founders_lens_cedar_acceptance
+      POSTGRES_PASSWORD: ${FL_P6_PRIMARY_ADMIN_PASSWORD:?Required}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    ports: ["127.0.0.1:55441:5432"]
+    volumes: ["primary-data:/var/lib/postgresql/data"]
+  authority:
+    image: docker.io/library/postgres:17.12-bookworm@sha256:40865bc877a289da75963d97d72b59633f639fc5af7a4e856bfa3714cae5b536
+    environment:
+      POSTGRES_DB: suppression_proof
+      POSTGRES_PASSWORD: ${FL_SUPPRESSION_ADMIN_PASSWORD:?Required}
+      FL_SUPPRESSION_READER_PASSWORD: ${FL_SUPPRESSION_READER_PASSWORD:?Required}
+      FL_SUPPRESSION_WRITER_PASSWORD: ${FL_SUPPRESSION_WRITER_PASSWORD:?Required}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    ports: ["127.0.0.1:55442:5432"]
+    volumes:
+      - authority-data:/var/lib/postgresql/data
+      - ./suppression-ledger-bootstrap.sql:/docker-entrypoint-initdb.d/01-ledger.sql:ro
+  redis:
+    image: docker.io/library/redis:7.4.12-bookworm@sha256:2e3eb11462c4e3759e6972678dd051d150ff54b1e60714b3c33b701260172a90
+    environment:
+      CEDAR_REDIS_PASSWORD: ${CEDAR_REDIS_PASSWORD:?Required}
+    command: ["sh", "-ec", "umask 077; printf 'protected-mode yes\nrequirepass %s\n' \"$$CEDAR_REDIS_PASSWORD\" > /tmp/cedar-redis.conf; exec redis-server /tmp/cedar-redis.conf"]
+    ports: ["127.0.0.1:56383:6379"]
+    volumes: ["redis-data:/data"]
+volumes:
+  primary-data:
+  authority-data:
+  redis-data:

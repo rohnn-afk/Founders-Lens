@@ -6,6 +6,7 @@ import { parseEnv } from 'node:util';
 import pg from 'pg';
 import { createSuppressionLedger } from '../../apps/api/dist/security/suppression-ledger.js';
 import { SubjectKeys } from '../../apps/api/dist/security/subject-key.js';
+import { cedarAcceptanceTarget, cedarRecheckTarget } from '../../apps/api/dist/generation/cedar-acceptance-target.js';
 
 /** Verify the isolated role inventory before altering any login. Administrators are trusted. */
 async function audit(pool, expected) {
@@ -115,7 +116,7 @@ export async function withP6Provisioning(context, bind) {
 }
 
 /** Seed only the verified P9 binding through an ephemeral, insert-only role. */
-export async function seedP9Conversation(context, accountId) {
+export async function seedP9Conversation(context, accountId, title = 'Lantern Locker') {
   assert.ok(context.isolated, 'Isolated P9 target required');
   const client = await context.primary.connect();
   const ideaId = randomUUID(), conversationId = randomUUID();
@@ -127,7 +128,7 @@ export async function seedP9Conversation(context, accountId) {
       GRANT INSERT (id,"ideaId","updatedAt","proactiveResearch") ON public."Conversation" TO fl_p9_scope_seed;
       SET LOCAL ROLE fl_p9_scope_seed`);
     await client.query('INSERT INTO public."Idea" (id,"ownerId",title,"updatedAt") VALUES ($1,$2,$3,clock_timestamp())',
-      [ideaId, accountId, 'Lantern Locker']);
+      [ideaId, accountId, title]);
     await client.query('INSERT INTO public."Conversation" (id,"ideaId","updatedAt","proactiveResearch") VALUES ($1,$2,clock_timestamp(),false)',
       [conversationId, ideaId]);
     await client.query(`RESET ROLE;
@@ -178,8 +179,11 @@ async function prepareWorkspaceRole(context, role, grantFile, environmentFile, p
   }
 }
 
-export async function p6Operator(t, { isolated = false } = {}) {
-  const envPrefix = isolated ? '.env.p9-primary.' : '.env.p6.';
+export async function p6Operator(t, { isolated = false, cedar = false, recheck = false } = {}) {
+  assert.ok(!cedar || isolated, 'Isolated Cedar operator target required');
+  assert.ok(!recheck || cedar, 'Cedar profile required for recheck target');
+  const target = recheck ? cedarRecheckTarget : cedarAcceptanceTarget;
+  const envPrefix = recheck ? '.env.p9-cedar-recheck-primary.' : cedar ? '.env.p9-cedar-primary.' : isolated ? '.env.p9-primary.' : '.env.p6.';
   const local = parseEnv(await readFile(envPrefix + 'runtime.local', 'utf8'));
   const operator = parseEnv(await readFile(envPrefix + 'operator.local', 'utf8'));
   const { record, integrity } = JSON.parse(Buffer.from(local.FL_P6_GENESIS, 'base64url').toString('utf8'));
@@ -195,8 +199,9 @@ export async function p6Operator(t, { isolated = false } = {}) {
     t.after(() => result.end());
     return result;
   };
-  const primaryPort = isolated ? 55435 : 55437, authorityPort = isolated ? 55438 : 55436;
-  const primaryDatabase = isolated ? 'founders_lens_p9_local' : 'founders_lens_p6_local';
+  const primaryPort = cedar ? target.primaryPort : isolated ? 55435 : 55437;
+  const authorityPort = cedar ? target.authorityPort : isolated ? 55438 : 55436;
+  const primaryDatabase = cedar ? target.database : isolated ? 'founders_lens_p9_local' : 'founders_lens_p6_local';
   const primary = pool(primaryPort, primaryDatabase, 'postgres', operator.FL_P6_PRIMARY_ADMIN_PASSWORD);
   const authority = pool(authorityPort, 'suppression_proof', 'postgres', operator.FL_SUPPRESSION_ADMIN_PASSWORD, 2);
   const reader = pool(authorityPort, 'suppression_proof', 'ledger_reader', local.FL_SUPPRESSION_READER_PASSWORD);
@@ -218,7 +223,7 @@ export async function p6Operator(t, { isolated = false } = {}) {
     return { primaryTarget, snapshot };
   }
   await verify();
-  return { primary, authority, ledger, subjectKeys, verify, isolated,
+  return { primary, authority, ledger, subjectKeys, verify, isolated, cedar, recheck,
     provision: password => pool(primaryPort, primaryDatabase, 'fl_p6_provision', password) };
 }
 

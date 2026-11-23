@@ -1,7 +1,7 @@
 // Web authentication boundary tests. Start a built application without Clerk
 // credentials to verify the fail-closed shell over HTTP and optionally Edge.
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { parseEnv } from 'node:util';
 
 const require = createRequire(import.meta.url);
 const browserLive = process.argv.includes('--clerk-browser-live');
@@ -25,16 +26,25 @@ const p8Sign = process.argv.includes('--p8-sign-conversations');
 const p8Live = process.argv.includes('--p8-conversations-browser-live');
 const p9Sign = process.argv.includes('--p9-sign-isolated');
 const p9Bind = process.argv.includes('--p9-bind-isolated');
-const modes = [browserLive, reverificationLive, p6Bind, p6Sign, p7Sign, p7Prepare, workspaceCreateLive, p8Prepare, p8Sign, p8Live, p9Sign, p9Bind];
+const p9SecondBind = process.argv.includes('--p9-bind-second-isolated');
+const p9CedarBind = process.argv.includes('--p9-bind-cedar-isolated');
+const p9CedarReadiness = process.argv.includes('--p9-cedar-readiness');
+const p9Diagnose = process.argv.includes('--p9-diagnose-harbor');
+const modes = [browserLive, reverificationLive, p6Bind, p6Sign, p7Sign, p7Prepare, workspaceCreateLive,
+  p8Prepare, p8Sign, p8Live, p9Sign, p9Bind, p9SecondBind, p9CedarBind, p9CedarReadiness, p9Diagnose];
 const interactiveMode = modes.some(Boolean);
 if (modes.filter(Boolean).length > 1) throw new Error('Select exactly one Clerk test mode.');
 
 test('P9 operator signs isolated runtime permissions', { skip: !p9Sign, timeout: 25_000 }, async t => {
   assert.equal(process.env.P6_OPERATOR_CONFIRM, 'approve-p9-isolated-runtime');
   const { p6Operator, signP9Clearances } = await import('./fixtures/p6-local-operator.mjs');
-  const values = await signP9Clearances(await p6Operator(t, { isolated: true }),
+  assert.ok([undefined, '1', '2'].includes(process.env.FL_P9_CEDAR_ACCEPTANCE), 'Invalid Cedar signer profile');
+  const cedar = process.env.FL_P9_CEDAR_ACCEPTANCE !== undefined;
+  const recheck = process.env.FL_P9_CEDAR_ACCEPTANCE === '2';
+  const values = await signP9Clearances(await p6Operator(t, { isolated: true, cedar, recheck }),
     process.env.P6_OPERATOR_PRIVATE_KEY_FILE, process.env.P6_OPERATOR_PUBLIC_KEY_FILE, process.env.P6_OPERATOR_CONFIRM);
-  await writeFile('.env.p9.decisions.local', Object.entries(values).map(([key, value]) => `${key}='${value}'`).join('\n') + '\n',
+  await writeFile(recheck ? '.env.p9-cedar-recheck.decisions.local' : cedar ? '.env.p9-cedar.decisions.local' : '.env.p9.decisions.local',
+    Object.entries(values).map(([key, value]) => `${key}='${value}'`).join('\n') + '\n',
     { flag: 'wx', mode: 0o600 });
 });
 
@@ -192,8 +202,10 @@ test(p7Sign ? 'P7 operator signs idea creation clearance' : 'P6 operator signs l
 });
 
 /** Keep Clerk credentials in the same process as verification and provisioning. */
-test(p9Bind ? 'P9 one-time isolated Clerk binding' : 'P6 one-time Clerk binding',
-  { skip: !p6Bind && !p9Bind, timeout: 450_000 }, async t => {
+test(p9CedarReadiness ? 'P9 Cedar Desk read-only browser readiness' : p9Diagnose ? 'P9 Harbor Cart authenticated diagnostic'
+  : p9CedarBind ? 'P9 Cedar Desk isolated Clerk binding'
+    : p9SecondBind ? 'P9 second isolated Clerk binding' : p9Bind ? 'P9 one-time isolated Clerk binding' : 'P6 one-time Clerk binding',
+  { skip: !p6Bind && !p9Bind && !p9SecondBind && !p9CedarBind && !p9CedarReadiness && !p9Diagnose, timeout: 450_000 }, async t => {
   const { p6Operator, verifyP6ProvisioningGrants, withP6Provisioning, seedP9Conversation } =
     await import('./fixtures/p6-local-operator.mjs');
   const { clerkConfig } = await import('../apps/api/dist/security/config.js');
@@ -204,22 +216,30 @@ test(p9Bind ? 'P9 one-time isolated Clerk binding' : 'P6 one-time Clerk binding'
   const { PrismaClient } = await import('../apps/api/dist/generated/prisma/client.js');
   const { PrismaPg } = createRequire(new URL('../apps/api/package.json', import.meta.url))('@prisma/adapter-pg');
   const env = process.env;
-  const expectedSubject = p9Bind ? env.FL_P9_CLERK_TEST_USER_ID : env.CLERK_TEST_USER_ID;
+  const second = p9SecondBind || p9CedarBind ? await import('./fixtures/p9-second-binding.mjs') : undefined;
+  if (p9CedarBind) assert.ok(['1', '2'].includes(env.FL_P9_CEDAR_ACCEPTANCE), 'Cedar binding requires the dedicated target');
+  if (p9CedarReadiness) assert.equal(env.FL_P9_CEDAR_ACCEPTANCE, '2', 'Cedar readiness requires the recheck target');
+  const cedarTarget = p9CedarBind || p9CedarReadiness;
+  const expectedSubject = cedarTarget ? parseEnv(await readFile('.env.p9-second-bind.local', 'utf8')).FL_P9_SECOND_CLERK_TEST_USER_ID
+    : p9Diagnose ? env.FL_P9_SECOND_CLERK_TEST_USER_ID : second ? second.secondBindingSubject(env)
+    : p9Bind ? env.FL_P9_CLERK_TEST_USER_ID : env.CLERK_TEST_USER_ID;
+  if (p9CedarBind) assert.equal(env.FL_P9_CEDAR_BIND_CONFIRM, 'approve-p9-cedar-desk-binding');
   if (p9Bind) assert.ok(expectedSubject && expectedSubject !== env.CLERK_TEST_USER_ID &&
     env.FL_P9_BIND_CONFIRM === 'approve-p9-dedicated-clerk-binding', 'Dedicated P9 Clerk identity and confirmation required');
   const origin = 'http://127.0.0.1:3000';
   const config = clerkConfig({ ...env, CLERK_PUBLISHABLE_KEY: env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY });
   assert.ok(config.publishableKey.startsWith('pk_test_') && config.authorizedParties.includes(origin) &&
-    /^user_[A-Za-z0-9_-]+$/.test(expectedSubject ?? '') &&
+    /^user_[A-Za-z0-9_-]+$/.test(expectedSubject ?? '') && expectedSubject !== 'user_REPLACE_WITH_CEDAR_CLERK_ID' &&
     (config.audience || env.CLERK_TEST_ALLOW_NO_AUDIENCE === '1'), 'Approved Clerk development identity required');
-  const context = await p6Operator(t, { isolated: p9Bind });
+  const context = await p6Operator(t, { isolated: p9Bind || p9SecondBind || cedarTarget || p9Diagnose,
+    cedar: cedarTarget, recheck: cedarTarget && env.FL_P9_CEDAR_ACCEPTANCE === '2' });
   await verifyP6ProvisioningGrants(context.primary);
   const boundary = createClerkBoundary({ ...config, authorizedParties: [origin] });
   const provider = new ClerkIdentityProvider(boundary.client);
   const evaluate = await openEdge(t, origin + '/app', true);
   const shell = `location.origin === ${JSON.stringify(origin)} && location.pathname === '/app' &&
     document.body?.innerText.includes('You are signed in.') && window.Clerk?.session?.status === 'active'`;
-  console.info(`Edge is ready for the approved ${p9Bind ? 'P9' : 'P6'} development account. Sign in within three minutes.`);
+  console.info(`Edge is ready for the approved ${context.isolated ? 'P9' : 'P6'} development account. Sign in within three minutes.`);
   await waitForBrowser(async () => await evaluate(shell) === true, manualSignInTimeout);
   const token = await evaluate(`(${shell}) ? window.Clerk.session.getToken({ skipCache: true }) : null`, 10_000);
   assert.ok(typeof token === 'string' && token.split('.').length === 3, 'Fresh Clerk session required');
@@ -229,6 +249,31 @@ test(p9Bind ? 'P9 one-time isolated Clerk binding' : 'P6 one-time Clerk binding'
     (config.audience || !Object.hasOwn(JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()), 'aud')),
   'Clerk identity or audience does not match the approved policy');
   await provider.assertLive(identity);
+  if (p9CedarReadiness) {
+    await verifyCedarRecheckBrowser(t, context, evaluate, origin, identity);
+    return;
+  }
+  if (p9Diagnose) {
+    const { diagnoseHarbor } = await import('./fixtures/p9-harbor-diagnostic.mjs');
+    await diagnoseHarbor({ context, config, boundary, provider, evaluate, origin, verifiedSubject: expectedSubject });
+    return;
+  }
+  if (second) {
+    await second.bindSecondP9Scope(context, identity, async pool => {
+      await provider.assertLive(identity);
+      assert.ok(identity.expiresAt > Date.now(), 'Clerk session expired');
+      const prisma = new PrismaClient({ adapter: new PrismaPg(pool), log: [], errorFormat: 'minimal' });
+      try {
+        const service = new IdentityService(config.instanceId, context.subjectKeys, provider,
+          new PrismaIdentityRepository(prisma), context.ledger.authority);
+        return (await service.resolve(identity, 'p9-second-isolated-binding')).localUserId;
+      } finally { await prisma.$disconnect(); }
+    }, { cedar: p9CedarBind });
+    console.info(p9CedarBind ? 'Cedar Desk binding verified. One owned empty conversation and no generation history.'
+      : 'Second P9 binding verified. One owned empty conversation and no generation history.');
+    if (context.recheck) await verifyCedarRecheckBrowser(t, context, evaluate, origin, identity);
+    return;
+  }
   const readCounts = async () => (await context.primary.query(`SELECT
     (SELECT count(*)::int FROM "UserAccount") AS accounts,
     (SELECT count(*)::int FROM "UserAccount" WHERE "clerkInstanceId"=$1 AND "clerkSubject"=$2
@@ -323,6 +368,43 @@ test(p9Bind ? 'P9 one-time isolated Clerk binding' : 'P6 one-time Clerk binding'
   const denied = await fetch('http://127.0.0.1:3001/api/v1/ideas', { headers, signal: AbortSignal.timeout(10_000) });
   assert.equal(denied.status, 401);
 });
+
+/** Sign only after binding and let the same authenticated browser verify the empty conversation. */
+async function verifyCedarRecheckBrowser(t, context, evaluate, origin, identity) {
+  const { signP9Clearances } = await import('./fixtures/p6-local-operator.mjs');
+  const { createApp } = await import('../apps/api/dist/app.js');
+  const { localReadOnlyWorkspace } = await import('../apps/api/dist/workspace/read-only-composition.js');
+  const load = async file => parseEnv(await readFile(file, 'utf8'));
+  const { readSecondScope } = await import('./fixtures/p9-second-binding.mjs');
+  const scope = await load('.env.p9-cedar-recheck-scope.local');
+  const [digest] = context.subjectKeys.derive(identity.instanceId, identity.subject);
+  const owned = await readSecondScope(context.primary, identity, digest, { title: 'Cedar Desk' });
+  assert.ok(owned?.account === scope.FL_P9_SYNTHETIC_ACCOUNT &&
+    owned?.conversation === scope.FL_P9_SYNTHETIC_CONVERSATION, 'Empty Cedar scope is not owned by this session');
+  const dir = join(process.env.LOCALAPPDATA, 'FoundersLens', 'P6-Operator');
+  const decisions = await signP9Clearances(context, join(dir, 'operator-ed25519-private.pem'),
+    join(dir, 'operator-ed25519-public.pem'), 'approve-p9-isolated-runtime');
+  const local = await localReadOnlyWorkspace({
+    ...await load('apps/web/.env.local'), ...await load('.env.p9-cedar-recheck-api.local'),
+    ...await load('.env.p9-cedar-recheck-defaults.local'),
+    FL_P6_OPERATOR_PUBLIC_KEY: decisions.FL_P6_OPERATOR_PUBLIC_KEY,
+    FL_P6_RECOVERY_DECISION: decisions.FL_P6_RECOVERY_DECISION, FL_P8_READ_DECISION: decisions.FL_P8_READ_DECISION,
+    FL_P6_CURSOR_KEY: randomBytes(32).toString('hex'), FL_P6_READ_ONLY: '1', FL_P8_CONVERSATIONS: '1', FL_P9_SUBMIT: '0'
+  });
+  assert.ok(local, 'Cedar read-only API unavailable');
+  t.after(() => local.close());
+  const server = createApp(local.router).listen(3001, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const { rows: [route] } = await context.primary.query(
+    'SELECT "ideaId" FROM public."Conversation" WHERE id=$1', [scope.FL_P9_SYNTHETIC_CONVERSATION]);
+  const url = origin + '/app/ideas/' + route.ideaId + '/conversations/' + scope.FL_P9_SYNTHETIC_CONVERSATION;
+  await evaluate(`location.assign(${JSON.stringify(url)}); true`);
+  await waitForBrowser(async () => await evaluate(`location.href === ${JSON.stringify(url)} &&
+    document.body?.innerText.includes('No saved messages')`) === true, 45_000);
+  console.info('Read-only browser verified the empty Cedar Desk conversation.');
+  console.info(url);
+}
 
 
 async function waitForBrowser(check, timeout = 20_000, failure = () => 'Edge did not reach the expected sign-in state.') {

@@ -1,6 +1,7 @@
 // Deterministic workspace controller tests. Synthetic DTOs exercise navigation,
 // identity races, pagination and create recovery without a backend or browser.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import ts from 'typescript';
@@ -55,6 +56,34 @@ test('browser submit carries a safe API request ID only for the current session 
   assert.equal(await composer.send('Exact synthetic bytes'), 'rejected');
   lifetime.abort();
   assert.equal(composer.failureRequestId(), undefined);
+});
+
+test('Harbor Cart and ordinary whitespace reach the submission JSON unchanged', async t => {
+  // This fixture is test-only. The production composer continues to send its draft as entered.
+  const prompt = 'Fictional startup Harbor Cart plans to deliver reusable grocery crates to small neighborhood shops. We assume shop owners will pay monthly for fewer packaging problems. What is the riskiest assumption, and how could we test it cheaply?';
+  const approved = '9b05e9e197efabef646a85842aa7ddc83ba2cab78eab3efa9a40e75b9040095a';
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: { location: { origin: 'http://127.0.0.1:3000' } } });
+  t.after(() => { if (previous) Object.defineProperty(globalThis, 'window', previous); else delete globalThis.window; });
+  const bodies = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    assert.equal(url, 'http://127.0.0.1:3001/api/v1/conversations/harbor-fixture/messages');
+    assert.equal(init.method, 'POST');
+    assert.match(init.headers['Idempotency-Key'], /^[a-f0-9-]{36}$/);
+    bodies.push(JSON.parse(init.body));
+    return Response.json({ error: { code: 'RESOURCE_NOT_FOUND' } }, { status: 404 });
+  });
+  const { messageApi } = createLocalConversationApi(async () => 'fixture-token');
+  const scope = { account: 'fixture', sessionGeneration: 1, routeGeneration: 1, signal: new AbortController().signal };
+  const storage = { read: () => ({}), save: (_target, _id, key) => ({ key }), remove() {} };
+  const composer = createMessageController(messageApi, storage, scope, 'idea', 'harbor-fixture', () => true, () => {});
+  const drafts = [prompt, prompt + '\n', '  ordinary\n\nmessage\t '];
+  for (const draft of drafts) assert.equal(await composer.send(draft), 'rejected');
+  assert.deepEqual(bodies.map(body => body.content), drafts);
+  assert.equal(new Set(bodies.map(body => body.clientSubmissionId)).size, drafts.length);
+  const hash = text => createHash('sha256').update(text, 'utf8').digest('hex');
+  assert.equal(hash(bodies[0].content), approved);
+  assert.notEqual(hash(bodies[1].content), approved);
 });
 
 test('P8 save retains the exact intent after a lost response and discards it on session cleanup', async t => {

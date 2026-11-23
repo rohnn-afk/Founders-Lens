@@ -11,11 +11,12 @@ export type PublicationWindow = {
 type Broker = Queue<{ generationId: string }, void, 'generation.requested'>;
 type Connection = { queue: Pick<Broker, 'waitUntilReady' | 'getJob' | 'add' | 'close'>; disconnect: () => void };
 
-export function generationQueue(url: URL, prefix: string, connect?: () => Connection) {
+export function generationQueue(url: URL, prefix: string, connect?: () => Connection, profile: boolean | 'cedar' | 'cedar-recheck' = false) {
   function open() {
     const legacy = url.port === '56380' && prefix === 'founders-lens-m05-test-ffb11ac8-505a-4094-bd89-8367450022e9';
-    // Only the disposable integration profile may use its run-specific prefix.
-    const integration = url.port === '56381' && ['founders-lens-m05-e2e-', 'founders-lens-p9-local-']
+    // The local runtime and disposable integration fixture use distinct loopback ports.
+    const integration = url.port === (profile === 'cedar-recheck' ? '56384' : profile === 'cedar' ? '56383' : profile ? '56382' : '56381') &&
+      ['founders-lens-m05-e2e-', 'founders-lens-p9-local-']
       .some(base => prefix.startsWith(base) && isUuid(prefix.slice(base.length)));
     if (url.protocol !== 'redis:' || url.hostname !== '127.0.0.1' || (!legacy && !integration) || url.pathname !== '/0' ||
       url.username || url.hash || url.search || !/^[a-f0-9]{64}$/.test(url.password)) {

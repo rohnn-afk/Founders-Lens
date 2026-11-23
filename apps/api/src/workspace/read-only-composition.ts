@@ -21,7 +21,8 @@ import { createSubmissionService, type SubmissionService } from '../submission/s
 import { createGenerationRepository } from '../generation/repository.js';
 import { generationRoutes } from '../generation/routes.js';
 import { createGenerationService } from '../generation/service.js';
-import { localGenerationPolicy } from '../generation/local-policy.js';
+import { localGenerationModel, localGenerationPolicy } from '../generation/local-policy.js';
+import { cedarAcceptanceEnabled, cedarAcceptanceTarget, cedarRecheckTarget } from '../generation/cedar-acceptance-target.js';
 import { WorkspaceCursor } from './contracts.js';
 import { WorkspaceRepository } from './repository.js';
 import { localConversationRoutes, workspaceIdeaListRoutes, type LocalConversationOperations } from './routes.js';
@@ -86,9 +87,11 @@ export function workspaceIdeasCors(allowCreate: boolean, conversations?: { creat
 export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
   if (env['FL_P6_READ_ONLY'] !== '1' || env['NODE_ENV'] === 'production') return;
   const isolated = env['FL_P9_ISOLATED'] === '1';
-  const primaryPort = isolated ? 55435 : 55437;
-  const authorityPort = isolated ? 55438 : 55436;
-  const primaryDatabase = isolated ? 'founders_lens_p9_local' : 'founders_lens_p6_local';
+  const cedar = cedarAcceptanceEnabled(env);
+  const target = env['FL_P9_CEDAR_ACCEPTANCE'] === '2' ? cedarRecheckTarget : cedarAcceptanceTarget;
+  const primaryPort = cedar ? target.primaryPort : isolated ? 55435 : 55437;
+  const authorityPort = cedar ? target.authorityPort : isolated ? 55438 : 55436;
+  const primaryDatabase = cedar ? target.database : isolated ? 'founders_lens_p9_local' : 'founders_lens_p6_local';
   const required = (name: string) => {
     const value = env[name];
     if (!value) throw new Error('Local workspace configuration unavailable');
@@ -190,6 +193,7 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
     let generationConversation: string | undefined;
     if (env['FL_P9_SUBMIT'] === '1') {
       try {
+        if (env['GROQ_API_KEY']) throw new Error('Unexpected credential in API environment');
         const target = pool(primaryPort, primaryDatabase, 'fl_p9_submit', required('FL_P9_SUBMIT_PASSWORD'));
         submissionPool = target;
         target.on('error', () => {});
@@ -202,7 +206,7 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
         if (submitDecision.recoveryRun !== statusDecision.recoveryRun) throw new Error('Generation decisions differ');
         const approvedConversation = required('FL_P9_SYNTHETIC_CONVERSATION');
         const { policy, allows } = localGenerationPolicy({
-          model: required('P9_GEMINI_MODEL'), priceVersion: required('FL_P9_PRICE_VERSION'),
+          model: localGenerationModel(env), priceVersion: required('FL_P9_PRICE_VERSION'),
           maximumMicrosPerMillionTokens: required('FL_P9_MAX_MICROS_PER_MILLION_TOKENS'),
           budgetMicros: required('FL_P9_BUDGET_MICROS'), tokenBudget: required('FL_P9_ACCOUNT_TOKEN_BUDGET'),
           requestsPerMinute: required('FL_P9_REQUESTS_PER_MINUTE'), maximumAdmissions: required('FL_P9_MAX_ADMISSIONS'),

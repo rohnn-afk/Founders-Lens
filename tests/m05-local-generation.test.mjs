@@ -19,6 +19,7 @@ import { Queue, createIORedisClient } from 'bullmq';
 import { PrismaClient } from '../apps/api/dist/generated/prisma/client.js';
 import { createSubmissionRepository } from '../apps/api/dist/submission/repository.js';
 import { createSubmissionService } from '../apps/api/dist/submission/service.js';
+import { localGenerationPolicy } from '../apps/api/dist/generation/local-policy.js';
 import { submissionRoutes } from '../apps/api/dist/submission/routes.js';
 import { createGenerationRepository } from '../apps/api/dist/generation/repository.js';
 import { createGenerationService } from '../apps/api/dist/generation/service.js';
@@ -31,6 +32,7 @@ import { generationRepository } from '../apps/worker/dist/generation-repository.
 import { generationWorker } from '../apps/worker/dist/generation-worker.js';
 import { syntheticContextResponse } from '../apps/worker/dist/generation-context.js';
 import { deterministicFounderProvider, founderPrompt } from '../apps/worker/dist/founder-provider.js';
+import { groqFounderProvider } from '../apps/worker/dist/groq-provider.js';
 import { generationConsumer } from '../apps/worker/dist/generation-consumer.js';
 import { createExecutionAuthorizer } from '../apps/api/dist/generation/execution-scope.js';
 import { createSuppressionLedger } from '../apps/api/dist/security/suppression-ledger.js';
@@ -52,6 +54,8 @@ const meteredPolicy = { ...policy, unit: 'tokens', reservationUnits: 4608,
   quotaUnits: 9216, requestsPerMinute: 1, currentTurnBytes: 1200 };
 const secret = () => randomBytes(32).toString('hex');
 const browserMode = process.argv.includes('--browser');
+const groqCase = process.argv.includes('--p9-groq-failure') ? 'failure'
+  : process.argv.includes('--p9-groq') ? 'success' : undefined;
 const p9Fault = process.argv.includes('--p9-crash') ? 'crash' :
   process.argv.includes('--p9-authority-loss') ? 'authority-loss' :
   process.argv.includes('--p9-expiry') ? 'expiry' : undefined;
@@ -63,7 +67,7 @@ const fixtureMessages = new Set(['Synthetic USER', browserMessage, correctionMes
 
 function restrictedPool(name, credentials) {
   return new Pool({ connectionString: 'postgresql://' + roles[name] + ':' + credentials[name] +
-    '@127.0.0.1:55435/' + database, statement_timeout: 5000 });
+    '@127.0.0.1:55439/' + database, statement_timeout: 5000 });
 }
 
 async function loopback(server) {
@@ -324,7 +328,7 @@ async function until(check) {
 async function postgres(id, run, credentials) {
   const migration = await readFile('apps/api/prisma/migrations/0001_approved_baseline/migration.sql');
   assert.equal(createHash('sha256').update(migration).digest('hex'), checksum);
-  const adminUrl = 'postgresql://bootstrap:' + credentials.bootstrap + '@127.0.0.1:55435/' + database;
+  const adminUrl = 'postgresql://bootstrap:' + credentials.bootstrap + '@127.0.0.1:55439/' + database;
   const admin = new Pool({ connectionString: adminUrl, connectionTimeoutMillis: 300, max: 1 });
   try {
     await until(() => admin.query('SELECT 1').catch(() => false));
@@ -425,7 +429,7 @@ async function verify(pool, name, run) {
 
 /** Exercise the new function through separate authenticated PostgreSQL logins. */
 async function verifyContextProjection(credentials, attempt, lease, epoch) {
-  const connect = (user, password) => new Pool({ host: '127.0.0.1', port: 55435, database, user, password, max: 1 });
+  const connect = (user, password) => new Pool({ host: '127.0.0.1', port: 55439, database, user, password, max: 1 });
   const reader = connect('fl_p9_context', credentials.context);
   const wrong = connect('fl_p9_other_context', credentials.context);
   const issuer = connect('fl_p9_context_verifier', credentials.contextVerifier);
@@ -531,8 +535,15 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, submissionPris
   const fixtureToken = 'test.' + secret() + '.fixture';
   const authenticate = async request => request.get('authorization') === 'Bearer ' + fixtureToken ? principal : null;
   const app = express();
+  const groqSettings = { model: 'openai/gpt-oss-20b', priceVersion: 'v1:groq-gpt-oss-20b',
+    maximumMicrosPerMillionTokens: '300000', budgetMicros: '1575', tokenBudget: '5248',
+    requestsPerMinute: '1', maximumAdmissions: '1', accountId: account, conversationId: first,
+    syntheticTextSha256: createHash('sha256').update('Synthetic USER').digest('hex') };
+  const groqPolicy = groqCase ? localGenerationPolicy(groqSettings) : undefined;
+  const admissionPolicy = groqPolicy?.policy ?? meteredPolicy;
   const trustedSubmission = trusted && createSubmissionService(createSubmissionRepository(submissionPrisma),
-    trusted.ledger.authority, { clock: () => new Date(), policy: meteredPolicy, executionAdmission: trusted.decision('submit'),
+    trusted.ledger.authority, { clock: () => new Date(), policy: admissionPolicy, executionAdmission: trusted.decision('submit'),
+      ...(groqPolicy && { allowSubmission: (actor, id, text) => groqPolicy.allows(actor.localUserId, id, text) }),
       cursorSecret: randomBytes(32) });
   const trustedAdmission = trustedSubmission && submissionRoutes(trustedSubmission, authenticate, { submitOnly: true });
   // The browser proxy can submit on behalf of the fixture. Allow only the
@@ -585,7 +596,7 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, submissionPris
     if (!browserMode && executions === 1) return (await founderProvider.generate(founderPrompt(context), signal)).text;
     return fake ? fake() : syntheticContextResponse(context);
   });
-  const consumer = generationConsumer(redisUrl, prefix, worker);
+  const consumer = generationConsumer(redisUrl, prefix, worker, true);
   startConsumer(consumer);
   await consumer.waitUntilReady();
 
@@ -593,7 +604,7 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, submissionPris
     const { id: eventId } = await outbox(id);
     allowed.add(id);
     const repository = outboxRepository(pools.dispatch, [eventId]);
-    const pump = dispatcher(repository, generationQueue(redisUrl, prefix),
+    const pump = dispatcher(repository, generationQueue(redisUrl, prefix, undefined, true),
       async (scope, query) => dispatchDenied ? null : evidence(scope, query), () => {});
     try { await pump.poll(); } finally { await pump.close(); }
     return eventId;
@@ -652,13 +663,18 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, submissionPris
   const id = admitted.generationId;
   assert.deepEqual(await submit(first, 202, key, body), admitted);
   if (trusted) {
-    assert.equal((await submit(second, 429)).error.code, 'QUOTA_EXCEEDED');
-    await submit(second, 413, randomUUID(), { clientSubmissionId: randomUUID(), content: correctionMessage });
+    if (groqCase) {
+      assert.equal((await submit(second, 404)).error.code, 'RESOURCE_NOT_FOUND');
+      assert.equal((await submit(first, 409)).error.code, 'GENERATION_IN_PROGRESS');
+    } else {
+      assert.equal((await submit(second, 429)).error.code, 'QUOTA_EXCEEDED');
+      await submit(second, 413, randomUUID(), { clientSubmissionId: randomUUID(), content: correctionMessage });
+    }
     assert.deepEqual(await trustedSubmission.correlate(principal, first, body.clientSubmissionId), {
       messageId: admitted.messageId, generationId: id
     });
     assert.deepEqual((await trustedSubmission.history(principal, first, {})).items.map(item => item.role), ['USER']);
-    const trustedStatus = createGenerationService(createGenerationRepository(submissionPrisma, meteredPolicy),
+    const trustedStatus = createGenerationService(createGenerationRepository(submissionPrisma, admissionPolicy),
       trusted.ledger.authority, async () => (await trusted.decision('status')()).expiresAt);
     assert.equal((await trustedStatus.status(principal, id)).status, 'PENDING');
   }
@@ -680,11 +696,15 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, submissionPris
       FL_P9_SYNTHETIC_TEXT_SHA256: createHash('sha256').update(body.content).digest('hex'),
       FL_P9_DISPATCH_DECISION: trusted.signed('dispatch'), FL_P9_EXECUTE_DECISION: trusted.signed('execute'),
       FL_P9_REDIS_RUN: run, FL_P9_REDIS_URL: redisUrl.href,
-      FL_P9_DISPATCH_DATABASE_URL: `postgresql://fl_p9_dispatch:${credentials.standaloneDispatch}@127.0.0.1:55435/${database}`,
-      FL_P9_WORKER_DATABASE_URL: `postgresql://fl_p9_worker:${credentials.standaloneWorker}@127.0.0.1:55435/${database}`,
-      FL_P9_VERIFIER_DATABASE_URL: `postgresql://fl_p9_context_verifier:${credentials.contextVerifier}@127.0.0.1:55435/${database}`,
-      FL_P9_AUTHORITY_DATABASE_URL: `postgresql://ledger_reader:${credentials.authorityReader}@127.0.0.1:55438/suppression_proof`
+      FL_P9_DISPATCH_DATABASE_URL: `postgresql://fl_p9_dispatch:${credentials.standaloneDispatch}@127.0.0.1:55439/${database}`,
+      FL_P9_WORKER_DATABASE_URL: `postgresql://fl_p9_worker:${credentials.standaloneWorker}@127.0.0.1:55439/${database}`,
+      FL_P9_VERIFIER_DATABASE_URL: `postgresql://fl_p9_context_verifier:${credentials.contextVerifier}@127.0.0.1:55439/${database}`,
+      FL_P9_AUTHORITY_DATABASE_URL: `postgresql://ledger_reader:${credentials.authorityReader}@127.0.0.1:55440/suppression_proof`
     };
+    if (groqCase) Object.assign(env, { FL_P9_PROVIDER: 'groq', P9_GROQ_MODEL: groqSettings.model,
+      FL_P9_PRICE_VERSION: groqSettings.priceVersion, FL_P9_MAX_MICROS_PER_MILLION_TOKENS: groqSettings.maximumMicrosPerMillionTokens,
+      FL_P9_BUDGET_MICROS: groqSettings.budgetMicros, FL_P9_ACCOUNT_TOKEN_BUDGET: groqSettings.tokenBudget,
+      FL_P9_REQUESTS_PER_MINUTE: '1' });
     await assert.rejects(startLocalGeneration({ ...env, NODE_ENV: 'production' }));
     await assert.rejects(startLocalGeneration({ ...env, FL_P9_LOCAL_RUNTIME: 'gemini',
       FL_P9_GEMINI_CONFIRM: 'approve-one-synthetic-invocation' }));
@@ -715,6 +735,36 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, submissionPris
       await assert.rejects(restrictedWorker.query('SELECT * FROM public."ConfirmedMemory"'), { code: '42501' });
       await assert.rejects(restrictedWorker.query('DELETE FROM public."GenerationProviderReceipt"'), { code: '42501' });
       await assert.rejects(restrictedWorker.query('INSERT INTO p9_context.context_grant DEFAULT VALUES'), { code: '42501' });
+      if (groqCase) {
+        const events = [];
+        const mockedGroq = groqFounderProvider('gsk_' + 'offline_synthetic_fixture', async () => {
+          executions++;
+          return groqCase === 'failure' ? Response.json({ error: { message: 'Fixture rejection' } }, { status: 503 })
+            : Response.json({ id: 'chatcmpl-offline-groq', choices: [
+              { finish_reason: 'stop', message: { role: 'assistant', content: 'Offline Groq answer' } }
+            ], usage: { prompt_tokens: 85, completion_tokens: 130, total_tokens: 215 } });
+        }, event => events.push(event));
+        runtime = await startLocalGeneration(env, report, { deterministicProvider: mockedGroq });
+        const completed = groqCase === 'success';
+        const result = await terminal(id, completed ? 'COMPLETED' : 'FAILED');
+        if (!completed) assert.deepEqual(result.error, { code: 'PROVIDER_OUTCOME_UNKNOWN', retryable: false });
+        const job = await standalone.getJob(id);
+        await until(async () => (await job.getState()) === 'completed');
+        await job.retry('completed');
+        await until(async () => (await job.getState()) === 'completed');
+        assert.equal(executions, 1);
+        assert.deepEqual(events, completed ? [] : ['GROQ_PROVIDER_UNAVAILABLE']);
+        assert.deepEqual(await ledger(id), completed ? { reservationState: 'SETTLED', measuredUnits: '215.00000' }
+          : { reservationState: 'RESERVED', measuredUnits: '0.00000' });
+        const { rows } = await fixture.query(`SELECT "inputTokens","outputTokens","totalTokens"
+          FROM public."GenerationProviderReceipt" WHERE "attemptId"=$1`, [id]);
+        assert.deepEqual(rows, completed ? [{ inputTokens: 85, outputTokens: 130, totalTokens: 215 }] : []);
+        assert.deepEqual((await history(first)).items.map(item => item.content),
+          completed ? [body.content, 'Offline Groq answer'] : [body.content]);
+        useTrusted = true;
+        assert.equal((await submit(first, 429)).error.code, 'QUOTA_EXCEEDED');
+        return;
+      }
       const expireAttempt = () => fixture.query(`UPDATE "GenerationAttempt"
         SET "deadlineAt"=clock_timestamp()-interval '1 second' WHERE id=$1`, [id]);
       if (p9Fault === 'expiry') {
@@ -1019,7 +1069,7 @@ test('isolated HTTP submission through outbox, BullMQ and the fake generation wo
   const credentials = Object.fromEntries([...Object.keys(roles), 'bootstrap', 'redis', 'context', 'contextVerifier',
     'authorityAdmin', 'authorityReader', 'authorityWriter', 'standaloneSubmit', 'standaloneDispatch',
     'standaloneWorker'].map(name => [name, secret()]));
-  const redisUrl = new URL('redis://:' + credentials.redis + '@127.0.0.1:56381/0');
+  const redisUrl = new URL('redis://:' + credentials.redis + '@127.0.0.1:56382/0');
   const pools = {}, containers = [];
   let networkId, redis, queue, consumer, prisma, submissionPrisma, server;
   function start(resource, image, hostPort, containerPort, tmpfs, options, command) {
@@ -1033,13 +1083,13 @@ test('isolated HTTP submission through outbox, BullMQ and the fake generation wo
   }
   try {
     networkId = docker(['network', 'create', '--label', label + '=' + run, network]);
-    const pgId = start('pg', pgImage, '55435', '5432', '/var/lib/postgresql/data:rw,nosuid,nodev,mode=0700',
+    const pgId = start('pg', pgImage, '55439', '5432', '/var/lib/postgresql/data:rw,nosuid,nodev,mode=0700',
       ['-e', 'POSTGRES_USER=bootstrap', '-e', 'POSTGRES_DB=' + database, '-e', 'POSTGRES_PASSWORD_FILE=/tmp/bootstrap',
         '--entrypoint', 'sh'], ['-ec', 'while [ ! -s /tmp/bootstrap ]; do sleep 1; done; exec docker-entrypoint.sh postgres']);
     docker(['exec', '-i', pgId, 'sh', '-ec', 'umask 077; cat > /tmp/bootstrap-new; mv /tmp/bootstrap-new /tmp/bootstrap'],
       credentials.bootstrap);
     await postgres(pgId, run, credentials);
-    const redisId = start('redis', redisImage, '56381', '6379', '/data:rw,noexec,nosuid,nodev,mode=1777',
+    const redisId = start('redis', redisImage, '56382', '6379', '/data:rw,noexec,nosuid,nodev,mode=1777',
       ['--entrypoint', 'sh'], ['-ec', 'while [ ! -s /tmp/run-config ]; do sleep 1; done; exec redis-server /tmp/run-config']);
     docker(['exec', '-i', redisId, 'sh', '-ec', 'umask 077; cat > /tmp/run-config-new; mv /tmp/run-config-new /tmp/run-config'],
       'bind 0.0.0.0\nprotected-mode yes\nrequirepass ' + credentials.redis + '\nsave ""\nappendonly no\n');
@@ -1049,16 +1099,16 @@ test('isolated HTTP submission through outbox, BullMQ and the fake generation wo
     }
     let trusted;
     if (!browserMode) {
-      const authorityId = start('authority', pgImage, '55438', '5432', '/var/lib/postgresql/data:rw,nosuid,nodev,mode=0700',
+      const authorityId = start('authority', pgImage, '55440', '5432', '/var/lib/postgresql/data:rw,nosuid,nodev,mode=0700',
         ['-e', 'POSTGRES_DB=suppression_proof', '-e', 'POSTGRES_PASSWORD_FILE=/tmp/bootstrap',
           '--entrypoint', 'sh'], ['-ec', 'while [ ! -s /tmp/bootstrap ]; do sleep 1; done; exec docker-entrypoint.sh postgres']);
       docker(['exec', '-i', authorityId, 'sh', '-ec', 'umask 077; cat > /tmp/bootstrap-new; mv /tmp/bootstrap-new /tmp/bootstrap'],
         credentials.authorityAdmin);
       const connect = (port, database, user, password) => new Pool({ host: '127.0.0.1', port, database, user, password,
         connectionTimeoutMillis: 1000, statement_timeout: 3000 });
-      pools.contextVerifier = connect(55435, database, 'fl_p9_context_verifier', credentials.contextVerifier);
-      pools.authorityAdmin = connect(55438, 'suppression_proof', 'postgres', credentials.authorityAdmin);
-      pools.authorityReader = connect(55438, 'suppression_proof', 'ledger_reader', credentials.authorityReader);
+      pools.contextVerifier = connect(55439, database, 'fl_p9_context_verifier', credentials.contextVerifier);
+      pools.authorityAdmin = connect(55440, 'suppression_proof', 'postgres', credentials.authorityAdmin);
+      pools.authorityReader = connect(55440, 'suppression_proof', 'ledger_reader', credentials.authorityReader);
       trusted = await independentAuthority(credentials, pools.contextVerifier, pools.authorityReader, pools.authorityAdmin);
     }
     redis = new Redis(redisUrl.href, { maxRetriesPerRequest: 0, connectTimeout: 1000 });
@@ -1069,10 +1119,10 @@ test('isolated HTTP submission through outbox, BullMQ and the fake generation wo
     const liveBroker = (await redis.info('server')).match(/^run_id:(\w+)/m)?.[1];
     assert.ok(liveBroker);
     queue = new Queue('generation', { prefix, connection: createIORedisClient(redis) });
-    const apiUrl = 'postgresql://' + roles.api + ':' + credentials.api + '@127.0.0.1:55435/' + database;
+    const apiUrl = 'postgresql://' + roles.api + ':' + credentials.api + '@127.0.0.1:55439/' + database;
     prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: apiUrl, statement_timeout: 5000 }) });
     if (trusted) submissionPrisma = new PrismaClient({ adapter: new PrismaPg({
-      connectionString: `postgresql://fl_p9_submit:${credentials.standaloneSubmit}@127.0.0.1:55435/${database}`
+      connectionString: `postgresql://fl_p9_submit:${credentials.standaloneSubmit}@127.0.0.1:55439/${database}`
     }) });
     await exercise({ pools, redisUrl, prefix, queue, prisma, submissionPrisma, run, credentials, trusted, startServer: value => { server = value; },
       startConsumer: value => { consumer = value; } });
