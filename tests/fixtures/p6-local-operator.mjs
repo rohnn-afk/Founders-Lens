@@ -59,19 +59,24 @@ function scramVerifier(password) {
 export async function withP6Provisioning(context, bind) {
   const { primary, authority } = context;
   await context.verify();
-  await audit(primary, ['postgres', 'fl_p6_provision', 'fl_p6_workspace']);
+  const runtimeRoles = ['fl_p6_workspace', ...(context.isolated
+    ? ['fl_p8_conversations', 'fl_p9_submit', 'fl_p9_dispatch', 'fl_p9_worker', 'fl_p9_context_verifier'] : [])];
+  await audit(primary, ['postgres', 'fl_p6_provision', ...runtimeRoles]);
   await audit(authority, ['postgres', 'ledger_reader', 'ledger_writer']);
   const login = async (pool, role) => (await pool.query('SELECT rolcanlogin FROM pg_roles WHERE rolname = $1', [role])).rows[0]?.rolcanlogin;
   const workspaceLogin = await login(primary, 'fl_p6_workspace');
   const writerLogin = await login(authority, 'ledger_writer');
   assert.ok(workspaceLogin && writerLogin, 'Interrupted maintenance requires operator inspection');
+  const enabled = [];
+  for (const role of runtimeRoles) if (await login(primary, role)) enabled.push(role);
   let clean = false;
   const exclusion = await authority.connect();
   try {
     await authority.query('ALTER ROLE ledger_writer NOLOGIN');
-    await primary.query('ALTER ROLE fl_p6_workspace NOLOGIN; ALTER ROLE fl_p6_provision NOLOGIN PASSWORD NULL');
+    for (const role of runtimeRoles) await primary.query('ALTER ROLE ' + role + ' NOLOGIN');
+    await primary.query('ALTER ROLE fl_p6_provision NOLOGIN PASSWORD NULL');
     await drain(authority, 'ledger_writer');
-    await drain(primary, 'fl_p6_workspace');
+    for (const role of runtimeRoles) await drain(primary, role);
     await drain(primary, 'fl_p6_provision');
     // SHARE locks block DML while ordinary clearance reads remain available.
     await exclusion.query('BEGIN; LOCK TABLE authority.intent, authority.coverage, authority.inventory_count, authority.recovery_progress IN SHARE MODE');
@@ -88,7 +93,8 @@ export async function withP6Provisioning(context, bind) {
     const { rows: [sessions] } = await primary.query(`SELECT count(*)::int AS total FROM pg_stat_activity
       WHERE usename = 'fl_p6_provision' AND datname=current_database()`);
     assert.ok(sessions.total === 1 && !await login(primary, 'fl_p6_provision') &&
-      !await login(primary, 'fl_p6_workspace') && !await login(authority, 'ledger_writer'), 'Writer exclusion unavailable');
+      !await login(authority, 'ledger_writer'), 'Writer exclusion unavailable');
+    for (const role of runtimeRoles) assert.equal(await login(primary, role), false, 'Runtime login still enabled');
     await bind(pool);
     await exclusion.query('SELECT 1');
     await context.verify();
@@ -102,9 +108,37 @@ export async function withP6Provisioning(context, bind) {
       try { await exclusion.query('ROLLBACK'); } finally { exclusion.release(); }
     }
     if (clean) {
-      await primary.query('ALTER ROLE fl_p6_workspace LOGIN');
+      for (const role of enabled) await primary.query('ALTER ROLE ' + role + ' LOGIN');
       await authority.query('ALTER ROLE ledger_writer LOGIN');
     }
+  }
+}
+
+/** Seed only the verified P9 binding through an ephemeral, insert-only role. */
+export async function seedP9Conversation(context, accountId) {
+  assert.ok(context.isolated, 'Isolated P9 target required');
+  const client = await context.primary.connect();
+  const ideaId = randomUUID(), conversationId = randomUUID();
+  try {
+    await client.query('BEGIN');
+    await client.query(`CREATE ROLE fl_p9_scope_seed NOLOGIN NOINHERIT;
+      GRANT USAGE ON SCHEMA public TO fl_p9_scope_seed;
+      GRANT INSERT (id,"ownerId",title,"updatedAt") ON public."Idea" TO fl_p9_scope_seed;
+      GRANT INSERT (id,"ideaId","updatedAt","proactiveResearch") ON public."Conversation" TO fl_p9_scope_seed;
+      SET LOCAL ROLE fl_p9_scope_seed`);
+    await client.query('INSERT INTO public."Idea" (id,"ownerId",title,"updatedAt") VALUES ($1,$2,$3,clock_timestamp())',
+      [ideaId, accountId, 'Lantern Locker']);
+    await client.query('INSERT INTO public."Conversation" (id,"ideaId","updatedAt","proactiveResearch") VALUES ($1,$2,clock_timestamp(),false)',
+      [conversationId, ideaId]);
+    await client.query(`RESET ROLE;
+      REVOKE USAGE ON SCHEMA public FROM fl_p9_scope_seed;
+      REVOKE INSERT (id,"ownerId",title,"updatedAt") ON public."Idea" FROM fl_p9_scope_seed;
+      REVOKE INSERT (id,"ideaId","updatedAt","proactiveResearch") ON public."Conversation" FROM fl_p9_scope_seed;
+      DROP ROLE fl_p9_scope_seed;
+      COMMIT`);
+    return { ideaId, conversationId };
+  } finally {
+    try { await client.query('ROLLBACK'); } finally { client.release(); }
   }
 }
 
@@ -213,14 +247,21 @@ async function signWorkspaceDecision(context, privateKeyPath, publicKeyPath, pur
   return { pinned, envelope: envelopes[0] };
 }
 
-/** Bind all four generation permissions to the same verified inventory and recovery run. */
+/** Bind generation permissions and the supporting workspace reads to one verified recovery run. */
 export async function signP9Clearances(context, privateKeyPath, publicKeyPath, confirmation) {
   assert.ok(context.isolated && confirmation === 'approve-p9-isolated-runtime', 'Isolated P9 approval required');
-  const purposes = ['submit', 'status', 'dispatch', 'execute'];
+  const purposes = [
+    ['FL_P9_SUBMIT_DECISION', 'founders-lens:local-generation:submit'],
+    ['FL_P9_STATUS_DECISION', 'founders-lens:local-generation:status'],
+    ['FL_P9_DISPATCH_DECISION', 'founders-lens:local-generation:dispatch'],
+    ['FL_P9_EXECUTE_DECISION', 'founders-lens:local-generation:execute'],
+    ['FL_P6_RECOVERY_DECISION', 'founders-lens:local-workspace:read-only'],
+    ['FL_P8_READ_DECISION', 'founders-lens:local-workspace:read-conversations']
+  ];
   const { pinned, envelopes } = await signDecisions(context, privateKeyPath, publicKeyPath,
-    purposes.map(purpose => 'founders-lens:local-generation:' + purpose));
+    purposes.map(([, purpose]) => purpose));
   return { FL_P6_OPERATOR_PUBLIC_KEY: pinned.toString('base64'),
-    ...Object.fromEntries(purposes.map((purpose, index) => ['FL_P9_' + purpose.toUpperCase() + '_DECISION', envelopes[index]])) };
+    ...Object.fromEntries(purposes.map(([name], index) => [name, envelopes[index]])) };
 }
 
 async function signDecisions(context, privateKeyPath, publicKeyPath, purposes) {

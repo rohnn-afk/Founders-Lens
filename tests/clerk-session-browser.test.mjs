@@ -1,6 +1,7 @@
 // Web authentication boundary tests. Start a built application without Clerk
 // credentials to verify the fail-closed shell over HTTP and optionally Edge.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -23,7 +24,8 @@ const p8Prepare = process.argv.includes('--p8-prepare-role');
 const p8Sign = process.argv.includes('--p8-sign-conversations');
 const p8Live = process.argv.includes('--p8-conversations-browser-live');
 const p9Sign = process.argv.includes('--p9-sign-isolated');
-const modes = [browserLive, reverificationLive, p6Bind, p6Sign, p7Sign, p7Prepare, workspaceCreateLive, p8Prepare, p8Sign, p8Live, p9Sign];
+const p9Bind = process.argv.includes('--p9-bind-isolated');
+const modes = [browserLive, reverificationLive, p6Bind, p6Sign, p7Sign, p7Prepare, workspaceCreateLive, p8Prepare, p8Sign, p8Live, p9Sign, p9Bind];
 const interactiveMode = modes.some(Boolean);
 if (modes.filter(Boolean).length > 1) throw new Error('Select exactly one Clerk test mode.');
 
@@ -190,8 +192,10 @@ test(p7Sign ? 'P7 operator signs idea creation clearance' : 'P6 operator signs l
 });
 
 /** Keep Clerk credentials in the same process as verification and provisioning. */
-test('P6 one-time Clerk binding', { skip: !p6Bind, timeout: 450_000 }, async t => {
-  const { p6Operator, verifyP6ProvisioningGrants, withP6Provisioning } = await import('./fixtures/p6-local-operator.mjs');
+test(p9Bind ? 'P9 one-time isolated Clerk binding' : 'P6 one-time Clerk binding',
+  { skip: !p6Bind && !p9Bind, timeout: 450_000 }, async t => {
+  const { p6Operator, verifyP6ProvisioningGrants, withP6Provisioning, seedP9Conversation } =
+    await import('./fixtures/p6-local-operator.mjs');
   const { clerkConfig } = await import('../apps/api/dist/security/config.js');
   const { createClerkBoundary } = await import('../apps/api/dist/security/clerk.js');
   const { ClerkIdentityProvider } = await import('../apps/api/dist/security/identity-provider.js');
@@ -200,25 +204,28 @@ test('P6 one-time Clerk binding', { skip: !p6Bind, timeout: 450_000 }, async t =
   const { PrismaClient } = await import('../apps/api/dist/generated/prisma/client.js');
   const { PrismaPg } = createRequire(new URL('../apps/api/package.json', import.meta.url))('@prisma/adapter-pg');
   const env = process.env;
+  const expectedSubject = p9Bind ? env.FL_P9_CLERK_TEST_USER_ID : env.CLERK_TEST_USER_ID;
+  if (p9Bind) assert.ok(expectedSubject && expectedSubject !== env.CLERK_TEST_USER_ID &&
+    env.FL_P9_BIND_CONFIRM === 'approve-p9-dedicated-clerk-binding', 'Dedicated P9 Clerk identity and confirmation required');
   const origin = 'http://127.0.0.1:3000';
   const config = clerkConfig({ ...env, CLERK_PUBLISHABLE_KEY: env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY });
   assert.ok(config.publishableKey.startsWith('pk_test_') && config.authorizedParties.includes(origin) &&
-    /^user_[A-Za-z0-9_-]+$/.test(env.CLERK_TEST_USER_ID ?? '') &&
+    /^user_[A-Za-z0-9_-]+$/.test(expectedSubject ?? '') &&
     (config.audience || env.CLERK_TEST_ALLOW_NO_AUDIENCE === '1'), 'Approved Clerk development identity required');
-  const context = await p6Operator(t);
+  const context = await p6Operator(t, { isolated: p9Bind });
   await verifyP6ProvisioningGrants(context.primary);
   const boundary = createClerkBoundary({ ...config, authorizedParties: [origin] });
   const provider = new ClerkIdentityProvider(boundary.client);
   const evaluate = await openEdge(t, origin + '/app', true);
   const shell = `location.origin === ${JSON.stringify(origin)} && location.pathname === '/app' &&
     document.body?.innerText.includes('You are signed in.') && window.Clerk?.session?.status === 'active'`;
-  console.info('Edge is ready for the approved P6 development account. Sign in within three minutes.');
+  console.info(`Edge is ready for the approved ${p9Bind ? 'P9' : 'P6'} development account. Sign in within three minutes.`);
   await waitForBrowser(async () => await evaluate(shell) === true, manualSignInTimeout);
   const token = await evaluate(`(${shell}) ? window.Clerk.session.getToken({ skipCache: true }) : null`, 10_000);
   assert.ok(typeof token === 'string' && token.split('.').length === 3, 'Fresh Clerk session required');
   const header = 'Bearer ' + token;
   const identity = await boundary.authenticate({ authorization: header }, ['Authorization', header]);
-  assert.ok(identity.instanceId === config.instanceId && identity.subject === env.CLERK_TEST_USER_ID &&
+  assert.ok(identity.instanceId === config.instanceId && identity.subject === expectedSubject &&
     (config.audience || !Object.hasOwn(JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()), 'aud')),
   'Clerk identity or audience does not match the approved policy');
   await provider.assertLive(identity);
@@ -231,6 +238,55 @@ test('P6 one-time Clerk binding', { skip: !p6Bind, timeout: 450_000 }, async t =
     (SELECT count(*)::int FROM "IdentityTombstone") AS tombstones`, [identity.instanceId, identity.subject, 1,
     context.subjectKeys.derive(identity.instanceId, identity.subject)[0].digest])).rows[0];
   const expected = { accounts: 1, matching: 1, ideas: 0, conversations: 0, messages: 0, operations: 0, tombstones: 0 };
+  if (p9Bind) {
+    const prompt = 'Fictional startup Lantern Locker plans to rent reusable picnic kits to apartment residents. We assume tenants will pay for convenience. Which assumption should we test first, and what result would falsify it?';
+    const sha = createHash('sha256').update(prompt, 'utf8').digest('hex');
+    assert.equal(sha, '8f433175bbee2f21f373843f271bc0529e183e083e0511f45a2a7aac8a0a2fa0');
+    const expectedFinal = { ...expected, ideas: 1, conversations: 1 };
+    const verifyNoAttempts = async () => assert.equal((await context.primary.query(
+      'SELECT count(*)::int AS count FROM public."GenerationAttempt"')).rows[0].count, 0);
+    const readScope = async () => {
+      const { rows } = await context.primary.query(`SELECT a.id AS account, c.id AS conversation
+        FROM public."UserAccount" a
+        JOIN public."Idea" i ON i."ownerId"=a.id AND i.title='Lantern Locker' AND i.status='ACTIVE'
+        JOIN public."Conversation" c ON c."ideaId"=i.id AND c.status='ACTIVE' AND c."nextSequence"=1
+        WHERE a."clerkInstanceId"=$1 AND a."clerkSubject"=$2 AND a.status='ACTIVE'`, [identity.instanceId, identity.subject]);
+      assert.equal(rows.length, 1, 'Verified P9 conversation required');
+      return rows[0];
+    };
+    const before = await readCounts();
+    await verifyNoAttempts();
+    if (before.conversations === 0) {
+      const fresh = before.accounts === 0;
+      assert.deepEqual(before, fresh ? { ...expected, accounts: 0, matching: 0 } : expected);
+      await withP6Provisioning(context, async pool => {
+        await verifyP6ProvisioningGrants(context.primary);
+        assert.deepEqual(await readCounts(), before);
+        await provider.assertLive(identity);
+        assert.ok(identity.expiresAt > Date.now(), 'Clerk session expired');
+        const prisma = new PrismaClient({ adapter: new PrismaPg(pool), log: [], errorFormat: 'minimal' });
+        try {
+          const service = new IdentityService(config.instanceId, context.subjectKeys, provider,
+            new PrismaIdentityRepository(prisma), context.ledger.authority);
+          const principal = await service.resolve(identity, 'p9-isolated-binding');
+          await seedP9Conversation(context, principal.localUserId);
+          assert.deepEqual(await readCounts(), expectedFinal);
+          await verifyNoAttempts();
+          await readScope();
+        } finally { await prisma.$disconnect(); }
+      });
+    } else assert.deepEqual(before, expectedFinal);
+    const scope = await readScope();
+    await context.verify();
+    const values = `FL_P9_SYNTHETIC_ACCOUNT=${scope.account}\nFL_P9_SYNTHETIC_CONVERSATION=${scope.conversation}\nFL_P9_SYNTHETIC_TEXT_SHA256=${sha}\n`;
+    try { await writeFile('.env.p9-scope.local', values, { flag: 'wx', mode: 0o600 }); }
+    catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+      assert.ok(await readFile('.env.p9-scope.local', 'utf8') === values, 'Existing scope file differs');
+    }
+    console.info('P9 binding verified. Accounts 1, ideas 1, conversations 1, messages 0, attempts 0.');
+    return;
+  }
   const before = await readCounts();
   if (before.accounts === 0) {
     assert.deepEqual(before, { ...expected, accounts: 0, matching: 0 });

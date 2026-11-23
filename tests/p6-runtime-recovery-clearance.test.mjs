@@ -69,9 +69,9 @@ test('runtime recovery rejects unsigned, malformed, expired and noncanonical dec
   await assert.rejects(guard(signed(decision), operator.privateKey).assertClearance(), denied);
   assert.equal(reads, 0);
   const verifier = guard(signed(decision));
-  assert.deepEqual(Object.keys(verifier), ['assertClearance', 'verifiedDeadline']);
+  assert.deepEqual(Object.keys(verifier), ['assertClearance', 'verifiedDeadline', 'verifiedDecision']);
   await verifier.assertClearance();
-  await verifier.assertClearance();
+  assert.deepEqual(await verifier.verifiedDecision(), decision);
   assert.equal(reads, 2);
   const create = 'founders-lens:local-workspace:create-idea';
   const writeGuard = encoded => createRuntimeRecoveryClearance({ decision: encoded, operatorPublicKey: operator.publicKey,

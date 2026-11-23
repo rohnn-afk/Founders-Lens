@@ -9,7 +9,41 @@ import { deterministicFounderProvider, founderInstructions, founderPrompt, found
 
 const source = (text, truncated = false) => ({ id: 'fixture', text, truncated });
 const input = text => founderPrompt({ current: source(text), previous: [], memory: [] });
-const env = { P9_GEMINI_API_KEY: 'synthetic_dummy_fixture_key', P9_GEMINI_MODEL: 'gemini-3.1-flash-lite' };
+const standardKey = 'AIza' + 'synthetic_fixture'.padEnd(35, '_');
+const authorizationKey = 'AQ.synthetic_authorization_fixture';
+const env = { P9_GEMINI_API_KEY: standardKey, P9_GEMINI_MODEL: 'gemini-3.1-flash-lite' };
+
+for (const [kind, key] of [['standard', standardKey], ['authorization', authorizationKey]]) {
+  test(`the installed SDK sends the ${kind} key unchanged in the API-key header`, async t => {
+    t.mock.method(globalThis, 'fetch', async () => { throw new Error('Ambient network disabled'); });
+    let calls = 0;
+    const provider = geminiFounderProvider({ ...env, P9_GEMINI_API_KEY: key }, async (url, options) => {
+      calls++;
+      const headers = new Headers(options.headers);
+      assert.equal(headers.get('x-goog-api-key'), key);
+      assert.equal(headers.has('authorization'), false);
+      assert.equal(String(url).includes(key), false);
+      assert.equal(String(options.body).includes(key), false);
+      return Response.json({ responseId: key, candidates: [{ finishReason: 'STOP',
+        content: { parts: [{ text: 'Unexpected echo: ' + key }] } }],
+      usageMetadata: { promptTokenCount: 9, totalTokenCount: 12 } });
+    });
+    assert.deepEqual(await provider.generate(input('Synthetic pricing'), new AbortController().signal), {
+      text: null, responseId: null, usage: { inputTokens: 9, outputTokens: 3, totalTokens: 12 }
+    });
+    assert.equal(calls, 1);
+  });
+}
+
+test('Gemini key validation rejects placeholders, malformed values and unsafe header characters', () => {
+  for (const key of [undefined, '', 'YOUR_GEMINI_API_KEY_HERE', 'AQ.placeholder_fixture',
+    'AQ.short', 'AQ.' + 'a'.repeat(198), 'AIza.short', 'AQ.' + 'a'.repeat(20) + '.extra',
+    standardKey + '\n', authorizationKey + '\r\nInjected: x', authorizationKey + '\0',
+    'Bearer ' + authorizationKey, '<' + standardKey + '>', standardKey + ';']) {
+    assert.throws(() => geminiFounderProvider({ ...env, P9_GEMINI_API_KEY: key }),
+      { message: 'Approved worker Gemini configuration is unavailable' });
+  }
+});
 
 test('the synthetic provider guard denies altered text and any conversation history before provider I/O', async () => {
   const text = 'Confirmed synthetic startup exercise';

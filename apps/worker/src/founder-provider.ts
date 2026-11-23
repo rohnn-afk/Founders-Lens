@@ -81,11 +81,21 @@ function tokenCount(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
+/** Accept the standard Google key and the single-dot AI Studio authorization key. */
+function validGeminiKey(value: string): boolean {
+  const authorization = value.startsWith('AQ.');
+  if (!authorization && !value.startsWith('AIza')) return false;
+  const payload = value.slice(authorization ? 3 : 4);
+  const lengthValid = authorization ? payload.length >= 17 && payload.length <= 197 : payload.length === 35;
+  return lengthValid && !/[^A-Za-z0-9_-]/.test(payload) &&
+    !/^(?:placeholder|replace[_-]?me|your[_-]?(?:gemini[_-]?)?api[_-]?key)(?:[_-]|$)/i.test(payload);
+}
+
 /** Explicit worker-only SDK construction. The transport can be substituted by offline tests. */
 export function geminiFounderProvider(env: NodeJS.ProcessEnv, transport?: typeof fetch): FounderProvider {
   const apiKey = env['P9_GEMINI_API_KEY'];
   const model = env['P9_GEMINI_MODEL'];
-  if (!apiKey || !/^[A-Za-z0-9_-]{20,200}$/.test(apiKey) || model !== 'gemini-3.1-flash-lite') {
+  if (!apiKey || !validGeminiKey(apiKey) || model !== 'gemini-3.1-flash-lite') {
     throw new Error('Approved worker Gemini configuration is unavailable');
   }
   const send = transport ?? fetch;
@@ -116,8 +126,11 @@ export function geminiFounderProvider(env: NodeJS.ProcessEnv, transport?: typeof
         const parts = candidate?.finishReason === FinishReason.STOP ? candidate.content?.parts?.filter(part => !part.thought) : undefined;
         // Inspect text directly to avoid SDK helpers that may explain unexpected parts in logs.
         const text = parts?.every(part => typeof part.text === 'string') ? parts.map(part => part.text).join('') : undefined;
-        const responseId = response.responseId && /^[A-Za-z0-9_.:-]{1,160}$/.test(response.responseId) ? response.responseId : null;
-        return { text: text?.trim() && text.isWellFormed() && !text.includes('\0') && Array.from(text).length <= 10_000
+        const responseId = response.responseId && /^[A-Za-z0-9_.:-]{1,160}$/.test(response.responseId) &&
+          !response.responseId.includes(apiKey) ? response.responseId : null;
+        // A provider echo must not turn a transport credential into stored content.
+        return { text: text?.trim() && text.isWellFormed() && !text.includes('\0') && !text.includes(apiKey) &&
+          Array.from(text).length <= 10_000
           && usage && usage.inputTokens <= inputBytes && usage.outputTokens <= outputTokens ? text : null, usage, responseId };
       } catch {
         // SDK error objects can contain request or response data. Do not retain the cause.
