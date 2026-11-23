@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { generationId, generationWorker } from '../apps/worker/dist/generation-worker.js';
+import { founderPrompt } from '../apps/worker/dist/founder-provider.js';
+import { groqFounderProvider } from '../apps/worker/dist/groq-provider.js';
 
 const id = randomUUID();
 const job = { id, name: 'generation.requested', data: { generationId: id } };
@@ -47,6 +49,42 @@ test('duplicate delivery does not invoke or finish twice', async () => {
   const { worker, calls } = harness();
   await Promise.all([worker.process(job), worker.process(job)]);
   assert.deepEqual(calls, [['start', 7], ['receipt', 7], ['finish', 7, 'fixed']]);
+});
+
+test('a metered Groq truncation passes usage to settlement once and never publishes partial text', async () => {
+  const current = { ...scope, triggerMessageId: randomUUID() };
+  const receipts = [], finalizations = [], events = [];
+  let claimed = false, calls = 0;
+  const provider = groqFounderProvider('gsk_' + 'offline_synthetic_fixture', async () => {
+    calls++;
+    return Response.json({ id: 'chatcmpl-fixture', choices: [
+      { finish_reason: 'length', message: { role: 'assistant', content: 'Partial' } }
+    ], usage: { prompt_tokens: 273, completion_tokens: 1024, total_tokens: 1297 } });
+  }, event => events.push(event));
+  const repository = {
+    scope: async () => current,
+    async claim() {
+      if (claimed) return;
+      claimed = true;
+      return { epoch: 7, remainingMs: 5000 };
+    },
+    markInvocation: async () => true,
+    heartbeat: async () => true,
+    async recordUsage(_scope, epoch, result) { receipts.push({ epoch, usage: result.usage }); return true; },
+    async finish(_scope, _epoch, response) { finalizations.push(response); }
+  };
+  const worker = generationWorker(repository, () => assert.fail('Fixture proof must not be used'),
+    value => value === id, undefined, () => 10,
+    (context, signal) => provider.generate(founderPrompt(context), signal), {
+      verifyExecution: async () => 100,
+      readContext: async () => ({ current: { id: current.triggerMessageId, text: 'Synthetic', truncated: false },
+        previous: [], memory: [] })
+    });
+  await Promise.all([worker.process(job), worker.process(job)]);
+  assert.equal(calls, 1);
+  assert.deepEqual(events, ['GROQ_COMPLETION_TRUNCATED']);
+  assert.deepEqual(receipts, [{ epoch: 7, usage: { inputTokens: 273, outputTokens: 1024, totalTokens: 1297 } }]);
+  assert.deepEqual(finalizations, [null]);
 });
 
 test('expiry of either scope during markInvocation prevents fake execution', async () => {

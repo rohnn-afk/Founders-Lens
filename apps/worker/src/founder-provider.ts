@@ -70,7 +70,7 @@ export function deterministicFounderProvider(): FounderProvider {
   };
 }
 
-function validatePrompt(prompt: FounderPrompt) {
+export function validatePrompt(prompt: FounderPrompt) {
   if (prompt.version !== founderPromptVersion || !prompt.data || !prompt.data.isWellFormed() ||
     prompt.data.includes('\0') || Buffer.byteLength(founderInstructions) + Buffer.byteLength(prompt.data) > inputBytes) {
     throw new Error('Founder prompt exceeds local input policy');
@@ -92,10 +92,49 @@ function validGeminiKey(value: string): boolean {
 }
 
 type GeminiRejection = 'INVALID_ARGUMENT' | 'FAILED_PRECONDITION' | 'INVALID_API_KEY' | 'NOT_FOUND' | 'RESOURCE_EXHAUSTED';
-type GeminiDiagnostic = 'GEMINI_REQUEST_REJECTED_400' | `GEMINI_REQUEST_REJECTED_${GeminiRejection}`;
+const geminiRequestFields = [
+  ['model', 'MODEL'],
+  ['contents', 'CONTENTS'],
+  ['contents[0].role', 'CONTENT_ROLE'],
+  ['contents[0].parts[0].text', 'CONTENT_TEXT'],
+  ['systemInstruction', 'SYSTEM_INSTRUCTION'],
+  ['system_instruction', 'SYSTEM_INSTRUCTION'],
+  ['systemInstruction.role', 'SYSTEM_INSTRUCTION_ROLE'],
+  ['system_instruction.role', 'SYSTEM_INSTRUCTION_ROLE'],
+  ['generationConfig', 'GENERATION_CONFIG'],
+  ['generation_config', 'GENERATION_CONFIG'],
+  ['generationConfig.thinkingConfig', 'THINKING_CONFIG'],
+  ['generation_config.thinking_config', 'THINKING_CONFIG'],
+  ['generationConfig.thinkingConfig.thinkingLevel', 'THINKING_LEVEL'],
+  ['generation_config.thinking_config.thinking_level', 'THINKING_LEVEL'],
+  ['generationConfig.maxOutputTokens', 'MAX_OUTPUT_TOKENS'],
+  ['generation_config.max_output_tokens', 'MAX_OUTPUT_TOKENS'],
+  ['generationConfig.candidateCount', 'CANDIDATE_COUNT'],
+  ['generation_config.candidate_count', 'CANDIDATE_COUNT']
+] as const;
+type GeminiRequestField = typeof geminiRequestFields[number][1];
+const requestFieldLabels = new Map<string, GeminiRequestField>(geminiRequestFields);
+type GeminiDiagnostic = 'GEMINI_REQUEST_REJECTED_400' | `GEMINI_REQUEST_REJECTED_${GeminiRejection}` |
+  `GEMINI_REQUEST_INVALID_FIELD_${GeminiRequestField}`;
+
+/** Map typed Google BadRequest paths to fixed labels. Ignore all descriptions and unfamiliar paths. */
+function reportInvalidFields(details: readonly unknown[], report: (event: GeminiDiagnostic) => void) {
+  const identified = new Set<GeminiRequestField>();
+  for (const detail of details) {
+    if (typeof detail !== 'object' || !detail || !('@type' in detail) ||
+      detail['@type'] !== 'type.googleapis.com/google.rpc.BadRequest' ||
+      !('fieldViolations' in detail) || !Array.isArray(detail.fieldViolations)) continue;
+    for (const violation of detail.fieldViolations as readonly unknown[]) {
+      if (typeof violation !== 'object' || !violation || !('field' in violation) || typeof violation.field !== 'string') continue;
+      const label = requestFieldLabels.get(violation.field);
+      if (label) identified.add(label);
+    }
+  }
+  for (const label of identified) report(`GEMINI_REQUEST_INVALID_FIELD_${label}`);
+}
 
 /** SDK 3.6.1 places the REST JSON envelope in ApiError.message. Inspect only structured enum fields. */
-function geminiRejection(error: ApiError): GeminiRejection | undefined {
+function geminiRejection(error: ApiError, report: (event: GeminiDiagnostic) => void): GeminiRejection | undefined {
   if (![400, 401, 403, 404, 429].includes(error.status) || error.message.length > 16_384) return;
   let envelope: unknown;
   try { envelope = JSON.parse(error.message); }
@@ -104,15 +143,19 @@ function geminiRejection(error: ApiError): GeminiRejection | undefined {
   const details = envelope.error;
   if (typeof details !== 'object' || !details || !('code' in details) || details.code !== error.status ||
     !('status' in details)) return;
+  const structuredDetails: readonly unknown[] = 'details' in details && Array.isArray(details.details) ? details.details : [];
   if (((error.status === 400 && details.status === 'INVALID_ARGUMENT') ||
     (error.status === 401 && details.status === 'UNAUTHENTICATED') ||
     (error.status === 403 && details.status === 'PERMISSION_DENIED')) &&
-    'details' in details && Array.isArray(details.details) && details.details.some((entry: unknown) =>
+    structuredDetails.some(entry =>
       typeof entry === 'object' && entry !== null && '@type' in entry &&
       entry['@type'] === 'type.googleapis.com/google.rpc.ErrorInfo' &&
       'domain' in entry && entry.domain === 'googleapis.com' &&
       'reason' in entry && entry.reason === 'API_KEY_INVALID')) return 'INVALID_API_KEY';
-  if (error.status === 400 && details.status === 'INVALID_ARGUMENT') return 'INVALID_ARGUMENT';
+  if (error.status === 400 && details.status === 'INVALID_ARGUMENT') {
+    reportInvalidFields(structuredDetails, report);
+    return 'INVALID_ARGUMENT';
+  }
   if (error.status === 400 && details.status === 'FAILED_PRECONDITION') return 'FAILED_PRECONDITION';
   if (error.status === 404 && details.status === 'NOT_FOUND') return 'NOT_FOUND';
   if (error.status === 429 && details.status === 'RESOURCE_EXHAUSTED') return 'RESOURCE_EXHAUSTED';
@@ -164,7 +207,7 @@ export function geminiFounderProvider(env: NodeJS.ProcessEnv, transport?: typeof
       } catch (error) {
         // SDK error objects can contain request or response data. Do not retain the cause.
         if (error instanceof ApiError) {
-          const category = geminiRejection(error);
+          const category = geminiRejection(error, report);
           // A rejection diagnostic supplies no metering evidence. Preserve conservative accounting.
           if (category) report(`GEMINI_REQUEST_REJECTED_${category}`);
           if (error.status === 400) {

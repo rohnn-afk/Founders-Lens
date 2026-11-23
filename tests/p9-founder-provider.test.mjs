@@ -158,6 +158,40 @@ test('Gemini emits only allowlisted rejection events supported by structured HTT
   }
 });
 
+test('Gemini identifies only allowlisted fields in a structured BadRequest detail', async t => {
+  t.mock.method(globalThis, 'fetch', async () => { throw new Error('Ambient network disabled'); });
+  let calls = 0;
+  const events = [];
+  const prompt = input('Synthetic founder turn');
+  const provider = geminiFounderProvider(env, async (_url, request) => {
+    calls++;
+    assert.equal(JSON.parse(request.body).generationConfig.thinkingConfig.thinkingLevel, 'MINIMAL');
+    // Simulated field rejection exercises diagnostics, independent of live model behavior.
+    return Response.json({ error: { code: 400, status: 'INVALID_ARGUMENT', message: standardKey, details: [
+      { '@type': 'type.googleapis.com/google.rpc.BadRequest', fieldViolations: [
+        { field: 'generationConfig.thinkingConfig.thinkingLevel', description: prompt.data },
+        { field: 'generation_config.thinking_config.thinking_level', description: standardKey },
+        { field: 'system_instruction.role', description: 'private provider text' },
+        { field: 'generationConfig.maxOutputTokens', description: 'private provider text' },
+        { field: 'generation_config.candidate_count' },
+        { field: 'contents[0].role' },
+        { field: 'contents[0].parts[0].text' },
+        { field: standardKey }, { field: prompt.data }, null
+      ] },
+      { '@type': 'type.googleapis.com/google.rpc.ErrorInfo', fieldViolations: [{ field: 'model' }] }
+    ] } }, { status: 400 });
+  }, event => events.push(event));
+  await assert.rejects(provider.generate(prompt, new AbortController().signal),
+    { message: 'Gemini rejected the generation request (HTTP 400)' });
+  assert.equal(calls, 1);
+  assert.deepEqual(events, [
+    'GEMINI_REQUEST_INVALID_FIELD_THINKING_LEVEL', 'GEMINI_REQUEST_INVALID_FIELD_SYSTEM_INSTRUCTION_ROLE',
+    'GEMINI_REQUEST_INVALID_FIELD_MAX_OUTPUT_TOKENS', 'GEMINI_REQUEST_INVALID_FIELD_CANDIDATE_COUNT',
+    'GEMINI_REQUEST_INVALID_FIELD_CONTENT_ROLE', 'GEMINI_REQUEST_INVALID_FIELD_CONTENT_TEXT',
+    'GEMINI_REQUEST_REJECTED_INVALID_ARGUMENT'
+  ]);
+});
+
 test('metered Gemini replies can be billed even when no complete answer can be published', async t => {
   t.mock.method(globalThis, 'fetch', async () => { throw new Error('Ambient network disabled'); });
   const provider = geminiFounderProvider(env, async () => Response.json({ responseId: 'fixture.truncated',
