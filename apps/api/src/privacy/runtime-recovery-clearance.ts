@@ -11,9 +11,10 @@ const target = z.string().regex(/^[1-9][0-9]{0,19}:[1-9][0-9]{0,9}$/);
 const time = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const versions = z.array(z.number().int().min(1).max(2147483647)).min(1).max(16)
   .refine(value => value.every((version, index) => index === 0 || version > value[index - 1]!));
+const hostedPurposes = ['founders-lens:staging-workspace:read-only', 'founders-lens:staging-workspace:read-conversations'] as const;
 const decisionSchema = z.strictObject({
   version: z.literal(1),
-  purpose: z.enum(['founders-lens:local-workspace:read-only', 'founders-lens:local-workspace:create-idea',
+  purpose: z.enum([...hostedPurposes, 'founders-lens:local-workspace:read-only', 'founders-lens:local-workspace:create-idea',
     'founders-lens:local-workspace:read-conversations', 'founders-lens:local-workspace:create-conversation',
     'founders-lens:local-workspace:save-user-message',
     'founders-lens:local-generation:submit', 'founders-lens:local-generation:dispatch',
@@ -76,6 +77,7 @@ export function createRuntimeRecoveryClearance(deps: {
   readonly authority: Pick<ReturnType<typeof createSuppressionLedger>, 'runtimeSnapshot'>;
   readonly subjectKeys?: SubjectKeys;
   readonly retainedSubjectVersions?: readonly number[];
+  readonly hostedStaging?: true;
   readonly purpose?: RuntimeRecoveryDecision['purpose'];
 }) {
   const { decision: encoded, operatorPublicKey, primary, authority, subjectKeys } = deps;
@@ -98,11 +100,14 @@ export function createRuntimeRecoveryClearance(deps: {
   /** Return the authenticated binding so downstream callers can compare exact saved scope references. */
   async function verifiedDecision(): Promise<RuntimeRecoveryDecision> {
       try {
-        if (process.env['NODE_ENV'] === 'production' || operatorPublicKey.type !== 'public' ||
+        const purpose = deps.purpose ?? 'founders-lens:local-workspace:read-only';
+        const hostedPurpose = hostedPurposes.some(value => value === purpose);
+        if (hostedPurpose !== Boolean(deps.hostedStaging) ||
+          (process.env['NODE_ENV'] === 'production' && !hostedPurpose) || operatorPublicKey.type !== 'public' ||
           operatorPublicKey.asymmetricKeyType !== 'ed25519' || !primary.options.connectionTimeoutMillis ||
           primary.options.connectionTimeoutMillis > 5000) throw new Error('Local recovery verification unavailable');
         const decision = readDecision(encoded, operatorPublicKey);
-        if (decision.purpose !== (deps.purpose ?? 'founders-lens:local-workspace:read-only') ||
+        if (decision.purpose !== purpose ||
           !clockIsValid(decision)) throw new Error('Recovery decision unavailable for this operation');
         if (Boolean(subjectKeys) === Boolean(deps.retainedSubjectVersions)) throw new Error('Missing key policy');
         const retained = versions.parse(subjectKeys

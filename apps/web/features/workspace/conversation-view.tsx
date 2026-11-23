@@ -15,7 +15,7 @@ import styles from './workspace.module.css';
 
 export function ConversationView({ ideaId, conversationId }: { ideaId: string; conversationId: string }) {
   const [revision, setRevision] = useState(0);
-  const { savedMessages } = useWorkspace();
+  const { readOnly, savedMessages } = useWorkspace();
   const load = useCallback(({ reads, api, scope, recovery }: ReturnType<typeof useWorkspace>) => {
     void revision;
     return readConversation(reads, { ...api, async idea(id, signal) {
@@ -38,7 +38,7 @@ export function ConversationView({ ideaId, conversationId }: { ideaId: string; c
       <h1>{conversation.title || 'Untitled conversation'}</h1>
     </header>
     {archived && <p className={styles['feedback']} role="status">Archived (read only)</p>}
-    <ConversationMessages ideaId={ideaId} conversationId={conversationId} archived={archived} />
+    <ConversationMessages ideaId={ideaId} conversationId={conversationId} archived={readOnly || archived} />
   </>;
 }
 

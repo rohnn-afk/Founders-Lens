@@ -29,11 +29,11 @@ import { localConversationRoutes, workspaceIdeaListRoutes, type LocalConversatio
 import { localConversationOperations } from './local-conversations.js';
 import { WorkspaceService } from './service.js';
 
-const origin = 'http://127.0.0.1:3000';
+const localOrigin = 'http://127.0.0.1:3000';
 
 /** Limit local browser access to the exact configured ideas endpoint and methods. */
 export function workspaceIdeasCors(allowCreate: boolean, conversations?: { create: boolean; save: boolean },
-  generationConversation?: string): RequestHandler {
+  generationConversation?: string, origin = localOrigin): RequestHandler {
   return (request, response, next) => {
     const path = request.path;
     const allowSubmission = Boolean(generationConversation);
@@ -85,6 +85,7 @@ export function workspaceIdeasCors(allowCreate: boolean, conversations?: { creat
 
 /** Open the fixed P6 read endpoints and validate signed clearance before mounting. */
 export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
+  const origin = localOrigin;
   if (env['FL_P6_READ_ONLY'] !== '1' || env['NODE_ENV'] === 'production') return;
   const isolated = env['FL_P9_ISOLATED'] === '1';
   const cedar = cedarAcceptanceEnabled(env);

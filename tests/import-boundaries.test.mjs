@@ -59,21 +59,29 @@ function inspect(file, text) {
   return { imports, processReferences, client };
 }
 
+const stagingEnvironment = new Map([
+  ['features/workspace/endpoints.ts', new Set(['NEXT_PUBLIC_FL_WEB_ORIGIN', 'NEXT_PUBLIC_FL_API_ORIGIN'])],
+  ['app/health/ready/route.ts', new Set(['NEXT_PUBLIC_FL_WEB_ORIGIN', 'NEXT_PUBLIC_FL_API_ORIGIN',
+    'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY', 'CLERK_SECRET_KEY', 'CLERK_AUTHORIZED_PARTIES', 'FL_INTERNAL_API_ORIGIN'])]
+]);
+
 function assertWebBoundary(file, { imports, processReferences, client }) {
   const authImports = authEntrypoints.get(file);
-  if (authImports) assert.equal(client, false, `Client authentication entry point in ${file}`);
+  const stagingKeys = stagingEnvironment.get(file);
+  if (authImports || stagingKeys) assert.equal(client, false, `Client authentication entry point in ${file}`);
   for (const reference of processReferences) {
     const env = reference.parent, read = env.parent;
-    assert.ok(authImports && ts.isPropertyAccessExpression(env) && env.expression === reference &&
+    assert.ok((authImports || stagingKeys) && ts.isPropertyAccessExpression(env) && env.expression === reference &&
       env.name.text === 'env' && ts.isPropertyAccessExpression(read) && read.expression === env,
     `Process configuration in ${file}`);
     const name = read.name.text;
+    if (stagingKeys) assert.ok(stagingKeys.has(name), `Unauthorized configuration in ${file}`);
     if (name === 'CLERK_SECRET_KEY') {
       // These server entry points only need to know whether a key is present.
       assert.ok(ts.isPrefixUnaryExpression(read.parent) && read.parent.operator === ts.SyntaxKind.ExclamationToken,
         `Raw Clerk secret access in ${file}`);
     } else {
-      assert.ok(name === 'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY' ||
+      assert.ok(stagingKeys?.has(name) || name === 'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY' ||
         (file === 'proxy.ts' && name === 'CLERK_AUTHORIZED_PARTIES'), `Unauthorized configuration in ${file}`);
     }
   }

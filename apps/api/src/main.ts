@@ -2,6 +2,8 @@
 // Express app on loopback, and owns the server's shutdown lifecycle.
 
 import { z } from 'zod';
+import { stagingConfig } from './workspace/staging-config.js';
+import { stagingWorkspace } from './workspace/staging-composition.js';
 import { createApp } from './app.js';
 import { localReadOnlyWorkspace } from './workspace/read-only-composition.js';
 
@@ -9,22 +11,38 @@ const config = z.object({
   port: z.coerce.number().int().min(0).max(65535).default(3001)
 }).safeParse({ port: process.env['API_PORT'] });
 
-if (!config.success) {
+const deployment = process.env['FL_DEPLOYMENT'];
+if (deployment !== undefined && deployment !== 'staging') {
+  console.error('Unsupported API deployment.');
+  process.exitCode = 1;
+} else if (!config.success) {
   console.error('API configuration invalid.');
   process.exitCode = 1;
 } else {
-  const local = await localReadOnlyWorkspace(process.env).catch(() => {
+  try {
+    await startApi(config.data.port);
+  } catch {
+    console.error('API startup denied.');
+    process.exitCode = 1;
+  }
+}
+
+async function startApi(localPort: number) {
+  const staging = deployment === 'staging' ? stagingConfig(process.env) : undefined;
+  const hosted = staging && await stagingWorkspace(process.env, staging);
+  const local = hosted ?? await localReadOnlyWorkspace(process.env).catch(() => {
     console.error('Local workspace clearance unavailable.');
     return undefined;
   });
-  const server = createApp(local?.router).listen(config.data.port, '127.0.0.1', () => {
+  const server = createApp(local?.router, hosted?.ready).listen(staging?.port ?? localPort, staging ? '::' : '127.0.0.1', () => {
     const address = server.address();
     if (address && typeof address !== 'string') {
-      console.log(`API shell listening on http://127.0.0.1:${address.port}`);
+      console.log(staging ? `Staging API listening on port ${address.port}.` : `API shell listening on http://127.0.0.1:${address.port}`);
     }
   });
-  server.on('error', () => {
+  server.on('error', async () => {
     console.error('API server failed.');
+    await local?.close().catch(() => console.error('API shutdown incomplete.'));
     process.exitCode = 1;
   });
 

@@ -1,4 +1,8 @@
 // Lifecycle shell only: no queue clients, provider adapters or job processing.
+if (process.env['FL_DEPLOYMENT']) {
+  console.error('Hosted generation worker is unavailable.');
+  process.exit(1);
+}
 const keepAlive = setInterval(() => {}, 60_000);
 let stopping = false;
 const shutdown = () => {

@@ -92,6 +92,32 @@ test('runtime recovery rejects unsigned, malformed, expired and noncanonical dec
   }
 });
 
+test('staging grants work in production and reject local grants and changed targets', async t => {
+  const previous = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'production';
+  t.after(() => {
+    if (previous === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previous;
+  });
+  const snapshot = { authorityIdentity: '202:10', namespace, epoch: randomUUID(),
+    inventoryDigest: 'b'.repeat(64), subjectVersions: [1, 2] };
+  const scope = decisionFor('101:10', snapshot);
+  const purpose = 'founders-lens:staging-workspace:read-only';
+  let target = scope.primaryTarget;
+  const primary = { options: { connectionTimeoutMillis: 1000 }, query: async () => ({ rows: [{ identity: target }] }) };
+  const authority = { runtimeSnapshot: async () => snapshot };
+  const guard = (decision, options = {}) => createRuntimeRecoveryClearance({
+    decision: signed(decision), operatorPublicKey: operator.publicKey, primary, authority, subjectKeys, ...options
+  });
+  const allowed = guard({ ...scope, purpose }, { hostedStaging: true, purpose });
+  await allowed.assertClearance();
+  await assert.rejects(guard(scope).assertClearance(), denied);
+  await assert.rejects(guard(scope, { hostedStaging: true, purpose }).assertClearance(), denied);
+  await assert.rejects(guard({ ...scope, purpose }, { purpose }).assertClearance(), denied);
+  target = '303:10';
+  await assert.rejects(allowed.assertClearance(), denied);
+});
+
 test('normal startup has no private idea route', async t => {
   const server = createApp().listen(0, '127.0.0.1');
   await once(server, 'listening');
@@ -515,6 +541,26 @@ test('runtime decision is invalidated by live PostgreSQL target and authority ch
         } finally { await writeClient.$disconnect(); }
       });
     } finally { await prisma.$disconnect(); }
+  });
+
+  await t.test('staging grants permit transcript locks but reject content writes', async () => {
+    await primary.query('CREATE DATABASE founders_lens_staging');
+    const staging = pool(primaryPort, 'founders_lens_staging', 'postgres', primaryPassword);
+    await staging.query(await readFile('apps/api/prisma/migrations/0001_approved_baseline/migration.sql', 'utf8'));
+    await staging.query(await readFile('scripts/staging-read-grants.sql', 'utf8'));
+    const session = await staging.connect();
+    try {
+      await session.query('SET ROLE fl_p8_conversations');
+      await session.query('SELECT id FROM public."Conversation" LIMIT 0 FOR SHARE');
+      await session.query('SELECT content FROM public."Message" LIMIT 0');
+      await assert.rejects(session.query('INSERT INTO public."Message" DEFAULT VALUES'), { code: '42501' });
+      await assert.rejects(session.query('UPDATE public."Conversation" SET "nextSequence" = 1 WHERE false'), { code: '42501' });
+      await session.query('SET ROLE fl_p6_workspace');
+      await session.query('SELECT id FROM public."Idea" LIMIT 0 FOR UPDATE');
+      await assert.rejects(session.query('SELECT content FROM public."Message" LIMIT 0'), { code: '42501' });
+    } finally {
+      try { await session.query('RESET ROLE'); } finally { session.release(); }
+    }
   });
 
   await primary.query('CREATE DATABASE fresh_restore_target');

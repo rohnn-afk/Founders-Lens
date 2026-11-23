@@ -9,7 +9,13 @@ import ts from 'typescript';
 async function controller(name) {
   const source = await readFile(new URL('../apps/web/features/workspace/' + name + '.ts', import.meta.url), 'utf8');
   const { outputText } = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2024, module: ts.ModuleKind.ESNext } });
-  return import('data:text/javascript;base64,' + Buffer.from(outputText).toString('base64'));
+  let moduleText = outputText;
+  if (name === 'local-conversation-api') {
+    const endpoints = await readFile(new URL('../apps/web/features/workspace/endpoints.ts', import.meta.url), 'utf8');
+    const compiled = ts.transpileModule(endpoints, { compilerOptions: { target: ts.ScriptTarget.ES2024, module: ts.ModuleKind.ESNext } });
+    moduleText = moduleText.replace("'./endpoints'", JSON.stringify('data:text/javascript;base64,' + Buffer.from(compiled.outputText).toString('base64')));
+  }
+  return import('data:text/javascript;base64,' + Buffer.from(moduleText).toString('base64'));
 }
 const { createReadController, readThink, readConversation } = await controller('read-controller');
 const { createCommandController } = await controller('create-controller');

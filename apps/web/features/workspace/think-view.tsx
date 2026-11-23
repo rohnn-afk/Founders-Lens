@@ -55,7 +55,7 @@ export function ThinkView({ ideaId }: { ideaId: string }) {
         <h2 id="conversation-list">Conversations</h2>
         {idea.status === 'ARCHIVED' && <p role="status">Archived (read only)</p>}
         {conversations.items.length === 0 ? <div className={styles['empty']}><p>{cursor ? 'No conversations on this page.' : 'No conversations yet.'}</p>
-          {!cursor && idea.status === 'ACTIVE' && <p>Start with a question about this idea.</p>}</div> :
+          {!cursor && !workspace.readOnly && idea.status === 'ACTIVE' && <p>Start with a question about this idea.</p>}</div> :
           <ul className={styles['list']}>
             {conversations.items.map(item => <li key={item.id}>
               <Link prefetch={false} href={base + '/conversations/' + encodeURIComponent(item.id)}>{item.title || 'Untitled conversation'}</Link>
@@ -68,7 +68,7 @@ export function ThinkView({ ideaId }: { ideaId: string }) {
             <button onClick={() => setCursors([...cursors, conversations.page.nextCursor])}>Next page</button>}
         </nav>
       </section>
-      {idea.status === 'ACTIVE' && <section aria-labelledby="new-conversation" className={styles['panel']}>
+      {!workspace.readOnly && idea.status === 'ACTIVE' && <section aria-labelledby="new-conversation" className={styles['panel']}>
         <h2 id="new-conversation">New conversation</h2>
         {createNotice(commandState)}
         {commandState === 'uncertain'

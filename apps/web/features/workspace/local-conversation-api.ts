@@ -2,8 +2,9 @@
 // only in the request, and uncertain saves retain their original in-memory intent.
 import type { Acceptance, Conversation, Generation, Idea, Message, MessageApi, MessageBody, Page, Reply, SavedMessageApi, WorkspaceApi } from './contracts';
 
-const origin = 'http://127.0.0.1:3000';
-const endpoint = 'http://127.0.0.1:3001/api/v1';
+import { workspaceEndpoints } from './endpoints';
+
+const { origin, api: endpoint } = workspaceEndpoints();
 const ideaPath = (id: string) => '/ideas/' + encodeURIComponent(id);
 const conversationPath = (id: string) => '/conversations/' + encodeURIComponent(id);
 const withCursor = (path: string, cursor: string | null) => cursor ? path + '?cursor=' + encodeURIComponent(cursor) : path;

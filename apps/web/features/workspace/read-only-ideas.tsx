@@ -12,8 +12,10 @@ import styles from './workspace.module.css';
 import { WorkspaceShell } from './workspace-shell';
 import { WorkspaceProvider } from './workspace-provider';
 
-const origin = 'http://127.0.0.1:3000';
-const endpoint = 'http://127.0.0.1:3001/api/v1/ideas';
+import { workspaceEndpoints } from './endpoints';
+
+const { origin, api } = workspaceEndpoints();
+const endpoint = api + '/ideas';
 
 /** Clear opaque recovery references before Clerk redirects away from the shell. */
 export function WorkspaceSignOut() {
@@ -104,7 +106,7 @@ function LocalConversationSession({ account, sessionId, getToken, children }: {
       </> : <p className={styles['feedback']} role="status">Opening conversation...</p>}
     </WorkspaceShell>;
   }
-  return <WorkspaceProvider accountAction={<WorkspaceSignOut />} session={session} api={adapters.api} savedMessages={adapters.savedMessages} recoverySessionId={sessionId}
+  return <WorkspaceProvider readOnly={origin.startsWith('https://')} accountAction={<WorkspaceSignOut />} session={session} api={adapters.api} savedMessages={adapters.savedMessages} recoverySessionId={sessionId}
     {...(conversationId && resolved &&
       { messageApi: adapters.messageApi, recoveryTtl: 300_000 })}>{children}</WorkspaceProvider>;
 }

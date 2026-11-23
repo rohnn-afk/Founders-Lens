@@ -6,7 +6,7 @@ import helmet from 'helmet';
 import { attachRequestContext, isConversationSubmission, traceSubmissionFailure } from './security/request-context.js';
 import { securityErrorHandler } from './security/errors.js';
 
-export function createApp(localIdeas?: Router) {
+export function createApp(workspace?: Router, readiness?: () => Promise<void>) {
   const app = express();
   app.disable('x-powered-by');
   // Middleware runs in order before the route handler. Here it adds security
@@ -18,9 +18,16 @@ export function createApp(localIdeas?: Router) {
     next();
   });
   app.get('/health/live', (_request, response) => { response.status(200).end(); });
-  // No production dependency or safety gate has been configured or verified.
-  app.get('/health/ready', (_request, response) => { response.status(503).end(); });
-  if (localIdeas) app.use('/api/v1', localIdeas);
+  app.get('/health/ready', async (_request, response) => {
+    if (!readiness) { response.status(503).end(); return; }
+    try {
+      await readiness();
+      response.status(200).end();
+    } catch {
+      response.status(503).end();
+    }
+  });
+  if (workspace) app.use('/api/v1', workspace);
   app.use((request, response) => {
     if (isConversationSubmission(request.method, request.path.replace(/^\/api\/v1(?=\/)/, ''))) {
       traceSubmissionFailure(response, 404, 'WRONG_ROUTE');
