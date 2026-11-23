@@ -59,7 +59,7 @@ export function IdeaChooser() {
       {createNotice(creation)}
       {creation === 'uncertain' || workspace.commands.ideaUncertain()
         ? <><p role="status">Creation could not be confirmed. Retrying uses the original idea and key.</p>
-          <button disabled={creation === 'pending'} onClick={() => void create(true)}>Retry original idea</button></>
+          <button className={styles['primary']} disabled={creation === 'pending'} onClick={() => void create(true)}>Retry original idea</button></>
         : <form onSubmit={submit} className={styles['form']}>
           <label htmlFor="idea-title">Idea title</label>
           <input id="idea-title" required value={title} onChange={event => setTitle(event.target.value)} />

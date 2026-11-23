@@ -45,30 +45,41 @@ export function ThinkView({ ideaId }: { ideaId: string }) {
   }
 
   return <>
-    <h1>Think</h1><h2>{idea.title}</h2>
-    {idea.status === 'ARCHIVED' && <p role="status">Archived (read only)</p>}
-    {conversations.items.length === 0 ? <p role="status">No conversations on this page.</p> :
-      <ul className={styles['list']}>
-        {conversations.items.map(item => <li key={item.id}>
-          <Link prefetch={false} href={base + '/conversations/' + encodeURIComponent(item.id)}>{item.title || 'Untitled conversation'}</Link>
-          {item.status === 'ARCHIVED' && <p>Archived (read only)</p>}
-        </li>)}
-      </ul>}
-    <nav aria-label="Conversation pages" className={styles['actions']}>
-      {cursors.length > 1 && <button onClick={() => setCursors(cursors.slice(0, -1))}>Previous page</button>}
-      {conversations.page.hasMore && conversations.page.nextCursor &&
-        <button onClick={() => setCursors([...cursors, conversations.page.nextCursor])}>Next page</button>}
-    </nav>
-    {idea.status === 'ACTIVE' && <>
-      {createNotice(commandState)}
-      {commandState === 'uncertain'
-        ? <><p role="status">Creation could not be confirmed. Checking the list can show saved conversations, but an absent result does not prove failure.</p>
-          <button onClick={() => { setCursors([null]); retry(); }}>Check conversations</button></>
-        : <form onSubmit={create} className={styles['form']}>
-          <label htmlFor="conversation-title">Conversation title (optional)</label>
-          <input id="conversation-title" value={title} onChange={event => setTitle(event.target.value)} />
-          <button disabled={commandState === 'pending'}>{workspace.savedMessages ? 'Start conversation' : 'Create conversation'}</button>
-        </form>}
-    </>}
+    <header className={styles['pageHeader']}>
+      <Link href="/app" prefetch={false}>All ideas</Link>
+      <h1>{idea.title}</h1>
+      {idea.summary && <p>{idea.summary}</p>}
+    </header>
+    <div className={styles['overview']}>
+      <section aria-labelledby="conversation-list">
+        <h2 id="conversation-list">Conversations</h2>
+        {idea.status === 'ARCHIVED' && <p role="status">Archived (read only)</p>}
+        {conversations.items.length === 0 ? <div className={styles['empty']}><p>{cursor ? 'No conversations on this page.' : 'No conversations yet.'}</p>
+          {!cursor && idea.status === 'ACTIVE' && <p>Start with a question about this idea.</p>}</div> :
+          <ul className={styles['list']}>
+            {conversations.items.map(item => <li key={item.id}>
+              <Link prefetch={false} href={base + '/conversations/' + encodeURIComponent(item.id)}>{item.title || 'Untitled conversation'}</Link>
+              {item.status === 'ARCHIVED' && <p>Archived (read only)</p>}
+            </li>)}
+          </ul>}
+        <nav aria-label="Conversation pages" className={styles['actions']}>
+          {cursors.length > 1 && <button onClick={() => setCursors(cursors.slice(0, -1))}>Previous page</button>}
+          {conversations.page.hasMore && conversations.page.nextCursor &&
+            <button onClick={() => setCursors([...cursors, conversations.page.nextCursor])}>Next page</button>}
+        </nav>
+      </section>
+      {idea.status === 'ACTIVE' && <section aria-labelledby="new-conversation" className={styles['panel']}>
+        <h2 id="new-conversation">New conversation</h2>
+        {createNotice(commandState)}
+        {commandState === 'uncertain'
+          ? <><p role="status">Creation could not be confirmed. Checking the list can show saved conversations, but an absent result does not prove failure.</p>
+            <button onClick={() => { setCursors([null]); retry(); }}>Check conversations</button></>
+          : <form onSubmit={create} className={styles['form']}>
+            <label htmlFor="conversation-title">Conversation title (optional)</label>
+            <input id="conversation-title" value={title} onChange={event => setTitle(event.target.value)} />
+            <button className={styles['primary']} disabled={commandState === 'pending'}>{workspace.savedMessages ? 'Start conversation' : 'Create conversation'}</button>
+          </form>}
+      </section>}
+    </div>
   </>;
 }

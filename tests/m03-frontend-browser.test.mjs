@@ -30,6 +30,7 @@ function fixture() {
   const recoveryChatId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
   const messageId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
   const generationId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+  const answerId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
   const statusUrl = '/api/v1/generations/' + generationId;
   const listeners = new Set<() => void>();
   const change = (id: string | null) => {
@@ -103,6 +104,9 @@ function fixture() {
       return { status: 200, data: { page: { nextCursor: null, hasMore: false }, items: saved ? [{
         id: messageId, conversationId: id, sequence: 1, role: 'USER', content: 'Synthetic message',
         createdAt: '2026-01-01T00:00:00.000Z'
+      }, {
+        id: answerId, conversationId: id, sequence: 2, role: 'ASSISTANT', content: 'Synthetic response',
+        createdAt: '2026-01-01T00:00:01.000Z'
       }] : [] } };
     }
   };
@@ -266,7 +270,7 @@ test('Edge synthetic navigation, history, accessibility and identity isolation',
     await waitFor(async () => !await evaluate('Boolean(window.workspaceReloadMarker)'), 'fresh document');
   }
   async function appearanceChecks() {
-    const light = 'rgb(247, 249, 246)', dark = 'rgb(20, 32, 29)';
+    const light = await background();
     assert.equal(await mode(), 'system');
     assert.equal(await background(), light);
     const { nodes } = await command('Accessibility.getFullAXTree');
@@ -288,7 +292,8 @@ test('Edge synthetic navigation, history, accessibility and identity isolation',
     };
     await checkContrast();
     await osMode('dark');
-    assert.equal(await background(), dark);
+    const dark = await background();
+    assert.notEqual(dark, light);
     await checkContrast();
     await choose('light');
     assert.equal(await background(), light);
@@ -394,6 +399,9 @@ test('Edge synthetic navigation, history, accessibility and identity isolation',
   const recoveryRoute = '/app/ideas/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/conversations/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
   await open(recoveryRoute);
   await text('No saved messages.');
+  assert.equal(await evaluate('document.querySelector("button[type=submit]").disabled'), true);
+  assert.equal(await evaluate('document.querySelector("label[for=workspace-message]").textContent'), 'Message');
+  assert.equal(await evaluate('document.documentElement.scrollWidth === document.documentElement.clientWidth'), true);
   await fill('workspace-message', 'Synthetic message');
   await click('Send message');
   await text('Acceptance is unknown.');
@@ -429,8 +437,16 @@ test('Edge synthetic navigation, history, accessibility and identity isolation',
   await click('Check Again');
   await text('Message accepted.');
   await text('Synthetic message');
+  assert.equal(await evaluate('document.querySelector("[data-speaker=founder]").textContent.includes("Synthetic message")'), true);
   assert.equal(await evaluate('sessionStorage.getItem("synthetic-posts")'), '1');
   assert.equal(await evaluate('sessionStorage.getItem(' + JSON.stringify(key) + ')'), null);
+  await text('Synthetic response');
+  await command('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  await reload();
+  await text('Synthetic response');
+  assert.equal(await evaluate('document.querySelector("[data-speaker=assistant]").textContent.includes("Synthetic response")'), true);
+  assert.equal(await evaluate('document.documentElement.scrollWidth === document.documentElement.clientWidth'), true);
+  assert.equal(await evaluate('sessionStorage.getItem("synthetic-posts")'), '1');
   await evaluate('sessionStorage.setItem(' + JSON.stringify(key) + ',' + JSON.stringify(raw) + ')');
   await click('Use founder B');
   await text('This workspace item is unavailable.');

@@ -4,72 +4,14 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import type { MessageApi, SavedMessageApi, Scope, SessionSource, WorkspaceApi } from './contracts';
 import { createReadController, type ReadController, type ReadResult } from './read-controller';
 import { createCommandController, type CreateResult } from './create-controller';
 import { createRecoveryStorage, type RecoveryStorage } from './submission-recovery-storage';
+import { WorkspaceShell } from './workspace-shell';
 import styles from './workspace.module.css';
-
-const appearanceKey = 'founders-lens.appearance';
-const appearances = ['system', 'light', 'dark'] as const;
-type Appearance = typeof appearances[number];
-
-// A parser-time script applies a saved preference before the workspace content
-// paints. It reads a single display setting and changes only the workspace shell.
-const initializeAppearance = `(() => {
-  try {
-    const value = localStorage.getItem(${JSON.stringify(appearanceKey)});
-    if (${JSON.stringify(appearances)}.includes(value)) {
-      document.currentScript.parentElement.dataset.workspaceAppearance = value;
-    }
-  } catch {
-    // CSS already follows the system when storage is denied.
-  }
-})();`;
-
-function AppearanceControl() {
-  const select = useRef<HTMLSelectElement>(null);
-  const [appearance, setAppearance] = useState<Appearance>('system');
-
-  useLayoutEffect(() => {
-    // The first React render matches the server. Before paint, sync the
-    // selector and cover client navigation, where the inline script may not run.
-    try {
-      const stored = window.localStorage.getItem(appearanceKey);
-      const saved = appearances.find(option => option === stored);
-      if (saved) applyAppearance(saved);
-    } catch {
-      // Appearance still works for this visit when browser storage is blocked.
-    }
-  }, []);
-
-  function applyAppearance(value: Appearance) {
-    const shell = select.current?.closest<HTMLElement>('[data-workspace-appearance]');
-    if (shell) shell.dataset['workspaceAppearance'] = value;
-    setAppearance(value);
-  }
-
-  function choose(value: string) {
-    const choice = appearances.find(option => option === value);
-    if (!choice) return;
-    applyAppearance(choice);
-    try {
-      window.localStorage.setItem(appearanceKey, choice);
-    } catch {
-      // A display choice can be applied without writing any browser storage.
-    }
-  }
-
-  return <label className={styles['appearance']}>Appearance
-    <select ref={select} value={appearance} onChange={event => choose(event.target.value)}>
-      <option value="system">System</option>
-      <option value="light">Light</option>
-      <option value="dark">Dark</option>
-    </select>
-  </label>;
-}
 
 type Workspace = {
   api: WorkspaceApi;
@@ -83,8 +25,8 @@ type Workspace = {
 };
 const WorkspaceContext = createContext<Workspace | null>(null);
 
-export function WorkspaceProvider({ children, api, session, messageApi, recoveryTtl, savedMessages, recoverySessionId }: {
-  children: ReactNode; api?: WorkspaceApi; session?: SessionSource;
+export function WorkspaceProvider({ children, api, session, messageApi, recoveryTtl, savedMessages, recoverySessionId, accountAction }: {
+  children: ReactNode; accountAction?: ReactNode; api?: WorkspaceApi; session?: SessionSource;
   messageApi?: MessageApi; recoveryTtl?: number; savedMessages?: SavedMessageApi; recoverySessionId?: string;
 }) {
   const pathname = usePathname();
@@ -170,33 +112,13 @@ export function WorkspaceProvider({ children, api, session, messageApi, recovery
     };
   }, [session, commands, reads, recovery, pathname, sessionRevision]);
 
-  useEffect(() => {
-    // Keep keyboard and assistive-technology users oriented after a route
-    // change. Background revalidation does not move focus.
-    document.getElementById('workspace-main')?.focus({ preventScroll: true });
-  }, [pathname]);
-
   const scope = view?.pathname === pathname ? view.scope : null;
   const value = scope && reads.isCurrent(scope) && api && commands
     ? { scope, api, reads, commands, invalidateSession, messageApi, recovery, savedMessages } : null;
-  return (
-    // Only this attribute may differ when the parser-time script runs before
-    // hydration, when React attaches behavior to the server-rendered markup.
-    <div className={styles['shell']} data-workspace-appearance="system" suppressHydrationWarning>
-      <script dangerouslySetInnerHTML={{ __html: initializeAppearance }} />
-      <a className={styles['skip']} href="#workspace-main">Skip to content</a>
-      <header className={styles['header']}>
-        <nav aria-label="Workspace"><Link href="/" prefetch={false}>Founder&apos;s Lens</Link>
-          {value && <Link href="/app" prefetch={false}>My ideas</Link>}
-        </nav>
-        <AppearanceControl />
-      </header>
-      <main id="workspace-main" tabIndex={-1} className={styles['main']}>
-        {value ? <WorkspaceContext.Provider key={scope?.routeGeneration} value={value}>{children}</WorkspaceContext.Provider>
-          : <><h1>Workspace unavailable</h1><p role="status">A workspace session is required.</p><Link href="/">Return home</Link></>}
-      </main>
-    </div>
-  );
+  return <WorkspaceShell accountAction={accountAction}>
+    {value ? <WorkspaceContext.Provider key={scope?.routeGeneration} value={value}>{children}</WorkspaceContext.Provider>
+      : <><h1>Workspace unavailable</h1><p role="status">A workspace session is required.</p></>}
+  </WorkspaceShell>;
 }
 
 export function useWorkspace() {
@@ -226,9 +148,9 @@ export function useWorkspaceRead<T>(load: (workspace: Workspace) => Promise<Read
 }
 
 export function readNotice(kind: 'loading' | 'missing' | 'blocked' | 'signed-out' | 'error' | 'stale', retry: () => void) {
-  if (kind === 'loading' || kind === 'stale') return <p role="status">Loading workspace...</p>;
+  if (kind === 'loading' || kind === 'stale') return <p className={styles['feedback']} role="status">Loading workspace...</p>;
   if (kind === 'missing') return <><p role="status">This workspace item is unavailable.</p><Link href="/app" prefetch={false}>Back to my ideas</Link></>;
-  return <><p role="alert">The workspace could not be loaded.</p><button onClick={retry}>Retry read</button></>;
+  return <><p className={styles['feedback']} role="alert">The workspace could not be loaded.</p><button onClick={retry}>Retry read</button></>;
 }
 
 export function createNotice(kind: CreateResult<unknown>['kind'] | undefined) {

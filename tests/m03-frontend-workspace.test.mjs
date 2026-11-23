@@ -28,6 +28,29 @@ const api = overrides => ({
   ...overrides
 });
 
+test('generation capability distinguishes save-only access from a failed read', async t => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: { location: { origin: 'http://127.0.0.1:3000' } } });
+  t.after(() => { if (previous) Object.defineProperty(globalThis, 'window', previous); else delete globalThis.window; });
+  const headers = { 'X-Workspace-Generation': 'enabled' };
+  const responses = [
+    Response.json(chat('current', 'idea'), { headers }),
+    Response.json(chat('current', 'idea')),
+    new Response(null, { status: 503, headers }),
+    new Response(null, { status: 404 }),
+    Response.json(chat('wrong', 'idea'), { headers })
+  ];
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    assert.equal(url, 'http://127.0.0.1:3001/api/v1/conversations/current');
+    assert.equal(options.method, 'GET');
+    return responses.shift();
+  });
+  const client = createLocalConversationApi(async () => 'fixture-token');
+  const probe = () => client.generationEnabled('current', new AbortController().signal);
+  for (const expected of [true, false, null, null]) assert.equal(await probe(), expected);
+  await assert.rejects(probe, /Invalid workspace response/);
+});
+
 test('browser submit carries a safe API request ID only for the current session and route', async t => {
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'window');
   Object.defineProperty(globalThis, 'window', { configurable: true, value: { location: { origin: 'http://127.0.0.1:3000' } } });

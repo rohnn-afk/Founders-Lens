@@ -4,7 +4,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { MessageApi, SavedMessageApi } from './contracts';
+import type { Message, MessageApi, SavedMessageApi } from './contracts';
 import { createGenerationController, isTerminal, type GenerationView } from './generation-controller';
 import { createMessageController } from './message-controller';
 import { readConversation } from './read-controller';
@@ -32,11 +32,12 @@ export function ConversationView({ ideaId, conversationId }: { ideaId: string; c
   const { idea, conversation } = result.data;
   const archived = idea.status === 'ARCHIVED' || conversation.status === 'ARCHIVED';
   return <>
-    <h1>{conversation.title || 'Untitled conversation'}</h1>
-    <p>{idea.title}</p>
-    {archived && <p role="status">Archived (read only)</p>}
+    <header className={styles['pageHeader']}>
+      <Link prefetch={false} href={'/app/ideas/' + encodeURIComponent(ideaId) + '/think'}>{idea.title}</Link>
+      <h1>{conversation.title || 'Untitled conversation'}</h1>
+    </header>
+    {archived && <p className={styles['feedback']} role="status">Archived (read only)</p>}
     <ConversationMessages ideaId={ideaId} conversationId={conversationId} archived={archived} />
-    <Link prefetch={false} href={'/app/ideas/' + encodeURIComponent(ideaId) + '/think'}>Back to Think</Link>
   </>;
 }
 
@@ -58,6 +59,7 @@ function SavedTranscript({ api, conversationId, archived }: { api: SavedMessageA
   const { scope, reads, invalidateSession } = useWorkspace();
   const [draft, setDraft] = useState(() => api.pending(conversationId) ?? '');
   const [saving, setSaving] = useState(false);
+  const inFlight = useRef(false);
   const [notice, setNotice] = useState('');
   const [revision, refresh] = useState(0);
   const [cursors, setCursors] = useState<(string | null)[]>([null]);
@@ -82,44 +84,47 @@ function SavedTranscript({ api, conversationId, archived }: { api: SavedMessageA
 
   async function save(retry: boolean) {
     const lifetime = writerLifetime.current;
-    if (!lifetime || lifetime.signal.aborted || saving || archived || history.kind !== 'ready') return;
+    if (!lifetime || lifetime.signal.aborted || inFlight.current || archived || history.kind !== 'ready') return;
     if (!retry && (!draft.trim() || Array.from(draft).length > 10_000)) {
       setNotice('Enter a message up to 10,000 characters.');
       return;
     }
+    inFlight.current = true;
     setSaving(true);
     setNotice('');
     const signal = AbortSignal.any([scope.signal, lifetime.signal]);
-    const reply = await api.save(conversationId, retry ? undefined : draft, signal);
+    const reply = await api.save(conversationId, retry ? undefined : draft, signal).finally(() => { inFlight.current = false; });
     if (signal.aborted || !reads.isCurrent(scope)) return;
     setSaving(false);
     if (reply.status === 401 || reply.status === 403 || reply.status === 404) { invalidateSession(); return; }
     if (reply.status === 201) {
       setDraft('');
       setNotice('Message saved.');
-      setCursors([null]);
       refresh(value => value + 1);
     } else if (reply.status === 409) setNotice('This save conflicts with an earlier request. Refresh the transcript before sending again.');
     else if (!api.pending(conversationId)) setNotice('The message could not be saved. Check the message and try again.');
   }
 
-  return <section aria-label="Saved messages">
+  return <section aria-label="Saved messages" className={styles['messages']}>
+    <h2>Message history</h2>
     {history.kind === 'ready' ? <>
-      {history.data.items.length === 0 ? <p role="status">No saved messages yet.</p> : <ol className={styles['list']}>
-        {history.data.items.map(item => <li key={item.id}><strong>{item.role === 'USER' ? 'You' : 'Assistant'}</strong>
-          <p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{item.content}</p></li>)}
-      </ol>}
-      <nav aria-label="Transcript pages">
-        {cursors.length > 1 && <button onClick={() => setCursors(cursors.slice(0, -1))}>Previous messages</button>}
-        {history.data.page.nextCursor && <button onClick={() => setCursors([...cursors, history.data.page.nextCursor])}>Next messages</button>}
+      <Transcript items={history.data.items} />
+      <nav className={styles['actions']} aria-label="Transcript pages">
+        {cursors.length > 1 && <button type="button" onClick={() => setCursors(cursors.slice(0, -1))}>Previous messages</button>}
+        {history.data.page.nextCursor && <button type="button" onClick={() => setCursors([...cursors, history.data.page.nextCursor])}>Next messages</button>}
       </nav>
-      {!archived && <form className={styles['form']} onSubmit={event => { event.preventDefault(); void save(false); }}>
-        <label htmlFor="save-message">Message</label>
-        <textarea id="save-message" value={draft} required disabled={saving || pending} onChange={event => setDraft(event.target.value)} />
-        {pending ? <button type="button" disabled={saving} onClick={() => void save(true)}>Retry original message</button>
-          : <button type="submit" disabled={saving}>Save message</button>}
-      </form>}
     </> : readNotice(history.kind, () => refresh(value => value + 1))}
+    {!archived && (history.kind === 'ready' || history.kind === 'loading') && <form className={styles['composer']} onSubmit={event => {
+        event.preventDefault();
+        if (history.kind !== 'ready') return;
+        event.currentTarget.querySelector('textarea')?.focus({ preventScroll: true });
+        void save(false);
+      }}>
+        <label htmlFor="save-message">Message</label>
+        <textarea id="save-message" value={draft} required readOnly={saving || pending} onChange={event => setDraft(event.target.value)} />
+        {pending ? <button type="button" disabled={saving || history.kind !== 'ready'} onClick={() => void save(true)}>Retry original message</button>
+          : <button className={styles['primary']} type="submit" disabled={saving || history.kind !== 'ready' || !draft.trim()}>{saving ? 'Saving...' : 'Save message'}</button>}
+    </form>}
     {saving ? <p role="status">Saving message…</p> : pending && history.kind === 'ready' && <p role="status">Save could not be confirmed.</p>}
     {notice && <p role="status">{notice}</p>}
   </section>;
@@ -134,10 +139,11 @@ function MessagePanel({ api, recovery, ideaId, conversationId, archived }: {
   const [state, setState] = useState<ReturnType<typeof controller.state>>();
   const [draft, setDraft] = useState('');
   const [revision, refresh] = useState(0);
-  const [cursor, setCursor] = useState<string | null>(null);
+  const [cursors, setCursors] = useState<(string | null)[]>([null]);
+  const cursor = cursors.at(-1) ?? null;
   const [generation, setGeneration] = useState<GenerationView>({ observation: 'idle' });
   const observer = useRef<ReturnType<typeof createGenerationController> | null>(null);
-  const reloadHistory = useCallback(() => { setCursor(null); refresh(value => value + 1); }, []);
+  const reloadHistory = useCallback(() => refresh(value => value + 1), []);
   useEffect(() => { setState(controller.restore()); }, [controller]);
   useEffect(() => {
     if (!api.generation) return;
@@ -178,10 +184,9 @@ function MessagePanel({ api, recovery, ideaId, conversationId, archived }: {
     if (!result || !reads.isCurrent(scope)) return;
     setState(result);
     if (action === 'send' && (result === 'accepted' || result === 'unknown')) setDraft('');
-    if (action === 'check' || result === 'accepted') setCursor(null);
     const accepted = result === 'accepted' ? controller.acceptance() : undefined;
     if (accepted) observer.current?.observe(accepted.generationId);
-    refresh(value => value + 1);
+    if (result === 'accepted' || result === 'unknown' || result === 'history-only') reloadHistory();
   }
 
   const value = generation.value;
@@ -190,6 +195,8 @@ function MessagePanel({ api, recovery, ideaId, conversationId, archived }: {
     ? history.data.items.findLast(item => item.role === 'USER') : undefined;
   const sendingCommand = generation.command === 'sending';
   const unknownCommand = generation.command === 'unknown';
+  const awaitingGeneration = active || generation.observation === 'observing' || generation.observation === 'paused';
+  const canSend = history.kind === 'ready' && !awaitingGeneration && !sendingCommand && !unknownCommand && !!draft.trim();
   const canCheck = state === 'unknown' || state === 'checking';
   if (historyUnavailable) return <section aria-label="Messages">{readNotice('missing', reloadHistory)}</section>;
   if (generation.observation === 'blocked') return <section aria-label="Messages">
@@ -201,21 +208,19 @@ function MessagePanel({ api, recovery, ideaId, conversationId, archived }: {
   return <section aria-label="Messages" className={styles['messages']}>
     <h2>Message history</h2>
     {history.kind === 'ready' ? <>
-      {history.data.items.length === 0 ? <p>No saved messages.</p> :
-        <ol>{history.data.items.map(message => <li key={message.id}>
-          <strong>{message.role === 'USER' ? 'You' : 'Assistant'}</strong>
-          <p>{message.content}</p>
-        </li>)}</ol>}
-      {cursor && <button type="button" onClick={() => setCursor(null)}>First page</button>}
-      {history.data.page.nextCursor && <button type="button" onClick={() => setCursor(history.data.page.nextCursor)}>Next page</button>}
-    </> : readNotice(history.kind, () => refresh(value => value + 1))}
-    <div role="status">
+      <Transcript items={history.data.items} />
+      <nav className={styles['actions']} aria-label="Transcript pages">
+        {cursors.length > 1 && <button type="button" onClick={() => setCursors(cursors.slice(0, -1))}>Previous messages</button>}
+        {history.data.page.nextCursor && <button type="button" onClick={() => setCursors([...cursors, history.data.page.nextCursor])}>Next messages</button>}
+      </nav>
+    </> : readNotice(history.kind, reloadHistory)}
+    <div className={styles['messageStatus']} role="status">
       {state === 'sending' && 'Sending…'}
       {state === 'accepted' && 'Message accepted.'}
       {state === 'unknown' && 'Acceptance is unknown. Check again or review saved messages.'}
       {state === 'checking' && 'Checking whether it was saved…'}
       {state === 'history-only' && 'Acceptance cannot be confirmed from this tab. Review saved messages.'}
-      {state === 'rejected' && 'The message was rejected.'}
+      {state === 'rejected' && 'The message was rejected. Review your draft before trying again.'}
       {state === 'quota' && 'Generation capacity is unavailable. Your draft is still here.'}
       {controller.failureRequestId() && <small> Request ID {controller.failureRequestId()}</small>}
     </div>
@@ -223,10 +228,10 @@ function MessagePanel({ api, recovery, ideaId, conversationId, archived }: {
       <div role="status">
         {value ? {
           PENDING: 'Generation pending.', RUNNING: 'Generating response…',
-          CANCEL_REQUESTED: 'Cancellation requested.', COMPLETED: 'Generation completed.',
+          CANCEL_REQUESTED: 'Cancellation requested.', COMPLETED: 'Assistant response ready.',
           FAILED: value.error?.code === 'PROVIDER_OUTCOME_UNKNOWN'
             ? 'Your message is saved. The provider outcome is unknown. This generation cannot be retried.'
-            : 'Your message is saved. Generation failed.',
+            : 'Your message was saved, but the assistant could not finish its response.',
           CANCELLED: 'Generation cancelled.'
         }[value.status] : generation.observation === 'observing' ? 'Checking generation status…' : ''}
         {generation.observation === 'paused' && ' Status observation paused.'}
@@ -245,11 +250,28 @@ function MessagePanel({ api, recovery, ideaId, conversationId, archived }: {
       </>}
     </div>}
     {canCheck && <button type="button" disabled={state === 'checking'} onClick={() => void act('check')}>Check Again</button>}
-    {!archived && !canCheck && state !== 'history-only' && <form onSubmit={event => { event.preventDefault(); void act('send'); }}>
+    {!archived && !canCheck && state !== 'history-only' && <form className={styles['composer']} onSubmit={event => {
+      event.preventDefault();
+      if (!canSend) return;
+      event.currentTarget.querySelector('textarea')?.focus({ preventScroll: true });
+      void act('send');
+    }}>
       <label htmlFor="workspace-message">Message</label>
-      <textarea id="workspace-message" value={draft} disabled={state === 'sending' || sendingCommand || unknownCommand}
+      <textarea id="workspace-message" value={draft} readOnly={state === 'sending' || sendingCommand || unknownCommand}
         onChange={event => setDraft(event.target.value)} required />
-      <button type="submit" disabled={!state || state === 'sending' || sendingCommand || unknownCommand || !draft.length}>Send message</button>
+      <button className={styles['primary']} type="submit" disabled={!state || state === 'sending' || !canSend}>
+        {state === 'sending' ? 'Sending...' : awaitingGeneration ? 'Waiting for response' : 'Send message'}
+      </button>
     </form>}
   </section>;
+}
+
+function Transcript({ items }: { items: readonly Message[] }) {
+  if (!items.length) return <p className={styles['empty']}>No saved messages.</p>;
+  return <ol className={styles['transcript']} aria-label="Conversation transcript">
+    {items.map(item => <li key={item.id} data-speaker={item.role === 'USER' ? 'founder' : 'assistant'}>
+      <strong>{item.role === 'USER' ? 'You' : 'Assistant'}</strong>
+      <p>{item.content}</p>
+    </li>)}
+  </ol>;
 }

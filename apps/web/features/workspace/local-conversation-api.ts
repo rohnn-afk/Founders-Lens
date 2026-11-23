@@ -121,8 +121,8 @@ export function createLocalConversationApi(getToken: () => Promise<string | null
   };
   return { api, savedMessages, messageApi, async generationEnabled(id: string, signal: AbortSignal) {
     let enabled = false;
-    await request<Conversation>(conversationPath(id), signal, verify(value => conversation(value) && value.id === id), undefined,
+    const reply = await request<Conversation>(conversationPath(id), signal, verify(value => conversation(value) && value.id === id), undefined,
       headers => { enabled = headers.get('X-Workspace-Generation') === 'enabled'; });
-    return enabled;
+    return reply.status === 200 ? enabled : null;
   } };
 }

@@ -1,12 +1,12 @@
-// Public UI entry point. Next.js maps this page module to the home route,
-// and the root layout wraps the placeholder it renders.
+import Link from 'next/link';
+import styles from './public.module.css';
 
 export default function Home() {
   return (
-    <main style={{ maxWidth: '48rem', margin: '5rem auto', padding: '0 1.5rem' }}>
+    <main className={styles.hero}>
       <h1>Founder&apos;s Lens</h1>
-      <p>A workspace for thoughtful founder decisions.</p>
-      <p>Local workspace placeholder. Product features are not available yet.</p>
+      <p>Test your assumptions, think through decisions, and keep the conversation with the idea that started it.</p>
+      <Link className={styles.action} href="/app" prefetch={false}>Open workspace</Link>
     </main>
   );
 }
