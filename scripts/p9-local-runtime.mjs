@@ -60,7 +60,7 @@ export async function startLocalGeneration(env, report = () => {}, { determinist
     requestsPerMinute: required('FL_P9_REQUESTS_PER_MINUTE'), maximumAdmissions: required('FL_P9_MAX_ADMISSIONS'),
     ...approved, syntheticTextSha256: textHash
   }).policy : undefined;
-  const provider = syntheticOnlyProvider(gemini ? geminiFounderProvider(env) :
+  const provider = syntheticOnlyProvider(gemini ? geminiFounderProvider(env, undefined, report) :
     deterministicProvider ?? deterministicFounderProvider(), textHash);
   const redis = localUrl(required('FL_P9_REDIS_URL'), 'redis:', '56381');
   if (redis.pathname !== '/0' || redis.username || !/^[a-f0-9]{64}$/.test(redis.password)) throw new Error('Invalid local broker');

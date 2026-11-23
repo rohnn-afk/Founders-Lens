@@ -1,6 +1,6 @@
 // P9 provider boundary. This module does not start a worker, read a database,
 // or issue network requests on import. Callers must authorize each invocation.
-import { FinishReason, GoogleGenAI, ThinkingLevel } from '@google/genai';
+import { ApiError, FinishReason, GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { createHash } from 'node:crypto';
 import type { GenerationContext } from './generation-context.js';
 
@@ -91,8 +91,9 @@ function validGeminiKey(value: string): boolean {
     !/^(?:placeholder|replace[_-]?me|your[_-]?(?:gemini[_-]?)?api[_-]?key)(?:[_-]|$)/i.test(payload);
 }
 
-/** Explicit worker-only SDK construction. The transport can be substituted by offline tests. */
-export function geminiFounderProvider(env: NodeJS.ProcessEnv, transport?: typeof fetch): FounderProvider {
+/** Construct the worker-only SDK. Report only fixed diagnostics, never the SDK error or request. */
+export function geminiFounderProvider(env: NodeJS.ProcessEnv, transport?: typeof fetch,
+  report: (event: 'GEMINI_REQUEST_REJECTED_400') => void = () => {}): FounderProvider {
   const apiKey = env['P9_GEMINI_API_KEY'];
   const model = env['P9_GEMINI_MODEL'];
   if (!apiKey || !validGeminiKey(apiKey) || model !== 'gemini-3.1-flash-lite') {
@@ -105,7 +106,8 @@ export function geminiFounderProvider(env: NodeJS.ProcessEnv, transport?: typeof
     if (target.origin !== geminiOrigin || target.username || target.password) throw new Error('Unexpected Gemini endpoint');
     return send(input, { ...init, redirect: 'error' });
   };
-  const sdk = new GoogleGenAI({ apiKey, vertexai: false, httpOptions: {
+  // Pin the stable API so an ambient SDK version override cannot change the request contract.
+  const sdk = new GoogleGenAI({ apiKey, vertexai: false, apiVersion: 'v1', httpOptions: {
     baseUrl: geminiOrigin, timeout: timeoutMs, retryOptions: { attempts: 1 }, fetch: boundedFetch
   } });
   return {
@@ -132,8 +134,13 @@ export function geminiFounderProvider(env: NodeJS.ProcessEnv, transport?: typeof
         return { text: text?.trim() && text.isWellFormed() && !text.includes('\0') && !text.includes(apiKey) &&
           Array.from(text).length <= 10_000
           && usage && usage.inputTokens <= inputBytes && usage.outputTokens <= outputTokens ? text : null, usage, responseId };
-      } catch {
+      } catch (error) {
         // SDK error objects can contain request or response data. Do not retain the cause.
+        if (error instanceof ApiError && error.status === 400) {
+          // HTTP rejection identifies the failure category, but is not a usage receipt.
+          report('GEMINI_REQUEST_REJECTED_400');
+          throw new Error('Gemini rejected the generation request (HTTP 400)');
+        }
         throw new Error('Gemini invocation outcome is unavailable');
       }
     }

@@ -77,6 +77,12 @@ test('the P9 prompt preserves the current turn, orders recent context and exclud
 });
 
 test('the Gemini SDK uses the pinned model, explicit output budget and one HTTP attempt', async t => {
+  const previousVersion = process.env.GOOGLE_GENAI_API_VERSION;
+  process.env.GOOGLE_GENAI_API_VERSION = 'v1beta';
+  t.after(() => {
+    if (previousVersion === undefined) delete process.env.GOOGLE_GENAI_API_VERSION;
+    else process.env.GOOGLE_GENAI_API_VERSION = previousVersion;
+  });
   t.mock.method(globalThis, 'fetch', async () => { throw new Error('Ambient network disabled'); });
   let calls = 0;
   const provider = geminiFounderProvider(env, async (url, options) => {
@@ -84,11 +90,15 @@ test('the Gemini SDK uses the pinned model, explicit output budget and one HTTP 
     const target = new URL(typeof url === 'string' || url instanceof URL ? url : url.url);
     assert.equal(target.origin, 'https://generativelanguage.googleapis.com');
     assert.equal(options.redirect, 'error');
-    assert.match(target.pathname, /gemini-3\.1-flash-lite:generateContent$/);
+    assert.equal(target.pathname, '/v1/models/gemini-3.1-flash-lite:generateContent');
+    assert.equal(new Headers(options.headers).get('X-Server-Timeout'), '9');
     const body = JSON.parse(options.body);
-    assert.equal(body.generationConfig.maxOutputTokens, 512);
-    assert.equal(body.generationConfig.candidateCount, 1);
-    assert.equal(body.tools, undefined);
+    assert.equal(options.method, 'POST');
+    assert.deepEqual(body, {
+      contents: [{ role: 'user', parts: [{ text: input('Synthetic pricing').data }] }],
+      systemInstruction: { role: 'user', parts: [{ text: founderInstructions }] },
+      generationConfig: { maxOutputTokens: 512, candidateCount: 1, thinkingConfig: { thinkingLevel: 'MINIMAL' } }
+    });
     return Response.json({ responseId: 'fixture.response-1', candidates: [{ finishReason: 'STOP',
       content: { role: 'model', parts: [{ text: 'Test demand with a paid pilot.' }] } }],
     usageMetadata: { promptTokenCount: 37, candidatesTokenCount: 12, thoughtsTokenCount: 2, totalTokenCount: 51 } });
@@ -113,6 +123,27 @@ test('ambiguous Gemini HTTP failure is sanitized and not retried', async t => {
     { message: 'Gemini invocation outcome is unavailable' });
   assert.equal(calls, 1);
   assert.throws(() => geminiFounderProvider({}), /configuration is unavailable/);
+});
+
+test('Gemini HTTP 400 emits a fixed rejection event without reporting metering or provider data', async t => {
+  t.mock.method(globalThis, 'fetch', async () => { throw new Error('Ambient network disabled'); });
+  for (const status of ['INVALID_ARGUMENT', 'FAILED_PRECONDITION']) {
+    let calls = 0;
+    const events = [];
+    const provider = geminiFounderProvider(env, async () => {
+      calls++;
+      return Response.json({ error: { code: 400, status,
+        message: 'Synthetic private prompt ' + standardKey, details: [{ responseId: 'fixture.response' }] } },
+      { status: 400 });
+    }, event => events.push(event));
+    await assert.rejects(provider.generate(input('Synthetic founder turn'), new AbortController().signal), error => {
+      assert.equal(error.message, 'Gemini rejected the generation request (HTTP 400)');
+      assert.equal(error.cause, undefined);
+      return true;
+    });
+    assert.equal(calls, 1);
+    assert.deepEqual(events, ['GEMINI_REQUEST_REJECTED_400']);
+  }
 });
 
 test('metered Gemini replies can be billed even when no complete answer can be published', async t => {
