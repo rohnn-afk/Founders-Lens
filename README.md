@@ -3,7 +3,9 @@ An AI-powered thinking partner helping entrepreneurs challenge assumptions, expl
 
 The product name is **Founder's Lens**; “Thinking Partner” describes its positioning. The MVP is a private, authenticated workspace for conversations, reviewed idea memory, bounded evidence research, experiments and reflection, and reviewed Idea Snapshot PDF exports.
 
-The repository currently contains product and architecture documentation. Application code, dependencies, and build scripts have not been added yet.
+The repository contains the web app, Express API, dispatcher, worker, Prisma migrations, and automated tests. The local P9 acceptance run verified a signed-in founder submission through Groq, a persisted assistant answer, and settlement of 804 provider-reported tokens. This is a local engineering baseline. The public MVP and hosted deployment are still in progress.
+
+For local AI runtime configuration and permission boundaries, see [P9 local runtime](scripts/p9-local-runtime.md). Run `npm run lint`, `npm run typecheck`, and `npm test` with the pinned toolchain to validate the workspace.
 
 The selected stack is Next.js with TypeScript for the web, a separately deployed **Node.js + Express 5 + strict TypeScript** API, PostgreSQL with Prisma, Clerk authentication, and independent TypeScript workers using BullMQ + Redis. Shared Zod schemas provide runtime validation alongside TypeScript types.
 

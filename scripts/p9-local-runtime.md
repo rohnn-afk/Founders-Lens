@@ -88,9 +88,11 @@ node --test-name-pattern '^P9 operator signs isolated runtime permissions$' test
 ```
 
 This verifies exact genesis, retained keys and authority inventory, then
-creates `.env.p9.decisions.local` with four five-minute permissions sharing
-one recovery run. It refuses to overwrite an existing file. Load only the
-relevant decisions into each process, and keep the private key outside both.
+creates `.env.p9.decisions.local` with six five-minute permissions sharing
+one recovery run. The API needs workspace read, conversation read, submit and
+status. The dispatcher and worker need dispatch and execute. Both need the
+pinned public key. The signer refuses to overwrite an existing file. Keep the
+private key outside both runtimes.
 
 Use a fresh dedicated synthetic account and conversation on an approved
 local target with the same verified controls above. Keep the API configuration
@@ -110,3 +112,54 @@ Use a maximum rate of at least 1,500,000 USD micros per million tokens for
 the current paid text tariff. At that rate the 4,608-token reservation needs
 at least 6,912 USD micros of configured budget.
 Do not clear that marker to retry an uncertain request.
+
+## Groq mode after separate authorization
+
+Use an unused synthetic account and empty conversation on the verified isolated
+target. The invocation allowance is account-scoped. Keep previous attempts and
+reservations intact. Load the approved account, conversation, and prompt hash in
+both processes. Use split five-minute decisions and a fresh Redis run.
+
+The historical Cedar acceptance profile uses `FL_P9_CEDAR_ACCEPTANCE=1` with
+primary, authority and Redis ports 55441, 55442 and 56383. The recheck profile
+uses `FL_P9_CEDAR_ACCEPTANCE=2` with ports 55443, 55444 and 56384 and separate
+credentials. The recheck produced the persisted Groq answer that settled 804
+provider-reported tokens. Its account has consumed its allowance.
+
+Set the same values in the API and worker shells, overriding Gemini defaults:
+
+```powershell
+$env:FL_P9_PROVIDER = 'groq'
+$env:P9_GROQ_MODEL = 'openai/gpt-oss-20b'
+$env:FL_P9_ISOLATED = '1'
+$env:FL_P9_PRICE_VERSION = 'v1:groq-gpt-oss-20b'
+$env:FL_P9_MAX_MICROS_PER_MILLION_TOKENS = '300000'
+$env:FL_P9_BUDGET_MICROS = '1575'
+$env:FL_P9_ACCOUNT_TOKEN_BUDGET = '5248'
+$env:FL_P9_MAX_ADMISSIONS = '1'
+$env:FL_P9_REQUESTS_PER_MINUTE = '1'
+```
+
+In the worker shell only, remove inherited `GROQ_API_KEY` and
+`P9_GEMINI_API_KEY`. Load a worker configuration with the existing restricted
+database, authority and Redis credentials and no Gemini key. The launcher
+reads `GROQ_API_KEY` directly from the ignored `.env.p9-groq-worker.local`
+file. Do not pass that file to the API or web app. Set
+`FL_P9_LOCAL_RUNTIME=groq` and
+`FL_P9_GROQ_CONFIRM=approve-one-synthetic-invocation` only after explicit
+authorization.
+
+Groq reserves 5,248 tokens: up to 4,096 prompt bytes with a 128-token
+chat-framing allowance, plus 1,024 completion tokens including reasoning. The minimum paid-tariff
+budget rounds conservatively using the higher output rate for every reserved
+token. The ledger settles against the provider-reported total. Missing or
+inconsistent usage leaves the reservation unresolved. Provider rejections,
+timeouts, and transport failures never trigger a second request.
+
+Mocked Groq integration proofs use disposable primary, authority and Redis
+ports 55439, 55440 and 56382, separate from the persistent local targets:
+
+```powershell
+node tests/m05-local-generation.test.mjs --live --p9-groq
+node tests/m05-local-generation.test.mjs --live --p9-groq-failure
+```
