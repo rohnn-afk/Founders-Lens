@@ -10,6 +10,7 @@ import { SubmissionError } from '../apps/api/dist/submission/contracts.js';
 import { createSubmissionService } from '../apps/api/dist/submission/service.js';
 import { suppressionScopeKey } from '../apps/api/dist/security/suppression-authority.js';
 import { unavailableSuppressionAuthority } from '../apps/api/dist/security/suppression-unavailable.js';
+import { SecurityError } from '../apps/api/dist/security/errors.js';
 
 const principal = { localUserId: randomUUID(), accountStatus: 'ACTIVE', clerkInstanceId: 'synthetic',
   subjectKeys: [{ version: 1, digest: 'synthetic' }] };
@@ -24,7 +25,8 @@ const authority = { async lookup(scope, query) {
 async function harness(t, service, options) {
   const app = express();
   app.use('/api/v1', submissionRoutes(service,
-    async req => req.get('Authorization') === headers.Authorization ? principal : null, options));
+    async req => options?.authenticate ? options.authenticate(req)
+      : req.get('Authorization') === headers.Authorization ? principal : null, options));
   if (options?.readConversation) app.get('/api/v1/conversations/:conversationId/messages',
     (_request, response) => response.set('Cache-Control', 'no-store').json({ route: 'workspace' }));
   const server = app.listen(0, '127.0.0.1');
@@ -37,6 +39,59 @@ async function harness(t, service, options) {
     return { status: response.status, headers: response.headers, body: await response.json() };
   };
 }
+
+test('submission rejections correlate without exposing the reason, identity, path, or content', async t => {
+  const events = [];
+  t.mock.method(console, 'info', value => events.push(JSON.parse(value)));
+  let account = principal, found = true, active = true, capability = true, writes = 0;
+  const repo = {
+    async scope() { return found ? { id: conversationId, ideaId, status: active ? 'ACTIVE' : 'ARCHIVED',
+      idea: { id: ideaId, status: 'ACTIVE', ownerId: principal.localUserId } } : null; },
+    async accept() { writes++; return { messageId: randomUUID(), generationId: randomUUID() }; }
+  };
+  const decision = { purpose: 'founders-lens:local-generation:submit', subjectVersions: [1],
+    epoch: 'synthetic', expiresAt: Date.now() + 60_000 };
+  const service = createSubmissionService(repo, authority, { clock: () => new Date(),
+    allowSubmission: (actor, id, content) => actor === principal && id === conversationId && content === body.content,
+    executionAdmission: async () => capability ? decision : undefined });
+  const send = await harness(t, service, { authenticate(req) {
+    if (req.get('Authorization') !== headers.Authorization) return null;
+    if (!account) throw new SecurityError('ACCOUNT_UNAVAILABLE', 'ACCOUNT_BINDING_MISSING');
+    return account;
+  } });
+  async function denied(category, status, options) {
+    const result = await send(options);
+    assert.equal(result.status, status);
+    const requestId = result.headers.get('x-request-id');
+    assert.match(requestId, /^[a-f0-9-]{36}$/);
+    assert.equal(result.body.error.requestId, requestId);
+    assert.deepEqual(events.pop(), { event: 'submission_rejected', requestId,
+      route: 'conversation.messages', operation: 'submit', status, category });
+    assert.deepEqual(Object.keys(result.body.error).sort(), ['code', 'message', 'requestId', 'retryable']);
+    if (status === 404) assert.equal(result.body.error.code, 'RESOURCE_NOT_FOUND');
+    assert.equal(writes, 0);
+  }
+  await denied('UNAUTHENTICATED', 401, { fields: { ...headers, Authorization: 'Bearer other.fixture.token' } });
+  account = undefined;
+  await denied('ACCOUNT_BINDING_MISSING', 403);
+  account = { ...principal, localUserId: randomUUID() };
+  await denied('SYNTHETIC_SCOPE_MISMATCH', 404);
+  account = principal;
+  await denied('SYNTHETIC_SCOPE_MISMATCH', 404, { id: randomUUID() });
+  await denied('SYNTHETIC_SCOPE_MISMATCH', 404, { input: JSON.stringify({ ...body, content: body.content + '\n' }) });
+  capability = false;
+  await denied('SUBMISSION_CAPABILITY_DENIED', 503);
+  capability = true;
+  found = false;
+  await denied('CONVERSATION_NOT_FOUND_OR_NOT_OWNED', 404);
+  found = true;
+  active = false;
+  await denied('CONVERSATION_INACTIVE', 404);
+  active = true;
+  assert.equal((await send()).status, 202);
+  assert.equal(writes, 1);
+  assert.deepEqual(events, []);
+});
 
 test('scoped generation transcript reads leave other conversations with the workspace router', async t => {
   const send = await harness(t, { async history() { return { route: 'generation' }; } },

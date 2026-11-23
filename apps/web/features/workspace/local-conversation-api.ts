@@ -42,13 +42,16 @@ export function createLocalConversationApi(getToken: () => Promise<string | null
       headers?.(response.headers);
       return { status: command ? 201 : 200, data };
     }
+    const id = response.headers.get('X-Request-Id');
+    const correlation = id && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
+      ? { requestId: id } : {};
     // A closed mount returns a bare 404. It cannot settle a prior save intent.
     if (command?.key && response.status === 404 && !response.headers.get('Content-Type')?.includes('application/json')) {
-      return { status: 503 };
+      return { status: 503, ...correlation };
     }
     switch (response.status) {
-      case 400: case 401: case 403: case 404: case 409: case 413: case 415: case 429: return { status: response.status };
-      default: return { status: 503 };
+      case 400: case 401: case 403: case 404: case 409: case 413: case 415: case 429: return { status: response.status, ...correlation };
+      default: return { status: 503, ...correlation };
     }
   }
   function verify<T>(test: (value: T) => boolean) {

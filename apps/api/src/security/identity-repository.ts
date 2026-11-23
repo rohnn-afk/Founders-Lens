@@ -53,7 +53,7 @@ export class PrismaIdentityRepository implements IdentityRepository {
             data: { subjectKey: current.digest, subjectKeyVersion: currentVersion } });
           return { id: account.id, status: 'ACTIVE' };
         }
-        if (!allowProvisioning) throw new SecurityError('ACCOUNT_UNAVAILABLE');
+        if (!allowProvisioning) throw new SecurityError('ACCOUNT_UNAVAILABLE', 'ACCOUNT_BINDING_MISSING');
         // Let PostgreSQL apply account defaults so restricted provisioning needs only these columns.
         const [created] = await tx.$queryRaw<{ id: string }[]>`
           INSERT INTO "UserAccount" (id, "clerkSubject", "clerkInstanceId", "subjectKey", "subjectKeyVersion", "updatedAt")

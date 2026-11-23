@@ -5,6 +5,9 @@ import type { ErrorRequestHandler } from 'express';
 import { requestContext } from './request-context.js';
 
 type Code = 'UNAUTHENTICATED' | 'ACCOUNT_UNAVAILABLE' | 'RESOURCE_NOT_FOUND' | 'DEPENDENCY_UNAVAILABLE' | 'INTERNAL_ERROR';
+export type DenialCategory = 'WRONG_ROUTE' | 'ACCOUNT_BINDING_MISSING' |
+  'CONVERSATION_NOT_FOUND_OR_NOT_OWNED' | 'CONVERSATION_INACTIVE' | 'SYNTHETIC_SCOPE_MISMATCH' |
+  'SUBMISSION_CAPABILITY_DENIED' | 'ACCESS_DENIED';
 const catalog = {
   UNAUTHENTICATED: { status: 401, message: 'Authentication is required.', retryable: false },
   ACCOUNT_UNAVAILABLE: { status: 403, message: 'The account is unavailable.', retryable: false },
@@ -14,7 +17,7 @@ const catalog = {
 } as const;
 
 export class SecurityError extends Error {
-  constructor(readonly code: Code) { super(catalog[code].message); }
+  constructor(readonly code: Code, readonly denialCategory?: DenialCategory) { super(catalog[code].message); }
 }
 
 export function securityFailure(error: unknown, requestId: string) {

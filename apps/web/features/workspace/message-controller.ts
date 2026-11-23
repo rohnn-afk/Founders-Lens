@@ -20,6 +20,7 @@ export function createMessageController(api: MessageApi, storage: RecoveryStorag
   let state: MessageState = 'editing';
   let initialized = false;
   let acceptance: Acceptance | undefined;
+  let requestId: string | undefined;
 
   function restore() {
     if (initialized || !isCurrent(scope)) return state;
@@ -49,6 +50,7 @@ export function createMessageController(api: MessageApi, storage: RecoveryStorag
       return state = 'rejected';
     }
     state = 'sending';
+    requestId = undefined;
     acceptance = undefined;
     const body = Object.freeze({ content, clientSubmissionId: makeId() });
     record = storage.save(target, body.clientSubmissionId, makeId());
@@ -57,6 +59,7 @@ export function createMessageController(api: MessageApi, storage: RecoveryStorag
       // A transport may deliver even after abort. The route and session
       // generations must still match before changing state or storage.
       if (!isCurrent(scope) || blocked(reply.status)) return;
+      if ('requestId' in reply) requestId = reply.requestId;
       if (reply.status === 202 && reply.data.status === 'PENDING' && validAcceptance(reply.data)) {
         acceptance = reply.data;
         storage.saveAccepted(target, acceptance.generationId);
@@ -87,9 +90,11 @@ export function createMessageController(api: MessageApi, storage: RecoveryStorag
       return state = 'history-only';
     }
     state = 'checking';
+    requestId = undefined;
     try {
       const reply = await api.correlate(conversationId, record.clientSubmissionId, scope.signal);
       if (!isCurrent(scope) || blocked(reply.status)) return;
+      if ('requestId' in reply) requestId = reply.requestId;
       if (reply.status === 200 && reply.data.clientSubmissionId === record.clientSubmissionId && validAcceptance(reply.data)) {
         acceptance = reply.data;
         storage.saveAccepted(target, acceptance.generationId);
@@ -104,6 +109,7 @@ export function createMessageController(api: MessageApi, storage: RecoveryStorag
   }
 
   return { restore, send, check, state: () => state,
+    failureRequestId: () => isCurrent(scope) ? requestId : undefined,
     pendingAttempt: () => isCurrent(scope) ? storage.readAccepted(target) : undefined,
     clearPendingAttempt: () => storage.clearAccepted(target),
     acceptance: () => isCurrent(scope) ? acceptance : undefined };

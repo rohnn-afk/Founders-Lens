@@ -107,7 +107,9 @@ export function createSubmissionService(repository: SubmissionRepository, author
     async submit(principal: Principal, conversationId: string, key: string, body: MessageCreate) {
       if (principal.accountStatus !== 'ACTIVE') throw new SecurityError('ACCOUNT_UNAVAILABLE');
       if (!principal.subjectKeys.length) throw new SecurityError('DEPENDENCY_UNAVAILABLE');
-      if (allowSubmission && !allowSubmission(principal, conversationId, body.content)) throw new SecurityError('RESOURCE_NOT_FOUND');
+      if (allowSubmission && !allowSubmission(principal, conversationId, body.content)) {
+        throw new SecurityError('RESOURCE_NOT_FOUND', 'SYNTHETIC_SCOPE_MISMATCH');
+      }
       if (admission?.currentTurnBytes !== undefined &&
         Buffer.byteLength(JSON.stringify(body.content)) > admission.currentTurnBytes) {
         throw new SubmissionError('PAYLOAD_TOO_LARGE');
@@ -115,7 +117,7 @@ export function createSubmissionService(repository: SubmissionRepository, author
       const decision = await executionAdmission?.();
       if (executionAdmission && (!decision || decision.purpose !== 'founders-lens:local-generation:submit' ||
         decision.subjectVersions.join(',') !== principal.subjectKeys.map(ref => ref.version).sort((a, b) => a - b).join(','))) {
-        throw new SecurityError('DEPENDENCY_UNAVAILABLE');
+        throw new SecurityError('DEPENDENCY_UNAVAILABLE', 'SUBMISSION_CAPABILITY_DENIED');
       }
       const window = suppressionWindow(decision ? { async lookup(scope, query) {
         const evidence = await authority.lookup(scope, query);
@@ -126,12 +128,15 @@ export function createSubmissionService(repository: SubmissionRepository, author
           subjectKeyVersion: key.version, subjectKey: key.digest, incarnation: 'ALL' });
       }
       const scope = await repository.scope(principal, conversationId);
-      if (!scope || scope.id !== conversationId || scope.status !== 'ACTIVE') throw new SecurityError('RESOURCE_NOT_FOUND');
+      if (!scope || scope.id !== conversationId) {
+        throw new SecurityError('RESOURCE_NOT_FOUND', 'CONVERSATION_NOT_FOUND_OR_NOT_OWNED');
+      }
+      if (scope.status !== 'ACTIVE') throw new SecurityError('RESOURCE_NOT_FOUND', 'CONVERSATION_INACTIVE');
       // Clearance is independent evidence that access is allowed for this
       // scope. Fetch it outside the transaction, then recheck local state under lock.
       await authorizeChild(principal, scope.idea, scope, window.authority, 'write');
       if (executionAdmission && JSON.stringify(await executionAdmission()) !== JSON.stringify(decision)) {
-        throw new SecurityError('DEPENDENCY_UNAVAILABLE');
+        throw new SecurityError('DEPENDENCY_UNAVAILABLE', 'SUBMISSION_CAPABILITY_DENIED');
       }
       function requireFresh() {
         window.requireFresh();

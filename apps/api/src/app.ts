@@ -3,7 +3,7 @@
 
 import express, { type Router } from 'express';
 import helmet from 'helmet';
-import { attachRequestContext } from './security/request-context.js';
+import { attachRequestContext, isConversationSubmission, traceSubmissionFailure } from './security/request-context.js';
 import { securityErrorHandler } from './security/errors.js';
 
 export function createApp(localIdeas?: Router) {
@@ -21,7 +21,12 @@ export function createApp(localIdeas?: Router) {
   // No production dependency or safety gate has been configured or verified.
   app.get('/health/ready', (_request, response) => { response.status(503).end(); });
   if (localIdeas) app.use('/api/v1', localIdeas);
-  app.use((_request, response) => { response.status(404).end(); });
+  app.use((request, response) => {
+    if (isConversationSubmission(request.method, request.path.replace(/^\/api\/v1(?=\/)/, ''))) {
+      traceSubmissionFailure(response, 404, 'WRONG_ROUTE');
+    }
+    response.status(404).end();
+  });
   app.use(securityErrorHandler);
   return app;
 }

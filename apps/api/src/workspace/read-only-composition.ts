@@ -9,6 +9,7 @@ import { createRuntimeRecoveryClearance, type RuntimeRecoveryDecision } from '..
 import { createClerkBoundary } from '../security/clerk.js';
 import { clerkConfig } from '../security/config.js';
 import { SecurityError } from '../security/errors.js';
+import { isConversationSubmission, requestContext, traceSubmissionFailure } from '../security/request-context.js';
 import { ClerkIdentityProvider } from '../security/identity-provider.js';
 import { PrismaIdentityRepository } from '../security/identity-repository.js';
 import { IdentityService } from '../security/identity-service.js';
@@ -46,12 +47,19 @@ export function workspaceIdeasCors(allowCreate: boolean, conversations?: { creat
     const allowRead = ideas || conversationRead || generationRead;
     const postHeaders = (ideas && allowCreate) || save || submit ? 'authorization,content-type,idempotency-key' :
       (conversations?.create && conversationCollection ? 'authorization,content-type' : undefined);
-    if (request.baseUrl !== '/api/v1' || !(allowRead || save)) { response.status(404).end(); return; }
+    const rejectRoute = (status: 403 | 404) => {
+      if (isConversationSubmission(request.method, path)) {
+        traceSubmissionFailure(response, status, request.baseUrl === '/api/v1'
+          ? 'SUBMISSION_CAPABILITY_DENIED' : 'WRONG_ROUTE');
+      }
+      response.status(status).end();
+    };
+    if (request.baseUrl !== '/api/v1' || !(allowRead || save)) { rejectRoute(404); return; }
     response.vary('Origin');
     const caller = request.get('Origin');
-    if (caller && caller !== origin) { response.status(403).end(); return; }
+    if (caller && caller !== origin) { rejectRoute(403); return; }
     if (caller === origin) response.set({ 'Access-Control-Allow-Origin': origin,
-      'Access-Control-Expose-Headers': 'X-Workspace-Idea-Creation, X-Workspace-Conversations, X-Workspace-Generation' });
+      'Access-Control-Expose-Headers': 'X-Request-Id, X-Workspace-Idea-Creation, X-Workspace-Conversations, X-Workspace-Generation' });
     if (request.method === 'GET' && generationConversation && path === '/conversations/' + generationConversation) {
       response.set('X-Workspace-Generation', 'enabled');
     }
@@ -68,7 +76,7 @@ export function workspaceIdeasCors(allowCreate: boolean, conversations?: { creat
       return;
     }
     if ((request.method !== 'GET' || !allowRead) && (request.method !== 'POST' || !postHeaders)) {
-      response.status(404).end(); return;
+      rejectRoute(404); return;
     }
     next();
   };
@@ -226,7 +234,7 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
         throw new SecurityError('UNAUTHENTICATED');
       }
       await clearance.assertClearance();
-      return identity.resolve(verified, randomUUID());
+      return identity.resolve(verified, request.res ? requestContext(request.res).requestId : randomUUID());
     };
     router.use(workspaceIdeaListRoutes({ ideas(principal, query) {
       return workspace.ideas(principal, query, clearance.assertClearance);

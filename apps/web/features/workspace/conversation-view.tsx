@@ -217,6 +217,7 @@ function MessagePanel({ api, recovery, ideaId, conversationId, archived }: {
       {state === 'history-only' && 'Acceptance cannot be confirmed from this tab. Review saved messages.'}
       {state === 'rejected' && 'The message was rejected.'}
       {state === 'quota' && 'Generation capacity is unavailable. Your draft is still here.'}
+      {controller.failureRequestId() && <small> Request ID {controller.failureRequestId()}</small>}
     </div>
     {api.generation && <div className={styles['generationActions']}>
       <div role="status">

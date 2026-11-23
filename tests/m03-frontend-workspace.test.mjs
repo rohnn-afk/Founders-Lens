@@ -13,6 +13,7 @@ async function controller(name) {
 const { createReadController, readThink, readConversation } = await controller('read-controller');
 const { createCommandController } = await controller('create-controller');
 const { createLocalConversationApi } = await controller('local-conversation-api');
+const { createMessageController } = await controller('message-controller');
 
 const ok = data => ({ status: 200, data });
 const created = data => ({ status: 201, data });
@@ -24,6 +25,36 @@ const api = overrides => ({
   ideas: async () => ok(page([])), idea: async id => ok(idea(id)),
   conversations: async () => ok(page([])), conversation: async id => ok(chat(id, 'first')),
   ...overrides
+});
+
+test('browser submit carries a safe API request ID only for the current session and route', async t => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: { location: { origin: 'http://127.0.0.1:3000' } } });
+  t.after(() => { if (previous) Object.defineProperty(globalThis, 'window', previous); else delete globalThis.window; });
+  const requestId = '057c8ea3-e1d3-47cf-b63f-3372690d4148';
+  let header = requestId;
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    assert.equal(url, 'http://127.0.0.1:3001/api/v1/conversations/current/messages');
+    assert.equal(JSON.parse(init.body).content, 'Exact synthetic bytes');
+    return Response.json({ error: { code: 'RESOURCE_NOT_FOUND' } }, {
+      status: 404, headers: { 'X-Request-Id': header }
+    });
+  });
+  const { messageApi } = createLocalConversationApi(async () => 'fixture-token');
+  const lifetime = new AbortController();
+  const scope = { account: 'test', sessionGeneration: 1, routeGeneration: 1, signal: lifetime.signal };
+  const storage = { read: () => ({}), save: (_target, _id, key) => ({ key }), remove() {} };
+  const composer = createMessageController(messageApi, storage, scope, 'idea', 'current',
+    () => !lifetime.signal.aborted, () => {});
+  assert.equal(await composer.send('Exact synthetic bytes'), 'rejected');
+  assert.equal(composer.failureRequestId(), requestId);
+  header = 'Rejected unsafe header';
+  assert.equal(await composer.send('Exact synthetic bytes'), 'rejected');
+  assert.equal(composer.failureRequestId(), undefined);
+  header = requestId;
+  assert.equal(await composer.send('Exact synthetic bytes'), 'rejected');
+  lifetime.abort();
+  assert.equal(composer.failureRequestId(), undefined);
 });
 
 test('P8 save retains the exact intent after a lost response and discards it on session cleanup', async t => {

@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { bearerToken } from '../security/bearer.js';
 import { SecurityError, securityFailure } from '../security/errors.js';
 import type { Principal } from '../security/principal.js';
-import { attachRequestContext, requestContext } from '../security/request-context.js';
+import { attachRequestContext, requestContext, traceSubmissionFailure } from '../security/request-context.js';
 import { acceptance, keySchema, messageCreate, SubmissionError, transcriptQuery, uuid } from './contracts.js';
 import type { SubmissionService } from './service.js';
 
@@ -85,6 +85,10 @@ export function submissionRoutes(service: SubmissionService, authenticate: (requ
       response.status(202).location(result.statusUrl).json(result);
     } catch (error) {
       const failure = error instanceof SubmissionError ? error.failure(requestId) : securityFailure(error, requestId);
+      const category = error instanceof SecurityError ? error.denialCategory : undefined;
+      traceSubmissionFailure(response, failure.status, category ?? (failure.status === 401 ? 'UNAUTHENTICATED'
+        : failure.status === 403 || failure.status === 404 ? 'ACCESS_DENIED'
+          : failure.status >= 500 ? 'REQUEST_FAILED' : 'REQUEST_REJECTED'));
       response.status(failure.status).json(failure.body);
     }
   });

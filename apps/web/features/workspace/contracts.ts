@@ -18,7 +18,7 @@ export type ConversationCreate = { title?: string; proactiveResearch?: boolean }
 // An adapter supplies decoded DTOs and HTTP failures. No credentials belong
 // in view state or in the session snapshot used to scope this client.
 export type Reply<T> = { status: 200 | 201; data: T } |
-  { status: 400 | 401 | 403 | 404 | 409 | 413 | 415 | 429 | 500 | 503 };
+  { status: 400 | 401 | 403 | 404 | 409 | 413 | 415 | 429 | 500 | 503; requestId?: string };
 export type Message = {
   id: string; conversationId: string; sequence: number; role: 'USER' | 'ASSISTANT'; content: string; createdAt: string;
 };
