@@ -4,12 +4,13 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Message, MessageApi, SavedMessageApi } from './contracts';
+import type { Message, MessageApi, Page, SavedMessageApi } from './contracts';
 import { createGenerationController, isTerminal, type GenerationView } from './generation-controller';
 import { createMessageController } from './message-controller';
-import { readConversation } from './read-controller';
+import { readConversation, type ReadResult } from './read-controller';
 import type { RecoveryStorage } from './submission-recovery-storage';
 import { readNotice, useWorkspace, useWorkspaceRead } from './workspace-provider';
+import { Transcript } from './transcript';
 import styles from './workspace.module.css';
 
 export function ConversationView({ ideaId, conversationId }: { ideaId: string; conversationId: string }) {
@@ -107,13 +108,8 @@ function SavedTranscript({ api, conversationId, archived }: { api: SavedMessageA
 
   return <section aria-label="Saved messages" className={styles['messages']}>
     <h2>Message history</h2>
-    {history.kind === 'ready' ? <>
-      <Transcript items={history.data.items} />
-      <nav className={styles['actions']} aria-label="Transcript pages">
-        {cursors.length > 1 && <button type="button" onClick={() => setCursors(cursors.slice(0, -1))}>Previous messages</button>}
-        {history.data.page.nextCursor && <button type="button" onClick={() => setCursors([...cursors, history.data.page.nextCursor])}>Next messages</button>}
-      </nav>
-    </> : readNotice(history.kind, () => refresh(value => value + 1))}
+    <TranscriptPages conversationId={conversationId} history={history} cursors={cursors} changePage={setCursors}
+      archived={archived} retry={() => refresh(value => value + 1)} />
     {!archived && (history.kind === 'ready' || history.kind === 'loading') && <form className={styles['composer']} onSubmit={event => {
         event.preventDefault();
         if (history.kind !== 'ready') return;
@@ -207,13 +203,8 @@ function MessagePanel({ api, recovery, ideaId, conversationId, archived }: {
   </section>;
   return <section aria-label="Messages" className={styles['messages']}>
     <h2>Message history</h2>
-    {history.kind === 'ready' ? <>
-      <Transcript items={history.data.items} />
-      <nav className={styles['actions']} aria-label="Transcript pages">
-        {cursors.length > 1 && <button type="button" onClick={() => setCursors(cursors.slice(0, -1))}>Previous messages</button>}
-        {history.data.page.nextCursor && <button type="button" onClick={() => setCursors([...cursors, history.data.page.nextCursor])}>Next messages</button>}
-      </nav>
-    </> : readNotice(history.kind, reloadHistory)}
+    <TranscriptPages conversationId={conversationId} history={history} cursors={cursors} changePage={setCursors}
+      archived={archived} retry={reloadHistory} />
     <div className={styles['messageStatus']} role="status">
       {state === 'sending' && 'Sending…'}
       {state === 'accepted' && 'Message accepted.'}
@@ -266,12 +257,20 @@ function MessagePanel({ api, recovery, ideaId, conversationId, archived }: {
   </section>;
 }
 
-function Transcript({ items }: { items: readonly Message[] }) {
-  if (!items.length) return <p className={styles['empty']}>No saved messages.</p>;
-  return <ol className={styles['transcript']} aria-label="Conversation transcript">
-    {items.map(item => <li key={item.id} data-speaker={item.role === 'USER' ? 'founder' : 'assistant'}>
-      <strong>{item.role === 'USER' ? 'You' : 'Assistant'}</strong>
-      <p>{item.content}</p>
-    </li>)}
-  </ol>;
+function TranscriptPages({ conversationId, history, cursors, changePage, archived, retry }: {
+  conversationId: string; history: ReadResult<Page<Message>> | { kind: 'loading' };
+  cursors: (string | null)[]; changePage: (cursors: (string | null)[]) => void; archived: boolean; retry: () => void;
+}) {
+  const page = history.kind === 'ready' ? history.data : undefined;
+  const next = page?.page.nextCursor;
+  const index = cursors.length - 1;
+  const loading = history.kind === 'loading';
+  return <>
+    {(loading || page) && <Transcript conversationId={conversationId} page={page} pageIndex={index} archived={archived} />}
+    {history.kind !== 'ready' && readNotice(history.kind, retry)}
+    {(index > 0 || next) && <nav className={styles['actions']} aria-label="Transcript pages">
+      {index > 0 && <button type="button" disabled={loading} onClick={() => changePage(cursors.slice(0, -1))}>Older messages</button>}
+      {next && <button type="button" onClick={() => changePage([...cursors, next])}>Newer messages</button>}
+    </nav>}
+  </>;
 }

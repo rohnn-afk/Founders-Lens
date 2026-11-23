@@ -30,6 +30,9 @@ function fixture() {
   const recoveryChatId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
   const messageId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
   const generationId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+  const answerText = ['# Findings', '', 'A **strong** point with *emphasis* and \`inline code\`.', '', '- First point', '- Second point', '', '1. First step', '2. Second step', '', '[Reference](https://example.com/reference) [Unsafe](javascript:alert) [Remote](//example.org)', '', '<img src=x onerror=alert(1)>', '', '\`\`\`text',
+    'A'.repeat(150), '\`\`\`', '', ...Array.from({ length: 22 }, () => 'More synthetic detail.'), '', 'Synthetic response'
+  ].join('\\n');
   const answerId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
   const statusUrl = '/api/v1/generations/' + generationId;
   const listeners = new Set<() => void>();
@@ -105,7 +108,7 @@ function fixture() {
         id: messageId, conversationId: id, sequence: 1, role: 'USER', content: 'Synthetic message',
         createdAt: '2026-01-01T00:00:00.000Z'
       }, {
-        id: answerId, conversationId: id, sequence: 2, role: 'ASSISTANT', content: 'Synthetic response',
+        id: answerId, conversationId: id, sequence: 2, role: 'ASSISTANT', content: answerText,
         createdAt: '2026-01-01T00:00:01.000Z'
       }] : [] } };
     }
@@ -441,6 +444,21 @@ test('Edge synthetic navigation, history, accessibility and identity isolation',
   assert.equal(await evaluate('sessionStorage.getItem("synthetic-posts")'), '1');
   assert.equal(await evaluate('sessionStorage.getItem(' + JSON.stringify(key) + ')'), null);
   await text('Synthetic response');
+  const transcript = 'document.querySelector("[role=region][aria-busy]")';
+  await waitFor(() => evaluate(transcript + '.scrollTop > 100'), 'initial position near latest message');
+  assert.deepEqual(await evaluate('(() => { const reply = document.querySelector("[data-speaker=assistant]"); return [reply.querySelector("h3")?.textContent, reply.querySelector("strong")?.textContent, reply.querySelector("em")?.textContent, reply.querySelector("pre code")?.textContent.length, reply.querySelector("ul li")?.textContent, reply.querySelector("ol[start] > li")?.textContent, reply.querySelectorAll("a").length, reply.querySelector("a")?.href, reply.querySelector("img"), reply.textContent.includes("<img src=x onerror=alert(1)>")]; })()'), [
+    'Findings', 'strong', 'emphasis', 150, 'First point', 'First step', 1, 'https://example.com/reference', null, true
+  ]);
+  assert.equal(await evaluate('document.documentElement.scrollWidth === document.documentElement.clientWidth'), true);
+  const accessibility = await command('Accessibility.getFullAXTree');
+  assert.ok(accessibility.nodes.some(node => node.role?.value === 'region' && node.name?.value === 'Conversation transcript'));
+  await evaluate(transcript + '.scrollTo({top:120})');
+  await text('Jump to latest message');
+  await reload();
+  await text('Synthetic response');
+  assert.equal(await evaluate(transcript + '.scrollTop'), 120);
+  await click('Jump to latest message');
+  assert.equal(await evaluate(transcript + '.scrollTop > 120'), true);
   await command('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
   await reload();
   await text('Synthetic response');
