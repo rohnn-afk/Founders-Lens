@@ -42,7 +42,7 @@ export async function stagingWorkspace(env: NodeJS.ProcessEnv, settings: ReturnT
       user: url.username, password: decodeURIComponent(url.password),
       ssl: url.search === '?sslmode=verify-full' ? { rejectUnauthorized: true, servername: url.hostname } : false,
       max: 4,
-      connectionTimeoutMillis: 1500, statement_timeout: 4000, query_timeout: 4500 });
+      connectionTimeoutMillis: settings.connectionTimeoutMillis, statement_timeout: 4000, query_timeout: 4500 });
     result.on('error', () => console.error(JSON.stringify({
       event: 'staging_database_connection_lost', role: url.username
     })));
