@@ -6,6 +6,8 @@ Work in the primary checkout. Push a focused branch and open its PR into `stagin
 
 Staging push CI repeats the checks against the merge SHA. It builds the Linux amd64 API image, smoke-tests it offline, and scans its filesystem and configuration. Any high or critical finding or image secret match blocks promotion. Download `api-image-scan` for redacted findings. The previous one-smoke CVE acceptance does not carry forward.
 
+The Debian OpenSSL packages in the reviewed Distroless image still trigger Trivy for [CVE-2026-107494](https://security-tracker.debian.org/tracker/CVE-2026-107494) and [CVE-2026-124709](https://security-tracker.debian.org/tracker/CVE-2026-124709). Both affect QUIC. The API listens over HTTP/TCP, and its PostgreSQL and Clerk clients use TLS over TCP. The reviewed API paths do not use QUIC, but the affected libraries remain installed. Track the upstream OpenSSL 3.5.10 fixes and update both the Debian base and Node's bundled OpenSSL when supported builds are available. Rescan before release. [OpenSSL advisories](https://openssl-library.org/news/timeline/)
+
 After one-time enablement, the protected `staging` job packages the already-tested image with `GITHUB_TOKEN` and publishes a tag named for the full SHA. The job is serialized and checks the staging tip before publication and deployment. Download `staging-api-release` for the immutable registry reference and platform manifest. Render receives only that digest for the existing API service. The public demo and authenticated frontend are outside this promotion.
 
 The job polls the Render deploy ID and confirms the expected image, then checks API liveness, readiness, and unauthenticated denial. A failed check fails the release job. A dropped submission response is ambiguous. Check the Render **Events** page before trying again. A successful health probe does not replace a signed-in workspace check.
@@ -16,6 +18,12 @@ The job polls the Render deploy ID and confirms the expected image, then checks 
 2. Restrict the GitHub `staging` environment to the protected staging branch. Add the staging Render API credential as `RENDER_API_KEY` and the existing API service ID as `RENDER_STAGING_API_SERVICE_ID`. Use the narrowest Render principal your workspace supports. The job verifies the API name, URL, runtime and image repository before submitting. Never reuse the deployment credential for production.
 3. After separate Render authorization, configure the existing API as image-backed for this private image repository with its pull-only credential. Keep Auto-Deploy Off, use the image CMD, and set the health check to `/health/ready`. Changing the source can trigger a deploy. Keep the long-lived Clerk, database and public-key settings on Render. Set `FL_STAGING_DECISION_SOURCE=authority` only after the authority mailbox is populated, and remove both old decision variables in the same saved update.
 4. Configure and verify renewal before setting repository variable `FL_STAGING_RELEASE_ENABLED=true`. The switch ships disabled by default. To retain a human gate on each deployment, configure required reviewers on the staging environment.
+
+## Configuration ownership
+
+Render's service environment is authoritative for each deployed service. Use its private local manifest only for preparation and recovery. Keep one operator-owned configuration source for the signer, with its own restricted credentials. GitHub's staging environment holds release credentials only. Keep shared deployment parameters such as the authority epoch identical across these boundaries and verify them before release. Never combine the API, frontend and signer secrets into a shared dotenv file.
+
+The tracked `.env.example` is the local-development template. Historical phase fixtures are optional. Restore only the specific ignored files needed for an approved local test and keep them separate from deployment configuration.
 
 ## Renewing the staging read decisions
 

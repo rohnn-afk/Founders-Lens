@@ -22,7 +22,6 @@ async function renew(env, signal) {
   const reader = new URL(env.FL_OPERATOR_AUTHORITY_READ_URL);
   if (url.hostname !== reader.hostname || url.pathname !== reader.pathname) throw new Error('Unexpected renewal endpoint');
   const writer = directStagingPool(url.href, stagingConnectionTimeout(env), 'staging_decision_writer');
-  writer.on('error', () => console.error('staging_decision_writer_connection_lost'));
   try {
     while (!signal.aborted) {
       let interval = 60_000;

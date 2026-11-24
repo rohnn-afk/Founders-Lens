@@ -36,7 +36,7 @@ RUN node --input-type=module -e '\
     writeFileSync("package.json", JSON.stringify({ name, version, dependencies, overrides }));' \
     && npm ci --omit=dev --omit=peer --ignore-scripts
 
-FROM debian:trixie-slim@sha256:ab3b3c8c5159eebfca4376430132d53c4d425f869c765ecbe47177a030da575d
+FROM gcr.io/distroless/cc-debian13:nonroot-amd64@sha256:a10bdce4a54ae11746dd88386f9860c1d178d137b56166a620898ba1bf6001cd
 WORKDIR /app
 ENV NODE_ENV=production
 ARG SOURCE_SHA

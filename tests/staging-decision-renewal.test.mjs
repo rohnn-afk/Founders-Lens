@@ -89,3 +89,15 @@ test('signer rejects pooled, non-TLS and wrong-role URLs before connecting', () 
       `postgresql://${role}:fixture@${host}.us-west-2.aws.neon.tech/neondb${query}`, 4000, 'ledger_reader'));
   }
 });
+
+test('all signer pools handle unexpected idle connection loss', async () => {
+  for (const role of ['fl_p6_workspace', 'ledger_reader', 'staging_decision_writer']) {
+    const pool = directStagingPool(
+      `postgresql://${role}:fixture@ep-test.us-west-2.aws.neon.tech/neondb?sslmode=verify-full`, 4000, role);
+    try {
+      assert.equal(pool.listenerCount('error'), 1);
+    } finally {
+      await pool.end();
+    }
+  }
+});

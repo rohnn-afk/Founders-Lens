@@ -13,10 +13,12 @@ export function directStagingPool(connectionString, connectionTimeoutMillis, exp
     url.search !== '?sslmode=verify-full' || url.hash || !/^\/[a-zA-Z0-9_]+$/.test(url.pathname)) {
     throw new Error('Invalid signer database connection');
   }
-  return new pg.Pool({ host: url.hostname, port: 5432, database: url.pathname.slice(1),
+  const pool = new pg.Pool({ host: url.hostname, port: 5432, database: url.pathname.slice(1),
     user: url.username, password: decodeURIComponent(url.password),
     ssl: { rejectUnauthorized: true, servername: url.hostname }, max: 1, connectionTimeoutMillis,
     statement_timeout: 4000, query_timeout: 4500 });
+  pool.on('error', () => console.error('staging_signer_database_idle_connection_lost'));
+  return pool;
 }
 
 export async function issueStagingPair(env) {
