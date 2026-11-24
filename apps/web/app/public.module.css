@@ -34,3 +34,81 @@
 
 .action:hover { background: #203f2c; }
 .action:focus-visible { outline: 3px solid #355c42; outline-offset: 3px; }
+
+.demo {
+  width: min(100%, 78rem);
+  margin-inline: auto;
+  padding-inline: clamp(1rem, 5vw, 4rem);
+}
+
+.demoNav, .demoFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  column-gap: 1.25rem;
+  padding-block: .75rem;
+  border-bottom: 1px solid #d6dacd;
+}
+
+.demoNav span { font-weight: 700; }
+.demoNav nav { display: flex; gap: 1rem; }
+.demoNav a, .demoFooter a {
+  color: #294f38;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  text-underline-offset: .25em;
+}
+
+.demo a:focus-visible { outline: 3px solid #355c42; outline-offset: 3px; }
+
+.demoGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: clamp(1.75rem, 5vw, 5rem);
+  align-items: center;
+  padding-block: clamp(2rem, 8vw, 7rem);
+}
+
+.demoIntro h1 {
+  margin: 0;
+  max-width: 15ch;
+  font-size: clamp(2.5rem, 6vw, 5.5rem);
+  font-weight: 650;
+  letter-spacing: -.065em;
+  line-height: 1.02;
+}
+
+.demoIntro p {
+  max-width: 42ch;
+  color: #555d52;
+  line-height: 1.6;
+  font-size: clamp(1rem, 2vw, 1.25rem);
+}
+
+.demoIntro .demoNote { font-size: .9rem; }
+
+.preview {
+  padding: clamp(1rem, 3vw, 2rem);
+  border: 1px solid #d6dacd;
+  border-radius: 1rem;
+  background: #fffefa;
+  box-shadow: 0 1rem 2.5rem #2528220d;
+  line-height: 1.55;
+}
+
+.previewLabel { margin: 0; color: #555d52; font-size: .875rem; }
+.preview h2 { margin-block: .35rem 1.2rem; font-size: clamp(1.25rem, 3vw, 1.6rem); line-height: 1.2; }
+.preview h3 { margin: 0; font-size: .875rem; }
+.previewUser, .previewAssistant { padding: .9rem 1rem; border-radius: .65rem; }
+.previewUser { background: #efeee7; }
+.previewAssistant { margin-top: .7rem; background: #e8efe5; }
+.previewUser p, .previewAssistant p { margin: .45rem 0 0; }
+
+.demoFooter { border-bottom: 0; border-top: 1px solid #d6dacd; color: #555d52; font-size: .9rem; }
+.demoFooter p { margin: .5rem 0; }
+
+@media (max-width: 46rem) {
+  .demoGrid { grid-template-columns: minmax(0, 1fr); }
+}

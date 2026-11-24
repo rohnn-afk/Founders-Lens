@@ -1,7 +1,10 @@
 ﻿import { workspaceEndpoints } from '../../../features/workspace/endpoints';
 
+import { publicDemo } from '../../../app-mode';
+
 /** Check the configured API without forwarding Clerk credentials. */
 export async function GET() {
+  if (publicDemo) return new Response(null, { status: 200, headers: { 'Cache-Control': 'no-store' } });
   let ready = false;
   try {
     const webOrigin = process.env.NEXT_PUBLIC_FL_WEB_ORIGIN;

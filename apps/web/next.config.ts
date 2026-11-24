@@ -7,7 +7,9 @@ import type { NextConfig } from 'next';
 // during development. Its extra checks are separate from TypeScript checking.
 const config: NextConfig = {
   poweredByHeader: false,
-  reactStrictMode: true
+  reactStrictMode: true,
+  // Keep route availability fixed even if runtime settings drift.
+  env: { FL_WEB_BUILD_MODE: process.env.FL_PUBLIC_DEMO === 'true' ? 'demo' : 'workspace' }
 };
 
 export default config;

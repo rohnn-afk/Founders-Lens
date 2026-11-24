@@ -60,6 +60,9 @@ function inspect(file, text) {
 }
 
 const stagingEnvironment = new Map([
+  ['next.config.ts', new Set(['FL_PUBLIC_DEMO'])],
+  ['app-mode.ts', new Set(['FL_WEB_BUILD_MODE'])],
+  ['app/demo.tsx', new Set(['RENDER_EXTERNAL_URL'])],
   ['features/workspace/endpoints.ts', new Set(['NEXT_PUBLIC_FL_WEB_ORIGIN', 'NEXT_PUBLIC_FL_API_ORIGIN'])],
   ['app/health/ready/route.ts', new Set(['NEXT_PUBLIC_FL_WEB_ORIGIN', 'NEXT_PUBLIC_FL_API_ORIGIN',
     'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY', 'CLERK_SECRET_KEY', 'CLERK_AUTHORIZED_PARTIES', 'FL_INTERNAL_API_ORIGIN'])]
@@ -157,4 +160,16 @@ test('web auth exceptions are limited to named server entry points and exact con
     ['app/layout.tsx', 'const parties = process.env.CLERK_AUTHORIZED_PARTIES;', /Unauthorized configuration/],
     ['proxy.ts', 'const database = process.env.DATABASE_URL;', /Unauthorized configuration/]
   ]) assert.throws(() => check(file, source), error);
+});
+
+test('demo configuration allows only the build toggle, derived mode and public Render URL', () => {
+  for (const [file, key] of [
+    ['next.config.ts', 'FL_PUBLIC_DEMO'],
+    ['app-mode.ts', 'FL_WEB_BUILD_MODE'],
+    ['app/demo.tsx', 'RENDER_EXTERNAL_URL']
+  ]) {
+    assertWebBoundary(file, inspect(file, `const value = process.env.${key};`));
+    assert.throws(() => assertWebBoundary(file, inspect(file, 'const value = process.env.CLERK_SECRET_KEY;')),
+      /Unauthorized configuration/);
+  }
 });
