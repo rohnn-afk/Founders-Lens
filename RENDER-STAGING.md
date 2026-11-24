@@ -26,3 +26,19 @@ Free web services sleep after 15 idle minutes and typically take about a minute 
 4. Record the last known-good deploy IDs for both services. On a partial or uncertain rollout, inspect Render deploy history before dispatching again. Roll back the affected services to the matching known-good deploys. Confirm the same database targets, fresh signed clearance, and readiness. Application rollback does not roll back schema, database data, or authority history. A first deploy has no prior version to restore.
 
 The API retains its existing sanitized startup, shutdown and request events, graceful connection draining, and exact-origin CORS. CI exercises PostgreSQL, independent authority, Redis and the BullMQ pipeline with disposable loopback fixtures and deterministic generation. Hosted workers, Redis, Groq, and database migrations stay outside the staging deploy workflow.
+
+## Public portfolio demo
+
+The public demo is a separate build mode of `founders-lens-staging-web`. It serves the landing page and an illustrative conversation without Clerk, the API, PostgreSQL, Redis, or AI providers. Workspace, sign-in, and Clerk proxy requests return 404. Demo readiness checks only the web process.
+
+After publication approval and successful CI for the exact `staging` SHA, open **founders-lens-staging-web** in Render. Verify **Free**, branch **staging**, and **Auto-Deploy Off**. In **Environment**, add `FL_PUBLIC_DEMO=true`, keep `NODE_VERSION=24.22.3` and `SKIP_INSTALL_DEPS=true`, and save without deploying. Clerk keys, `CLERK_AUTHORIZED_PARTIES`, `NEXT_PUBLIC_FL_WEB_ORIGIN`, and `NEXT_PUBLIC_FL_API_ORIGIN` are unnecessary in this mode. Remove any such variables from this web service for the demo. Render supplies `PORT` and the actual HTTPS origin in `RENDER_EXTERNAL_URL`, which sets the page's canonical and social URLs.
+
+| Setting | Value |
+| --- | --- |
+| Build command | `npm ci --include=dev && node scripts/next.mjs build --webpack` |
+| Start command | `node scripts/next.mjs start --hostname 0.0.0.0 --port "$PORT"` |
+| Health check | `/health/live` |
+
+Select **Manual Deploy → Deploy a specific commit** on the web service and enter the CI-verified SHA. The shared staging workflow deploys the API too, so use the web service dashboard for the demo. Verify the deployed SHA and visit the HTTPS URL displayed on that service. Check the preview anchor, GitHub link, stylesheet, and mobile layout. Confirm 200 on `/health/live` and `/health/ready`, and 404 on `/app`, `/sign-in`, and `/__clerk`.
+
+For rollback, roll back only the web service to its previous deploy in Render. Returning to hosted workspace mode requires a new build with `FL_PUBLIC_DEMO` removed and the authenticated workspace settings above restored.

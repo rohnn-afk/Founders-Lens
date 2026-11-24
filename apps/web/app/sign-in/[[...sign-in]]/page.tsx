@@ -2,9 +2,12 @@
 // while this route keeps redirects inside the Founder's Lens app.
 import { SignIn } from '@clerk/nextjs';
 import Link from 'next/link';
+import { notFound } from 'next/navigation';
+import { publicDemo } from '../../../app-mode';
 import { Suspense } from 'react';
 
 export default function SignInPage() {
+  if (publicDemo) notFound();
   const clerkConfigured = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) && !!process.env.CLERK_SECRET_KEY;
   return (
     <main style={{ maxWidth: '48rem', margin: '3rem auto', padding: '0 1.5rem' }}>

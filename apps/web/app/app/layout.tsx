@@ -1,8 +1,9 @@
 // Workspace route boundary. A verified Clerk session can reach the shell.
 // The existing workspace provider receives no private data or API adapters.
 import { auth } from '@clerk/nextjs/server';
-import { redirect } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import { Suspense, type ReactNode } from 'react';
+import { publicDemo } from '../../app-mode';
 import { WorkspaceProvider } from '../../features/workspace/workspace-provider';
 import { LocalWorkspace } from '../../features/workspace/read-only-ideas';
 
@@ -22,6 +23,7 @@ async function SignedInShell({ children }: { children: ReactNode }) {
 }
 
 export default function WorkspaceLayout({ children }: { children: ReactNode }) {
+  if (publicDemo) notFound();
   if (!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY || !process.env.CLERK_SECRET_KEY) {
     return <WorkspaceProvider>{children}</WorkspaceProvider>;
   }

@@ -41,6 +41,12 @@ jobs:
       - run: npm run db:validate
       - run: npm run typecheck
       - run: npm test
+      - name: Verify the dependency-free public demo
+        env:
+          FL_PUBLIC_DEMO: 'true'
+        run: |
+          node scripts/next.mjs build --webpack
+          node --test tests/public-demo.integration.mjs
       - name: Pull disposable generation fixtures
         run: |
           docker pull docker.io/library/postgres:17.12-bookworm@sha256:40865bc877a289da75963d97d72b59633f639fc5af7a4e856bfa3714cae5b536
