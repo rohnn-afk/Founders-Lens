@@ -56,3 +56,4 @@ Thumbs.db
 .idea/
 *.local.code-workspace
 .neon
+/.worktrees/

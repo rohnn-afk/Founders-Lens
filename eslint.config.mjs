@@ -9,7 +9,8 @@ export default [
   {
     ignores: [
       '**/node_modules/**', '**/.next/**', '**/dist/**', '**/next-env.d.ts',
-      '.cache/**', '.env*/**', 'private-data/**', 'Docs/**', 'apps/api/src/generated/prisma/**'
+      '.cache/**', '.env*/**', '.worktrees/**', 'private-data/**',
+      'Docs/**', 'apps/api/src/generated/prisma/**'
     ]
   },
   ...tseslint.configs.recommended,
