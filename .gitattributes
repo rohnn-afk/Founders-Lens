@@ -6,3 +6,7 @@
 /apps/api/prisma/schema.prisma text eol=lf
 /Docs/lld/01-database/schema/schema.prisma text eol=lf
 /Docs/lld/01-database/constraints/guards.sql text eol=lf
+
+# Keep Docker release scripts usable with Bash on Windows.
+/scripts/build-api-image.sh text eol=lf
+/scripts/smoke-api-image.sh text eol=lf
