@@ -1,6 +1,6 @@
 # Neon staging primary assessment and initialization
 
-Baseline assumed for integration is local staging commit 2395a2b, which contains the Render staging gate at 9e2624c. The initial workspace milestone is read-only. The API contract is in WORKSPACE-API.md.
+Baseline assumed for integration is local staging commit 2395a2b, which contains the Render staging gate at 9e2624c. The initial workspace milestone is read-only. See the [staging workspace API contract](../../apps/api/WORKSPACE-API.md).
 
 ## Backend audit
 
