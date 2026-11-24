@@ -135,6 +135,21 @@ test('Render accepts a separate direct Oregon Neon primary with verified TLS', (
     FL_AUTHORITY_DATABASE_URL: 'postgresql://ledger_reader:fixture@ep-authority.us-west-2.aws.neon.tech/ledger?sslmode=verify-full'
   };
   assert.equal(stagingConfig(neon).workspace.hostname, host);
+  const clusterHost = host.replace('.', '.c-4.');
+  const primaryAt = target => ({
+    FL_WORKSPACE_DATABASE_URL: connection('fl_p6_workspace', target),
+    FL_CONVERSATIONS_DATABASE_URL: connection('fl_p8_conversations', target)
+  });
+  assert.equal(stagingConfig({ ...neon, ...primaryAt(clusterHost) }).workspace.hostname, clusterHost);
+  for (const target of [
+    clusterHost.replace('.', '-pooler.'),
+    clusterHost.replace('us-west-2', 'us-east-2'),
+    clusterHost.replace('c-4', 'c-example'),
+    clusterHost + '.example.test'
+  ]) assert.throws(() => stagingConfig({ ...neon, ...primaryAt(target) }));
+  assert.throws(() => stagingConfig({ ...neon, ...primaryAt(clusterHost),
+    FL_AUTHORITY_DATABASE_URL: 'postgresql://ledger_reader:fixture@' + host + '/ledger?sslmode=verify-full'
+  }), /separate primary and authority/);
   for (const changes of [
     { FL_STAGING_PRIMARY_PROVIDER: 'unknown' },
     { FL_STAGING_PRIMARY_PROVIDER: undefined },

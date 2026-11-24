@@ -35,7 +35,7 @@ export function stagingConfig(env: NodeJS.ProcessEnv) {
         ? /^(?:[a-z0-9-]+\.)+[a-z][a-z0-9-]*$/.test(url.hostname) &&
           !/\.(?:localhost|local|internal)$/.test(url.hostname)
         : neon
-          ? /^ep-[a-z0-9-]+\.us-west-2\.aws\.neon\.tech$/.test(url.hostname) &&
+          ? /^ep-[a-z0-9-]+(?:\.c-[0-9]+)?\.us-west-2\.aws\.neon\.tech$/.test(url.hostname) &&
             !url.hostname.split('.')[0]?.endsWith('-pooler') && (!url.port || url.port === '5432')
           : /^dpg-[a-z0-9-]+$/.test(url.hostname)
       : /^[a-z0-9-]+\.railway\.internal$/.test(url.hostname);
@@ -50,7 +50,11 @@ export function stagingConfig(env: NodeJS.ProcessEnv) {
   const conversations = database('FL_CONVERSATIONS_DATABASE_URL', 'fl_p8_conversations');
   const authority = database('FL_AUTHORITY_DATABASE_URL', 'ledger_reader', true);
   const address = (url: URL) => url.hostname + ':' + (url.port || '5432') + url.pathname;
-  const directHost = (url: URL) => url.hostname.replace(/-pooler(?=\.)/, '');
+  const directHost = (url: URL) => {
+    const host = url.hostname.replace(/-pooler(?=\.)/, '');
+    // Treat both Oregon Neon DNS forms as the same endpoint for separation checks.
+    return neon ? host.replace(/^(ep-[a-z0-9-]+)\.c-[0-9]+(?=\.us-west-2\.aws\.neon\.tech$)/, '$1') : host;
+  };
   if (workspace.pathname !== '/founders_lens_staging' || address(workspace) !== address(conversations) ||
     directHost(workspace) === directHost(authority)) {
     throw new Error('Staging databases must use separate primary and authority services');
