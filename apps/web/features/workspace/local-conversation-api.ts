@@ -16,14 +16,25 @@ function page<T>(value: Page<T>, item: (value: T) => boolean): Page<T> {
   }
   return value;
 }
-const idea = (value: Idea, id?: string) => typeof value?.id === 'string' && (!id || id === value.id) &&
-  typeof value.title === 'string' && ['ACTIVE', 'ARCHIVED'].includes(value.status);
+const positiveInteger = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+const timestamp = (value: unknown) => typeof value === 'string' &&
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value) && Number.isFinite(Date.parse(value));
+const projectedIdea = (value: unknown): value is Idea =>
+  typeof value === 'object' && value !== null && 'id' in value && typeof value.id === 'string' &&
+  'title' in value && typeof value.title === 'string' &&
+  (!('summary' in value) || value.summary == null || typeof value.summary === 'string') &&
+  'createdAt' in value && timestamp(value.createdAt) &&
+  'updatedAt' in value && timestamp(value.updatedAt) &&
+  'version' in value && positiveInteger(value.version) &&
+  'status' in value && (value.status === 'ACTIVE' || value.status === 'ARCHIVED');
 const conversation = (value: Conversation, ideaId?: string) => typeof value?.id === 'string' &&
   typeof value.ideaId === 'string' && (!ideaId || value.ideaId === ideaId) &&
-  (value.title == null || typeof value.title === 'string') && ['ACTIVE', 'ARCHIVED'].includes(value.status);
+  (value.title == null || typeof value.title === 'string') && ['ACTIVE', 'ARCHIVED'].includes(value.status) &&
+  typeof value.proactiveResearch === 'boolean' && positiveInteger(value.version) &&
+  (value.createdAt === undefined || timestamp(value.createdAt));
 const message = (value: Message, id: string) => typeof value?.id === 'string' && value.conversationId === id &&
   Number.isSafeInteger(value.sequence) && value.sequence > 0 && ['USER', 'ASSISTANT'].includes(value.role) &&
-  typeof value.content === 'string' && typeof value.createdAt === 'string';
+  typeof value.content === 'string' && timestamp(value.createdAt);
 
 /** Construct session-scoped P8 and opt-in generation transports. */
 export function createLocalConversationApi(getToken: () => Promise<string | null>, makeKey = () => crypto.randomUUID()) {
@@ -62,14 +73,15 @@ export function createLocalConversationApi(getToken: () => Promise<string | null
     };
   }
   const api: WorkspaceApi = {
-    ideas: (cursor, signal) => request<Page<Idea>>(withCursor('/ideas', cursor), signal, v => page(v, item => idea(item))),
-    idea: (id, signal) => request<Idea>(ideaPath(id), signal, verify(v => idea(v, id))),
+    ideas: (cursor, signal) => request<Page<Idea>>(withCursor('/ideas', cursor), signal, v => page(v, projectedIdea)),
+    idea: (id, signal) => request<Idea>(ideaPath(id), signal, verify(v => projectedIdea(v) && v.id === id)),
     conversations: (id, cursor, signal) => request<Page<Conversation>>(withCursor(ideaPath(id) + '/conversations', cursor), signal,
       v => page(v, item => conversation(item, id))),
     conversation: (id, signal) => request<Conversation>(conversationPath(id), signal, verify(v => conversation(v) && v.id === id)),
     createConversation: (id, body, signal) => request<Conversation>(ideaPath(id) + '/conversations', signal,
       verify(v => conversation(v, id)), { body }),
-    createIdea: (body, key, signal) => request<Idea>('/ideas', signal, verify(v => idea(v)), { body, key })
+    createIdea: (body, key, signal) => origin.startsWith('https://') ? Promise.resolve({ status: 403 }) :
+      request<Idea>('/ideas', signal, verify<Idea>(projectedIdea), { body, key })
   };
   const intents = new Map<string, { body: MessageBody; key: string; sending: boolean }>();
   const savedMessages: SavedMessageApi = {
@@ -120,7 +132,15 @@ export function createLocalConversationApi(getToken: () => Promise<string | null
       return reply;
     } }
   };
-  return { api, savedMessages, messageApi, async generationEnabled(id: string, signal: AbortSignal) {
+  return { api, savedMessages, messageApi, async listOwnedIdeas(cursor: string | null, signal: AbortSignal) {
+    let canCreate = false;
+    let conversations = false;
+    const reply = await request<Page<Idea>>(withCursor('/ideas', cursor), signal, value => page(value, projectedIdea), undefined, headers => {
+      canCreate = !origin.startsWith('https://') && headers.get('X-Workspace-Idea-Creation') === 'enabled';
+      conversations = headers.get('X-Workspace-Conversations') === 'enabled';
+    });
+    return { reply, canCreate, conversations };
+  }, async generationEnabled(id: string, signal: AbortSignal) {
     let enabled = false;
     const reply = await request<Conversation>(conversationPath(id), signal, verify(value => conversation(value) && value.id === id), undefined,
       headers => { enabled = headers.get('X-Workspace-Generation') === 'enabled'; });

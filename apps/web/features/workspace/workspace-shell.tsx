@@ -67,9 +67,20 @@ function AppearanceControl() {
 /** Shared landmarks and appearance controls for workspace routes. */
 export function WorkspaceShell({ children, accountAction }: { children: ReactNode; accountAction?: ReactNode }) {
   const pathname = usePathname();
+  const mobileNav = useRef<HTMLDetailsElement>(null);
+  const ideaLink = <Link href="/app" prefetch={false} onClick={() => {
+    if (mobileNav.current?.open) {
+      mobileNav.current.open = false;
+      if (pathname === '/app') document.getElementById('workspace-main')?.focus({ preventScroll: true });
+    }
+  }}
+    aria-current={pathname === '/app' ? 'page' : pathname.startsWith('/app/ideas/') ? 'location' : undefined}>
+    My ideas
+  </Link>;
   useEffect(() => {
     // Keep keyboard and assistive-technology users oriented after a route
     // change. Background revalidation does not move focus.
+    if (mobileNav.current) mobileNav.current.open = false;
     document.getElementById('workspace-main')?.focus({ preventScroll: true });
   }, [pathname]);
 
@@ -80,14 +91,27 @@ export function WorkspaceShell({ children, accountAction }: { children: ReactNod
       <script dangerouslySetInnerHTML={{ __html: initializeAppearance }} />
       <a className={styles['skip']} href="#workspace-main">Skip to content</a>
       <header className={styles['header']}>
-        <nav aria-label="Workspace"><Link className={styles['brand']} href="/" prefetch={false}>Founder&apos;s Lens</Link>
-          <Link href="/app" prefetch={false} aria-current={pathname === '/app' ? 'page' : undefined}>My ideas</Link>
-        </nav>
-        <div className={styles['actions']}><AppearanceControl />{accountAction}</div>
+        <details ref={mobileNav} className={styles['mobileNav']}>
+          <summary>Menu</summary>
+          <nav aria-label="Workspace" className={styles['menu']}>{ideaLink}</nav>
+        </details>
+        <Link className={styles['brand']} href="/" prefetch={false}>Founder&apos;s Lens</Link>
+        {accountAction ? <details className={styles['account']} onKeyDown={event => {
+          if (event.key === 'Escape' && event.currentTarget.open) {
+            event.currentTarget.open = false;
+            event.currentTarget.querySelector('summary')?.focus();
+          }
+        }}>
+          <summary>Account</summary>
+          <div className={styles['menu']}><AppearanceControl />{accountAction}</div>
+        </details> : <div className={styles['account']}><AppearanceControl /></div>}
       </header>
-      <main id="workspace-main" tabIndex={-1} className={styles['main']}>
-        {children}
-      </main>
+      <div className={styles['body']}>
+        <nav aria-label="Workspace" className={styles['sidebar']}>{ideaLink}</nav>
+        <main id="workspace-main" tabIndex={-1} className={styles['main']}>
+          {children}
+        </main>
+      </div>
     </div>
   );
 }

@@ -80,7 +80,7 @@ function SavedTranscript({ api, conversationId, archived }: { api: SavedMessageA
   const pending = api.pending(conversationId) !== undefined;
   useEffect(() => {
     if (history.kind !== 'missing') return;
-    invalidateSession();
+    invalidateSession('unavailable');
   }, [invalidateSession, history.kind]);
 
   async function save(retry: boolean) {
@@ -97,7 +97,10 @@ function SavedTranscript({ api, conversationId, archived }: { api: SavedMessageA
     const reply = await api.save(conversationId, retry ? undefined : draft, signal).finally(() => { inFlight.current = false; });
     if (signal.aborted || !reads.isCurrent(scope)) return;
     setSaving(false);
-    if (reply.status === 401 || reply.status === 403 || reply.status === 404) { invalidateSession(); return; }
+    if (reply.status === 401 || reply.status === 403 || reply.status === 404) {
+      invalidateSession(reply.status === 401 ? 'signed-out' : reply.status === 403 ? 'blocked' : 'unavailable');
+      return;
+    }
     if (reply.status === 201) {
       setDraft('');
       setNotice('Message saved.');

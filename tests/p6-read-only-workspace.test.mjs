@@ -1,6 +1,7 @@
 // Pre-activation contracts. These fixtures do not establish an operational
 // recovery gate and never mount the list router in normal startup.
 import assert from 'node:assert/strict';
+import { request as httpRequest } from 'node:http';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import test from 'node:test';
@@ -231,6 +232,15 @@ test('isolated list boundary keeps authorized empty distinct from unavailable an
   assert.equal(authorized.headers.get('cache-control'), 'no-store');
   assert.deepEqual(await authorized.json(), empty);
   assert.equal((await fetch(api + '/ideas')).status, 401);
+  const withBody = await new Promise((resolve, reject) => {
+    const request = httpRequest(api + '/ideas', { headers: { ...headers, 'Content-Length': '2' } }, response => {
+      response.resume();
+      response.once('end', () => resolve(response.statusCode));
+    });
+    request.once('error', reject);
+    request.end('{}');
+  });
+  assert.equal(withBody, 400);
   for (const [method, path] of [['HEAD', '/ideas'], ['POST', '/ideas'], ['PATCH', '/ideas'],
     ['GET', '/ideas/' + randomUUID()], ['GET', '/conversations/' + randomUUID()]]) {
     assert.equal((await fetch(api + path, { method, headers })).status, 404);

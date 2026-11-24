@@ -126,7 +126,8 @@ export default function TestLayout({ children }: { children: ReactNode }) {
       <button onClick={harness.hold}>Hold founder A reads</button>
       <button onClick={harness.release}>Release held reads</button>
     </aside>
-    <WorkspaceProvider api={harness.api} session={harness.session} messageApi={harness.messageApi} recoveryTtl={600_000}>
+    <WorkspaceProvider api={harness.api} session={harness.session} messageApi={harness.messageApi} recoveryTtl={600_000}
+      accountAction={<button type="button">Account fixture</button>}>
       {children}
     </WorkspaceProvider>
   </>;
@@ -200,7 +201,7 @@ test('Edge synthetic navigation, history, accessibility and identity isolation',
   const web = path.join(isolated, 'apps/web');
   await mkdir(web, { recursive: true });
   await cp(path.join(root, 'tsconfig.base.json'), path.join(isolated, 'tsconfig.base.json'));
-  for (const name of ['app', 'features', 'package.json', 'tsconfig.json', 'next.config.ts', 'next-env.d.ts']) {
+  for (const name of ['app', 'features', 'package.json', 'tsconfig.json', 'next.config.ts', 'next-env.d.ts', 'app-mode.ts']) {
     await cp(path.join(root, 'apps/web', name), path.join(web, name), { recursive: true });
   }
   await symlink(path.join(root, 'node_modules'), path.join(isolated, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
@@ -276,7 +277,9 @@ test('Edge synthetic navigation, history, accessibility and identity isolation',
     const light = await background();
     assert.equal(await mode(), 'system');
     assert.equal(await background(), light);
+    await evaluate('document.querySelector("header details:last-child").open = true');
     const { nodes } = await command('Accessibility.getFullAXTree');
+    assert.ok(nodes.some(node => node.role?.value === 'button' && node.name?.value === 'Account fixture'));
     assert.ok(nodes.some(node => node.role?.value === 'combobox' && node.name?.value === 'Appearance'));
     await command('Emulation.setFocusEmulationEnabled', { enabled: true });
     assert.equal(await evaluate(appearance + '.tabIndex'), 0);
@@ -342,7 +345,14 @@ test('Edge synthetic navigation, history, accessibility and identity isolation',
   await appearanceChecks();
   const viewport = await evaluate('({ viewport: innerWidth, width: document.documentElement.clientWidth, content: document.documentElement.scrollWidth })');
   assert.equal(viewport.viewport, 320);
+  assert.equal(await evaluate('Boolean(document.querySelector("header details summary")?.getClientRects().length)'), true);
+  await evaluate('document.querySelector("header details summary").click()');
+  assert.equal(await evaluate('Boolean(document.querySelector("header nav a")?.getClientRects().length)'), true);
+  await evaluate('document.querySelector("header details summary").click()');
   assert.equal(viewport.content, viewport.width, JSON.stringify(viewport));
+  await command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+  await waitFor(() => evaluate('[...document.querySelectorAll("nav a[aria-current=page]")].some(link => link.getClientRects().length)'), 'visible desktop workspace navigation');
+  await command('Emulation.setDeviceMetricsOverride', { width: 320, height: 640, deviceScaleFactor: 1, mobile: false });
   assert.equal(await evaluate('Boolean(document.querySelector("nav[aria-label=Workspace]") && document.querySelector("label[for=idea-title]"))'), true);
   await command('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
   await command('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });

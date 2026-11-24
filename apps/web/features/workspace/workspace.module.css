@@ -1,4 +1,4 @@
-﻿.shell {
+.shell {
   color-scheme: light dark;
   --workspace-text: light-dark(#252822, #eeeee7);
   --workspace-muted: light-dark(#555d52, #b1beae);
@@ -31,22 +31,22 @@
 .header {
   background: var(--workspace-header);
   border-bottom: 1px solid var(--workspace-divider);
-  padding: var(--space-2) max(var(--space-3), calc((100% - 72rem) / 2));
+  padding: var(--space-2) clamp(1rem, 3vw, 2rem);
   display: flex;
   flex-wrap: wrap;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
   gap: var(--space-2) var(--space-4);
 }
 
-.header nav, .actions, .appearance {
+.actions, .appearance {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-1) var(--space-3);
 }
 
-.header nav a {
+.menu a, .sidebar a {
   display: inline-flex;
   align-items: center;
   min-height: 44px;
@@ -54,10 +54,44 @@
   padding-inline: var(--space-1);
 }
 
-.header nav a[aria-current] { background: var(--workspace-subtle); }
-.header nav .brand { color: var(--workspace-text); font-weight: 700; text-decoration: none; }
+:is(.menu, .sidebar) a:is(:hover, [aria-current]) { background: var(--workspace-subtle); }
+.header .brand { color: var(--workspace-text); font-weight: 700; text-decoration: none; }
 .appearance { font-size: 0.875rem; }
-.main { max-width: 74rem; margin-inline: auto; padding: clamp(1rem, 4vw, 3rem); }
+.account { margin-inline-start: auto; }
+.account, .mobileNav { position: relative; }
+.header summary {
+  cursor: pointer;
+  min-height: 44px;
+  border-radius: var(--radius);
+  padding: var(--space-2);
+}
+.header summary:hover { background: var(--workspace-subtle); }
+.menu {
+  position: absolute;
+  z-index: 2;
+  inset-block-start: calc(100% + 0.25rem);
+  inline-size: min(13rem, calc(100vw - 2rem));
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--workspace-divider);
+  border-radius: var(--radius);
+  background: var(--workspace-surface);
+}
+.account .menu { inset-inline-end: 0; }
+.sidebar { display: none; }
+@media (min-width: 64rem) {
+  .mobileNav { display: none; }
+  .shell { display: flex; flex-direction: column; }
+  .body { display: grid; grid-template-columns: 14rem minmax(0, 1fr); flex: 1; }
+  .sidebar {
+    display: block;
+    padding: var(--space-4) var(--space-3);
+    background: var(--workspace-header);
+    border-inline-end: 1px solid var(--workspace-divider);
+  }
+}
+.main { width: 100%; min-width: 0; max-width: 74rem; margin-inline: auto; padding: clamp(1rem, 4vw, 3rem); }
 .main h1 { font-size: clamp(1.9rem, 5vw, 3rem); margin: 0 0 var(--space-4); line-height: 1.15; letter-spacing: -0.045em; }
 .main h2 { font-size: 1.125rem; line-height: 1.35; margin: 0 0 var(--space-2); }
 .main p { max-width: 65ch; }
@@ -75,7 +109,7 @@
 }
 .skip:focus { transform: translateY(0); }
 .shell a { color: var(--workspace-link); text-underline-offset: 0.2em; }
-.shell :is(a, button, input, select, textarea):focus-visible, .main:focus-visible {
+.shell :is(a, button, input, select, summary, textarea):focus-visible, .main:focus-visible {
   outline: 3px solid var(--workspace-focus);
   outline-offset: 3px;
 }
@@ -115,7 +149,7 @@
   border-radius: 0.5rem;
 }
 .shell button, .appearance select { cursor: pointer; }
-.shell button:not(:disabled):hover, .header nav a:hover { background: var(--workspace-subtle); }
+.shell button:not(:disabled):hover { background: var(--workspace-subtle); }
 .shell button:disabled { opacity: 0.65; cursor: default; }
 .shell button.primary { background: var(--workspace-accent); border-color: var(--workspace-accent); color: var(--workspace-on-accent); font-weight: 650; }
 .shell button.primary:not(:disabled):hover { filter: brightness(0.9); background: var(--workspace-accent); }

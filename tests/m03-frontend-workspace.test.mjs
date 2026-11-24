@@ -34,6 +34,47 @@ const api = overrides => ({
   ...overrides
 });
 
+test('owned ideas transport distinguishes empty, unauthorized, unavailable and malformed pages', async t => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: { location: { origin: 'http://127.0.0.1:3000' } } });
+  t.after(() => { if (previous) Object.defineProperty(globalThis, 'window', previous); else delete globalThis.window; });
+  const headers = { 'X-Workspace-Conversations': 'enabled', 'X-Workspace-Idea-Creation': 'enabled' };
+  const responses = [
+    Response.json(page([]), { headers }),
+    new Response(null, { status: 401, headers }),
+    new Response(null, { status: 403, headers }),
+    new Response(null, { status: 503, headers }),
+    Response.json(page([{ id: 'bad', title: 'Malformed', status: 'ACTIVE' }]), { headers }),
+    new TypeError('Fixture network failure'),
+    Response.json(page([idea('archived', 'ARCHIVED')]), { headers })
+  ];
+  const fetch = t.mock.method(globalThis, 'fetch', async (url, options) => {
+    assert.equal(url, 'http://127.0.0.1:3001/api/v1/ideas?cursor=a%2Bb');
+    assert.equal(options.headers.Authorization, 'Bearer fixture-token');
+    assert.equal(options.cache, 'no-store');
+    const result = responses.shift();
+    if (result instanceof Error) throw result;
+    return result;
+  });
+  const signal = new AbortController().signal;
+  const client = createLocalConversationApi(async () => 'fixture-token');
+  assert.deepEqual(await client.listOwnedIdeas('a+b', signal), {
+    reply: ok(page([])), canCreate: true, conversations: true
+  });
+  for (const status of [401, 403, 503]) {
+    assert.deepEqual(await client.listOwnedIdeas('a+b', signal), {
+      reply: { status }, canCreate: false, conversations: false
+    });
+  }
+  await assert.rejects(client.listOwnedIdeas('a+b', signal), /Invalid workspace page/);
+  await assert.rejects(client.listOwnedIdeas('a+b', signal), /Fixture network failure/);
+  assert.equal(fetch.mock.callCount(), 6, 'Reads wait for an explicit retry after a transport failure');
+  assert.deepEqual((await client.listOwnedIdeas('a+b', signal)).reply, ok(page([idea('archived', 'ARCHIVED')])));
+  const expired = createLocalConversationApi(async () => null);
+  assert.equal((await expired.listOwnedIdeas(null, signal)).reply.status, 401);
+  assert.equal(fetch.mock.callCount(), 7);
+});
+
 test('generation capability distinguishes save-only access from a failed read', async t => {
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'window');
   Object.defineProperty(globalThis, 'window', { configurable: true, value: { location: { origin: 'http://127.0.0.1:3000' } } });
