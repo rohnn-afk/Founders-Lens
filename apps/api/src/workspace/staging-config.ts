@@ -1,4 +1,15 @@
-﻿/** Validate staging settings before opening a listener or a database pool. */
+﻿/** Bound staging connection acquisition independently of query execution. */
+export function stagingConnectionTimeout(env: NodeJS.ProcessEnv): number {
+  const value = env['FL_STAGING_DB_CONNECT_TIMEOUT_MS'];
+  if (value === undefined) return 4000;
+  const timeout = Number(value);
+  if (value.length !== 4 || !/^[0-9]{4}$/.test(value) || timeout < 1500 || timeout > 5000) {
+    throw new Error('Invalid staging database connection timeout');
+  }
+  return timeout;
+}
+
+/** Validate staging settings before opening a listener or a database pool. */
 export function stagingConfig(env: NodeJS.ProcessEnv) {
   const required = (name: string) => {
     const value = env[name];
@@ -59,5 +70,6 @@ export function stagingConfig(env: NodeJS.ProcessEnv) {
     directHost(workspace) === directHost(authority)) {
     throw new Error('Staging databases must use separate primary and authority services');
   }
-  return { port, origin, workspace, conversations, authority, required, bindHost: render ? '0.0.0.0' : '::' };
+  return { port, origin, workspace, conversations, authority, required,
+    connectionTimeoutMillis: stagingConnectionTimeout(env), bindHost: render ? '0.0.0.0' : '::' };
 }

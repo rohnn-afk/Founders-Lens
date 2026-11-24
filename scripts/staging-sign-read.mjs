@@ -2,6 +2,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import pg from 'pg';
 import { createSuppressionLedger } from '../apps/api/dist/security/suppression-ledger.js';
+import { stagingConnectionTimeout } from '../apps/api/dist/workspace/staging-config.js';
 
 async function issue() {
   const required = name => {
@@ -19,7 +20,8 @@ async function issue() {
   const integrity = required('FL_AUTHORITY_INTEGRITY_KEY');
   if (!/^[0-9a-f]{64}$/.test(integrity)) throw new Error('Invalid authority key');
   const output = required('FL_STAGING_DECISION_OUTPUT');
-  const pool = connectionString => new pg.Pool({ connectionString, max: 1, connectionTimeoutMillis: 1500,
+  const connectionTimeoutMillis = stagingConnectionTimeout(process.env);
+  const pool = connectionString => new pg.Pool({ connectionString, max: 1, connectionTimeoutMillis,
     statement_timeout: 4000, query_timeout: 4500 });
   const primary = pool(required('FL_OPERATOR_PRIMARY_READ_URL'));
   const authority = pool(required('FL_OPERATOR_AUTHORITY_READ_URL'));

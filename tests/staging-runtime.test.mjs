@@ -2,7 +2,7 @@
 import { once } from 'node:events';
 import test from 'node:test';
 import { createApp } from '../apps/api/dist/app.js';
-import { stagingConfig } from '../apps/api/dist/workspace/staging-config.js';
+import { stagingConfig, stagingConnectionTimeout } from '../apps/api/dist/workspace/staging-config.js';
 import { workspaceIdeasCors } from '../apps/api/dist/workspace/read-only-composition.js';
 import { localConversationRoutes, workspaceIdeaListRoutes } from '../apps/api/dist/workspace/routes.js';
 import { WorkspaceError } from '../apps/api/dist/workspace/contracts.js';
@@ -16,6 +16,21 @@ const settings = {
   FL_CONVERSATIONS_DATABASE_URL: 'postgresql://fl_p8_conversations:fixture@primary-postgres.railway.internal/founders_lens_staging',
   FL_AUTHORITY_DATABASE_URL: 'postgresql://ledger_reader:fixture@privacy-postgres.railway.internal/ledger'
 };
+
+test('staging runtime and signer share a bounded connection deadline', () => {
+  assert.equal(stagingConfig(settings).connectionTimeoutMillis, 4000);
+  assert.equal(stagingConnectionTimeout({}), 4000);
+  for (const value of ['1500', '3500', '5000']) {
+    const env = { ...settings, FL_STAGING_DB_CONNECT_TIMEOUT_MS: value };
+    assert.equal(stagingConfig(env).connectionTimeoutMillis, Number(value));
+    assert.equal(stagingConnectionTimeout(env), Number(value));
+  }
+  for (const value of ['', '0', '1499', '5001', '4e3', '4000.0', ' 4000', '4000\n']) {
+    const env = { ...settings, FL_STAGING_DB_CONNECT_TIMEOUT_MS: value };
+    assert.throws(() => stagingConfig(env), /Invalid staging database connection timeout/);
+    assert.throws(() => stagingConnectionTimeout(env), /Invalid staging database connection timeout/);
+  }
+});
 
 test('staging requires exact origins, independent private services and restricted credentials', () => {
   assert.equal(stagingConfig(settings).port, 8080);
