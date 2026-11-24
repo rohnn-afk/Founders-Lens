@@ -28,8 +28,15 @@ docker exec "$local_api" node --input-type=module -e '
   import { access } from "node:fs/promises";
   import { setTimeout } from "node:timers/promises";
   await access("/etc/ssl/certs/ca-certificates.crt");
-  await access("/app/apps/api/dist/generated/prisma/client.js");
-  await import("/app/apps/api/dist/generated/prisma/client.js");
+  const { PrismaClient } = await import("/app/apps/api/dist/generated/prisma/client.js");
+  const { PrismaPg } = await import("@prisma/adapter-pg");
+  const db = new PrismaClient({
+    adapter: new PrismaPg({ connectionString: "postgresql://fixture@127.0.0.1:1/fixture" })
+  });
+  await db.$disconnect();
+  for (const name of ["prisma", "typescript", "next"]) {
+    await assert.rejects(access("/app/node_modules/" + name), { code: "ENOENT" });
+  }
   const base = "http://127.0.0.1:3001";
   for (let retries = 0; ; retries++) {
     try {

@@ -1,4 +1,4 @@
-FROM node:24.22.3-bookworm-slim@sha256:e0e989b967dacc279681ed81774b2ce9eeebbb0efb8e0c427573235bebf1eda1 AS base
+FROM node:24.22.3-trixie-slim@sha256:6709bf854652e2d21610e952df82ff9c0b98cc7315acdce75236bbb66bd8aa06 AS base
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates openssl \
     && rm -rf /var/lib/apt/lists/*
@@ -20,7 +20,21 @@ COPY apps/api/src apps/api/src
 RUN npm run db:generate && npm run build --workspace=@founders-lens/api
 
 FROM workspace AS dependencies
-RUN npm ci --workspace=@founders-lens/api --omit=dev && npm cache clean --force
+# Install the API as a standalone package, retaining monorepo lock resolutions.
+RUN node --input-type=module -e '\
+    import { readFileSync, writeFileSync } from "node:fs"; \
+    const read = path => JSON.parse(readFileSync(path, "utf8")); \
+    const { name, version, dependencies } = read("apps/api/package.json"); \
+    const { overrides } = read("package.json"); \
+    const lock = read("package-lock.json"); \
+    for (const [path, entry] of Object.entries(lock.packages)) { \
+      if (path.startsWith("apps/") || entry.link) delete lock.packages[path]; \
+    } \
+    Object.assign(lock, { name, version }); \
+    lock.packages[""] = { name, version, dependencies }; \
+    writeFileSync("package-lock.json", JSON.stringify(lock)); \
+    writeFileSync("package.json", JSON.stringify({ name, version, dependencies, overrides }));' \
+    && npm ci --omit=dev --omit=peer --ignore-scripts
 
 FROM base
 ENV NODE_ENV=production
