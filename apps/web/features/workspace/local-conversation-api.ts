@@ -18,6 +18,14 @@ function page<T>(value: Page<T>, item: (value: T) => boolean): Page<T> {
 }
 const idea = (value: Idea, id?: string) => typeof value?.id === 'string' && (!id || id === value.id) &&
   typeof value.title === 'string' && ['ACTIVE', 'ARCHIVED'].includes(value.status);
+const projectedIdea = (value: unknown): value is Idea =>
+  typeof value === 'object' && value !== null && 'id' in value && typeof value.id === 'string' &&
+  'title' in value && typeof value.title === 'string' &&
+  (!('summary' in value) || value.summary == null || typeof value.summary === 'string') &&
+  'createdAt' in value && typeof value.createdAt === 'string' &&
+  'updatedAt' in value && typeof value.updatedAt === 'string' &&
+  'version' in value && typeof value.version === 'number' && Number.isSafeInteger(value.version) &&
+  'status' in value && (value.status === 'ACTIVE' || value.status === 'ARCHIVED');
 const conversation = (value: Conversation, ideaId?: string) => typeof value?.id === 'string' &&
   typeof value.ideaId === 'string' && (!ideaId || value.ideaId === ideaId) &&
   (value.title == null || typeof value.title === 'string') && ['ACTIVE', 'ARCHIVED'].includes(value.status);
@@ -69,7 +77,8 @@ export function createLocalConversationApi(getToken: () => Promise<string | null
     conversation: (id, signal) => request<Conversation>(conversationPath(id), signal, verify(v => conversation(v) && v.id === id)),
     createConversation: (id, body, signal) => request<Conversation>(ideaPath(id) + '/conversations', signal,
       verify(v => conversation(v, id)), { body }),
-    createIdea: (body, key, signal) => request<Idea>('/ideas', signal, verify(v => idea(v)), { body, key })
+    createIdea: (body, key, signal) => origin.startsWith('https://') ? Promise.resolve({ status: 403 }) :
+      request<Idea>('/ideas', signal, verify<Idea>(projectedIdea), { body, key })
   };
   const intents = new Map<string, { body: MessageBody; key: string; sending: boolean }>();
   const savedMessages: SavedMessageApi = {
@@ -120,7 +129,15 @@ export function createLocalConversationApi(getToken: () => Promise<string | null
       return reply;
     } }
   };
-  return { api, savedMessages, messageApi, async generationEnabled(id: string, signal: AbortSignal) {
+  return { api, savedMessages, messageApi, async listOwnedIdeas(cursor: string | null, signal: AbortSignal) {
+    let canCreate = false;
+    let conversations = false;
+    const reply = await request<Page<Idea>>(withCursor('/ideas', cursor), signal, value => page(value, projectedIdea), undefined, headers => {
+      canCreate = !origin.startsWith('https://') && headers.get('X-Workspace-Idea-Creation') === 'enabled';
+      conversations = headers.get('X-Workspace-Conversations') === 'enabled';
+    });
+    return { reply, canCreate, conversations };
+  }, async generationEnabled(id: string, signal: AbortSignal) {
     let enabled = false;
     const reply = await request<Conversation>(conversationPath(id), signal, verify(value => conversation(value) && value.id === id), undefined,
       headers => { enabled = headers.get('X-Workspace-Generation') === 'enabled'; });

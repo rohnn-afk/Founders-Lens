@@ -36,7 +36,7 @@ export function ThinkView({ ideaId }: { ideaId: string }) {
     setCreation('pending');
     const outcome = await commands.submitConversation(scope, ideaId, title ? { title } : {});
     if (!reads.isCurrent(scope)) return;
-    if (outcome.kind === 'signed-out' || outcome.kind === 'blocked') return invalidateSession();
+    if (outcome.kind === 'signed-out' || outcome.kind === 'blocked') return invalidateSession(outcome.kind);
     setCreation(outcome.kind);
     if (outcome.kind === 'uncertain' && workspace.savedMessages) { setCursors([null]); retry(); }
     if (outcome.kind === 'created' && outcome.data.ideaId === ideaId) {

@@ -19,7 +19,7 @@ type Workspace = {
   reads: ReadController;
   commands: ReturnType<typeof createCommandController>;
   scope: Scope;
-  invalidateSession: () => void;
+  invalidateSession: (reason?: 'signed-out' | 'blocked' | 'unavailable') => void;
   messageApi: MessageApi | undefined;
   savedMessages?: SavedMessageApi | undefined;
   recovery: RecoveryStorage | undefined;
@@ -40,8 +40,10 @@ export function WorkspaceProvider({ children, api, session, messageApi, recovery
   [messageApi, recoveryTtl, recoverySessionId]);
   const [view, setView] = useState<{ pathname: string; scope: Scope | null } | null>(null);
   const [sessionRevision, setSessionRevision] = useState(0);
+  const [access, setAccess] = useState<'checking' | 'unavailable' | 'signed-out' | 'blocked'>('checking');
 
-  const invalidateSession = useCallback(() => {
+  const invalidateSession = useCallback((reason: 'signed-out' | 'blocked' | 'unavailable' = 'signed-out') => {
+    setAccess(reason);
     reads.enter(null, true);
     commands?.clear();
     savedMessages?.clear();
@@ -79,13 +81,20 @@ export function WorkspaceProvider({ children, api, session, messageApi, recovery
       const attempt = ++revision;
       reads.enter(source.getSnapshot()?.localAccountId ?? null);
       setView(null);
-      try { await source.revalidate(); } catch { return; }
+      setAccess('checking');
+      try {
+        await source.revalidate();
+      } catch {
+        if (active && attempt === revision) setAccess('unavailable');
+        return;
+      }
       if (!active || attempt !== revision) return;
       const account = source.getSnapshot()?.localAccountId ?? null;
       if (!account) recovery?.clear();
       else recovery?.sweep(account);
       const scope = reads.enter(account);
       setView({ pathname, scope });
+      if (!scope) setAccess('unavailable');
     }
     function hide() {
       revision++;
@@ -118,7 +127,13 @@ export function WorkspaceProvider({ children, api, session, messageApi, recovery
     ? { readOnly, scope, api, reads, commands, invalidateSession, messageApi, recovery, savedMessages } : null;
   return <WorkspaceShell accountAction={accountAction}>
     {value ? <WorkspaceContext.Provider key={scope?.routeGeneration} value={value}>{children}</WorkspaceContext.Provider>
-      : <><h1>Workspace unavailable</h1><p role="status">A workspace session is required.</p></>}
+      : session && access === 'checking' ? <p role="status">Checking your workspace session…</p>
+      : <><h1>Workspace unavailable</h1>
+        {access === 'signed-out' ? <><p role="alert">Your session has ended.</p><Link href="/sign-in" prefetch={false}>Sign in</Link></>
+          : access === 'blocked' ? <p role="alert">This account cannot access the workspace.</p>
+          : <><p role="status">A workspace session is required.</p>
+            {session && <button type="button" onClick={() => setSessionRevision(value => value + 1)}>Retry</button>}</>}
+      </>}
   </WorkspaceShell>;
 }
 
@@ -138,7 +153,7 @@ export function useWorkspaceRead<T>(load: (workspace: Workspace) => Promise<Read
     void load({ readOnly, api, reads, commands, scope, invalidateSession, messageApi, recovery, savedMessages }).then(result => {
       if (!active || !reads.isCurrent(scope)) return;
       if (result.kind === 'signed-out' || result.kind === 'blocked') {
-        invalidateSession();
+        invalidateSession(result.kind);
         return;
       }
       setState({ load, result });
