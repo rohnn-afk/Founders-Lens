@@ -1,15 +1,31 @@
 ﻿import { createPrivateKey, randomUUID, sign } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
 import pg from 'pg';
 import { createSuppressionLedger } from '../apps/api/dist/security/suppression-ledger.js';
 import { stagingConnectionTimeout } from '../apps/api/dist/workspace/staging-config.js';
 
-async function issue() {
+export function directStagingPool(connectionString, connectionTimeoutMillis, expectedRole) {
+  const url = new URL(connectionString);
+  if (url.protocol !== 'postgresql:' || url.username !== expectedRole || !url.password ||
+    !/^ep-[a-z0-9-]+(?:\.c-[0-9]+)?\.[a-z0-9-]+\.aws\.neon\.tech$/.test(url.hostname) ||
+    url.hostname.split('.')[0].endsWith('-pooler') || (url.port && url.port !== '5432') ||
+    url.search !== '?sslmode=verify-full' || url.hash || !/^\/[a-zA-Z0-9_]+$/.test(url.pathname)) {
+    throw new Error('Invalid signer database connection');
+  }
+  return new pg.Pool({ host: url.hostname, port: 5432, database: url.pathname.slice(1),
+    user: url.username, password: decodeURIComponent(url.password),
+    ssl: { rejectUnauthorized: true, servername: url.hostname }, max: 1, connectionTimeoutMillis,
+    statement_timeout: 4000, query_timeout: 4500 });
+}
+
+export async function issueStagingPair(env) {
   const required = name => {
-    if (!process.env[name]) throw new Error('Missing operator setting');
-    return process.env[name];
+    if (!env[name]) throw new Error('Missing operator setting');
+    return env[name];
   };
-  if (required('FL_CONFIRM_STAGING_READ') !== 'approve-staging-read-only') throw new Error('Approval required');
+  if (required('FL_CONFIRM_STAGING_READ') !== 'approve-staging-read-only' ||
+    env.NODE_TLS_REJECT_UNAUTHORIZED === '0') throw new Error('Approval required');
   const privateKey = createPrivateKey(await readFile(required('FL_OPERATOR_PRIVATE_KEY_FILE')));
   if (privateKey.asymmetricKeyType !== 'ed25519') throw new Error('Invalid operator key');
   const expectedPrimary = required('FL_EXPECTED_PRIMARY_IDENTITY');
@@ -19,12 +35,9 @@ async function issue() {
     expectedPrimary.split(':')[0] === expectedAuthority.split(':')[0]) throw new Error('Invalid target pair');
   const integrity = required('FL_AUTHORITY_INTEGRITY_KEY');
   if (!/^[0-9a-f]{64}$/.test(integrity)) throw new Error('Invalid authority key');
-  const output = required('FL_STAGING_DECISION_OUTPUT');
-  const connectionTimeoutMillis = stagingConnectionTimeout(process.env);
-  const pool = connectionString => new pg.Pool({ connectionString, max: 1, connectionTimeoutMillis,
-    statement_timeout: 4000, query_timeout: 4500 });
-  const primary = pool(required('FL_OPERATOR_PRIMARY_READ_URL'));
-  const authority = pool(required('FL_OPERATOR_AUTHORITY_READ_URL'));
+  const connectionTimeoutMillis = stagingConnectionTimeout(env);
+  const primary = directStagingPool(required('FL_OPERATOR_PRIMARY_READ_URL'), connectionTimeoutMillis, 'fl_p6_workspace');
+  const authority = directStagingPool(required('FL_OPERATOR_AUTHORITY_READ_URL'), connectionTimeoutMillis, 'ledger_reader');
   try {
     const ledger = createSuppressionLedger(authority, {
       epoch: required('FL_AUTHORITY_EPOCH'), challengeNamespace: required('FL_AUTHORITY_NAMESPACE'),
@@ -41,19 +54,24 @@ async function issue() {
         inventoryDigest: snapshot.inventoryDigest, subjectVersions: snapshot.subjectVersions, issuedAt, expiresAt: issuedAt + 300_000 }));
       return { payload: bytes.toString('base64url'), signature: sign(null, bytes, privateKey).toString('base64url') };
     };
-    await writeFile(output, JSON.stringify({
+    return { issuedAt, pair: {
       FL_STAGING_IDEAS_DECISION: JSON.stringify(decision('founders-lens:staging-workspace:read-only')),
       FL_STAGING_TRANSCRIPT_DECISION: JSON.stringify(decision('founders-lens:staging-workspace:read-conversations'))
-    }, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
+    } };
   } finally {
     await Promise.all([primary.end(), authority.end()]);
   }
 }
 
-try {
-  await issue();
-  console.log('Staging read decisions issued.');
-} catch {
-  console.error('Staging read decision issuance denied.');
-  process.exitCode = 1;
+if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+  try {
+    const output = process.env.FL_STAGING_DECISION_OUTPUT;
+    if (!output) throw new Error('Missing private output');
+    const { pair } = await issueStagingPair(process.env);
+    await writeFile(output, JSON.stringify(pair, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
+    console.log('Staging read decisions issued.');
+  } catch {
+    console.error('Staging read decision issuance denied.');
+    process.exitCode = 1;
+  }
 }

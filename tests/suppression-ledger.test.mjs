@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { once } from 'node:events';
 import test from 'node:test';
@@ -66,6 +67,29 @@ test('independent PostgreSQL suppression ledger lifecycle', {
   const intent = scope => ({ scope, operationId: randomUUID(), fingerprint: fingerprint(), policyVersion: 'proof_v1' });
   const accountIntent = intent(account);
   const ideaIntent = intent(idea);
+
+  await t.test('release mailbox isolates column access and persists a complete latest pair', async () => {
+    await admin.query('CREATE ROLE staging_decision_writer NOLOGIN');
+    await admin.query(await readFile('scripts/staging-decision-mailbox.sql', 'utf8'));
+    const sql = 'SELECT pair FROM staging_release.read_decisions WHERE singleton';
+    assert.equal((await reader.query(sql)).rows[0].pair, null);
+    await assert.rejects(reader.query('UPDATE staging_release.read_decisions SET issued_at = 7'), { code: '42501' });
+    const client = await admin.connect();
+    const pair = { FL_STAGING_IDEAS_DECISION: 'fixture-ideas', FL_STAGING_TRANSCRIPT_DECISION: 'fixture-transcript' };
+    try {
+      await client.query('SET ROLE staging_decision_writer');
+      const update = 'UPDATE staging_release.read_decisions SET issued_at = $1, pair = $2 WHERE singleton AND issued_at < $1';
+      assert.equal((await client.query(update, [100, pair])).rowCount, 1);
+      assert.equal((await client.query(update, [99, {}])).rowCount, 0);
+      await assert.rejects(client.query(sql), { code: '42501' });
+      await assert.rejects(client.query('DELETE FROM staging_release.read_decisions'), { code: '42501' });
+      await assert.rejects(client.query('UPDATE authority.coverage SET singleton = true'), { code: '42501' });
+    } finally {
+      await client.query('RESET ROLE');
+      client.release();
+    }
+    assert.deepEqual((await reader.query(sql)).rows[0].pair, pair);
+  });
 
   await t.test('bootstrap starts closed and only the operator can establish coverage', async () => {
     // A valid connection and an empty inventory cannot prove absence on their own.
