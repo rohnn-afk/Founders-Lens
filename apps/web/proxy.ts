@@ -3,6 +3,7 @@
 import { clerkMiddleware } from '@clerk/nextjs/server';
 import type { NextFetchEvent, NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
+import { publicDemo } from './app-mode';
 
 function authorizedParties(): string[] | undefined {
   try {
@@ -21,6 +22,11 @@ function authorizedParties(): string[] | undefined {
 }
 
 export default async function proxy(request: NextRequest, event: NextFetchEvent) {
+  if (publicDemo) {
+    return new NextResponse('This route is unavailable in the public demo.', {
+      status: 404, headers: { 'Cache-Control': 'no-store', 'Content-Type': 'text/plain; charset=utf-8' }
+    });
+  }
   // Local builds without keys must still serve the public shell. The workspace
   // layout independently gates rendering, including on routes matched here.
   if (!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY || !process.env.CLERK_SECRET_KEY) {

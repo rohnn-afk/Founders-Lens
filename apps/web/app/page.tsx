@@ -1,7 +1,14 @@
 import Link from 'next/link';
+import { publicDemo } from '../app-mode';
+import { Demo, demoMetadata } from './demo';
 import styles from './public.module.css';
 
+export function generateMetadata() {
+  return publicDemo ? demoMetadata() : {};
+}
+
 export default function Home() {
+  if (publicDemo) return <Demo />;
   return (
     <main className={styles.hero}>
       <h1>Founder&apos;s Lens</h1>
