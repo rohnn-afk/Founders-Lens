@@ -10,11 +10,11 @@ import { SecurityError } from '../apps/api/dist/security/errors.js';
 import { Router } from 'express';
 
 const settings = {
-  NODE_ENV: 'production', FL_DEPLOYMENT: 'staging', PORT: '8080',
+  NODE_ENV: 'production', FL_DEPLOYMENT: 'staging', RENDER: 'true', PORT: '8080',
   FL_WEB_ORIGIN: 'https://web.example.test',
-  FL_WORKSPACE_DATABASE_URL: 'postgresql://fl_p6_workspace:fixture@primary-postgres.railway.internal/founders_lens_staging',
-  FL_CONVERSATIONS_DATABASE_URL: 'postgresql://fl_p8_conversations:fixture@primary-postgres.railway.internal/founders_lens_staging',
-  FL_AUTHORITY_DATABASE_URL: 'postgresql://ledger_reader:fixture@privacy-postgres.railway.internal/ledger'
+  FL_WORKSPACE_DATABASE_URL: 'postgresql://fl_p6_workspace:fixture@dpg-fixture-a/founders_lens_staging',
+  FL_CONVERSATIONS_DATABASE_URL: 'postgresql://fl_p8_conversations:fixture@dpg-fixture-a/founders_lens_staging',
+  FL_AUTHORITY_DATABASE_URL: 'postgresql://ledger_reader:fixture@authority.example.test/ledger?sslmode=verify-full'
 };
 
 test('staging runtime and signer share a bounded connection deadline', () => {
@@ -35,32 +35,28 @@ test('staging runtime and signer share a bounded connection deadline', () => {
 test('staging requires exact origins, independent private services and restricted credentials', () => {
   assert.equal(stagingConfig(settings).port, 8080);
   for (const changes of [
-    { NODE_ENV: 'development' }, { RAILWAY_ENVIRONMENT_NAME: 'production' },
+    { NODE_ENV: 'development' }, { RENDER: undefined },
     { PORT: '0' }, { PORT: '1e3' }, { FL_WEB_ORIGIN: 'https://web.example.test/' },
     { FL_WEB_ORIGIN: 'http://web.example.test' }, { GROQ_API_KEY: 'fixture' }, { FL_P9_SUBMIT: '1' },
     { FL_CONVERSATIONS_DATABASE_URL: settings.FL_WORKSPACE_DATABASE_URL },
-    { FL_AUTHORITY_DATABASE_URL: settings.FL_AUTHORITY_DATABASE_URL.replace('privacy-postgres', 'primary-postgres') },
-    { FL_AUTHORITY_DATABASE_URL: settings.FL_AUTHORITY_DATABASE_URL.replace('privacy-postgres.railway.internal', '127.0.0.1') }
+    { FL_AUTHORITY_DATABASE_URL: settings.FL_AUTHORITY_DATABASE_URL.replace('authority.example.test', 'dpg-fixture-a') },
+    { FL_AUTHORITY_DATABASE_URL: settings.FL_AUTHORITY_DATABASE_URL.replace('authority.example.test', '127.0.0.1') }
   ]) assert.throws(() => stagingConfig({ ...settings, ...changes }));
 });
 
 test('Render requires private primary logins and a verified TLS authority endpoint', () => {
-  const render = {
-    ...settings, RENDER: 'true',
-    FL_WORKSPACE_DATABASE_URL: settings.FL_WORKSPACE_DATABASE_URL.replace('primary-postgres.railway.internal', 'dpg-fixture-a'),
-    FL_CONVERSATIONS_DATABASE_URL: settings.FL_CONVERSATIONS_DATABASE_URL.replace('primary-postgres.railway.internal', 'dpg-fixture-a'),
-    FL_AUTHORITY_DATABASE_URL: 'postgresql://ledger_reader:fixture@authority.example.test/suppression_proof?sslmode=verify-full'
-  };
-  assert.equal(stagingConfig(render).bindHost, '0.0.0.0');
-  assert.equal(stagingConfig(settings).bindHost, '::');
+  assert.equal(stagingConfig(settings).bindHost, '0.0.0.0');
+  const authorityUrl = settings.FL_AUTHORITY_DATABASE_URL;
   for (const authority of [
-    render.FL_AUTHORITY_DATABASE_URL.replace('verify-full', 'require'),
-    render.FL_AUTHORITY_DATABASE_URL.replace('?sslmode=verify-full', ''),
-    render.FL_AUTHORITY_DATABASE_URL + '&sslmode=disable',
-    render.FL_AUTHORITY_DATABASE_URL.replace('authority.example.test', '127.0.0.1')
-  ]) assert.throws(() => stagingConfig({ ...render, FL_AUTHORITY_DATABASE_URL: authority }));
-  assert.throws(() => stagingConfig({ ...render, NODE_TLS_REJECT_UNAUTHORIZED: '0' }));
-  assert.throws(() => stagingConfig({ ...render, FL_WORKSPACE_DATABASE_URL: settings.FL_WORKSPACE_DATABASE_URL }));
+    authorityUrl.replace('verify-full', 'require'),
+    authorityUrl.replace('?sslmode=verify-full', ''),
+    authorityUrl + '&sslmode=disable',
+    authorityUrl.replace('authority.example.test', '127.0.0.1')
+  ]) assert.throws(() => stagingConfig({ ...settings, FL_AUTHORITY_DATABASE_URL: authority }));
+  assert.throws(() => stagingConfig({ ...settings, NODE_TLS_REJECT_UNAUTHORIZED: '0' }));
+  assert.throws(() => stagingConfig({ ...settings,
+    FL_WORKSPACE_DATABASE_URL: settings.FL_WORKSPACE_DATABASE_URL.replace('dpg-fixture-a', 'external.example.test')
+  }));
 });
 
 test('readiness fails when dependency evidence is lost and browser CORS remains exact and read only', async t => {

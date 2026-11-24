@@ -65,7 +65,7 @@ const stagingEnvironment = new Map([
   ['app/demo.tsx', new Set(['RENDER_EXTERNAL_URL'])],
   ['features/workspace/endpoints.ts', new Set(['NEXT_PUBLIC_FL_WEB_ORIGIN', 'NEXT_PUBLIC_FL_API_ORIGIN'])],
   ['app/health/ready/route.ts', new Set(['NEXT_PUBLIC_FL_WEB_ORIGIN', 'NEXT_PUBLIC_FL_API_ORIGIN',
-    'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY', 'CLERK_SECRET_KEY', 'CLERK_AUTHORIZED_PARTIES', 'FL_INTERNAL_API_ORIGIN'])]
+    'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY', 'CLERK_SECRET_KEY', 'CLERK_AUTHORIZED_PARTIES'])]
 ]);
 
 function assertWebBoundary(file, { imports, processReferences, client }) {
