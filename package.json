@@ -35,6 +35,11 @@
     "db:migrate": "node apps/api/scripts/database.mjs migrate",
     "test:database": "npm run db:generate && npm run build --workspace=@founders-lens/api && node tests/database-contract.test.mjs --live"
   },
+  "overrides": {
+    "@prisma/config": {
+      "effect": "3.22.5"
+    }
+  },
   "devDependencies": {
     "@types/node": "24.10.1",
     "eslint": "10.15.0",

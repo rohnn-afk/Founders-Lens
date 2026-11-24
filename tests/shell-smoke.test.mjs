@@ -148,7 +148,7 @@ for (const app of ['worker', 'dispatcher']) {
   }
 }
 
-test('production web renders the public placeholder without private configuration', { timeout: 60_000 }, async (t) => {
+test('production web renders the public entry and gates the workspace without Clerk configuration', { timeout: 60_000 }, async (t) => {
   const reservation = createServer();
   await new Promise((resolve) => reservation.listen(0, '127.0.0.1', resolve));
   const port = reservation.address().port;
@@ -162,8 +162,11 @@ test('production web renders the public placeholder without private configuratio
   assert.equal(response.headers.get('x-powered-by'), null);
   const html = await response.text();
   assert.match(html, /Founder(?:&#x27;|&#39;|&apos;|')s Lens/);
-  assert.match(html, /Local workspace placeholder/);
+  assert.match(html, /href="\/app"[^>]*>Open workspace<\/a>/);
   assert.doesNotMatch(html, /m01-web-secret-canary|fonts\.googleapis|fonts\.gstatic/);
+  const workspace = await fetch(`http://127.0.0.1:${port}/app`);
+  assert.equal(workspace.status, 200);
+  assert.match(await workspace.text(), /Workspace unavailable/);
   await stop(web, 'SIGTERM', { nextSignalExit: true });
   await assert.rejects(fetch(`http://127.0.0.1:${port}`, { signal: AbortSignal.timeout(1000) }));
   await new Promise((resolve, reject) => {

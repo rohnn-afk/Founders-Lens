@@ -1,61 +1,102 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
+  push:
+    branches: [main, staging]
   workflow_dispatch:
+    inputs:
+      deploy_staging:
+        description: Deploy this CI-verified staging commit to Render
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ inputs.deploy_staging || false }}
+  cancel-in-progress: ${{ !inputs.deploy_staging }}
 
 jobs:
   validate:
-    name: Validate repository
+    name: Build and test
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-
-      - name: Check required files
-        run: |
-          set -euo pipefail
-          for file in README.md LICENSE; do
-            if [ ! -f "$file" ]; then
-              echo "::error::Missing required file: $file"
-              exit 1
-            fi
-          done
-          echo "Required files are present."
-
-      # Use the same Node pin locally and in CI to reproduce a clean checkout.
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version-file: .node-version
-          package-manager-cache: false
-
-      - name: Verify Node.js and npm versions
-        run: npm run check-toolchain
-
-      # npm ci installs the locked versions and checks package integrity.
-      # Dependency lifecycle scripts are disabled during installation.
+          cache: npm
+      - name: Install the pinned npm version
+        run: npm install --global "npm@$(node -p 'require("./package.json").packageManager.slice(4)')" --ignore-scripts --no-audit --no-fund
       - name: Install locked dependencies
-        run: npm ci --ignore-scripts --no-audit --no-fund --cache ./.cache/npm
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run check-toolchain
+      - run: npm run lint
+      - run: npm run db:validate
+      - run: npm run typecheck
+      - run: npm test
+      - name: Pull disposable generation fixtures
+        run: |
+          docker pull docker.io/library/postgres:17.12-bookworm@sha256:40865bc877a289da75963d97d72b59633f639fc5af7a4e856bfa3714cae5b536
+          docker pull docker.io/library/redis:7.4.12-bookworm@sha256:2e3eb11462c4e3759e6972678dd051d150ff54b1e60714b3c33b701260172a90
+      - name: PostgreSQL and independent authority
+        run: node tests/p6-runtime-recovery-clearance.test.mjs --p6-runtime-recovery-live
+      - name: PostgreSQL, independent authority, and Redis pipeline
+        run: node tests/m05-local-generation.test.mjs --live
 
-      - name: Lint
-        run: npm run lint
+  security:
+    name: Secret and dependency checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .node-version
+      - name: Audit locked dependencies
+        run: npm audit --audit-level=high
+      - name: Scan source and incoming history
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/gitleaks.tar.gz"
+          curl --fail --silent --show-error --location --output "$archive" https://github.com/gitleaks/gitleaks/releases/download/v8.30.0/gitleaks_8.30.0_linux_x64.tar.gz
+          echo "79a3ab579b53f71efd634f3aaf7e04a0fa0cf206b7ed434638d1547a2470a66e  $archive" | sha256sum --check
+          tar -xzf "$archive" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" dir --redact=100 --no-banner .
+          if [[ "$BASE" =~ ^[0-9a-f]{40}$ ]] && [[ "$BASE" != 0000000000000000000000000000000000000000 ]]; then
+            "$RUNNER_TEMP/gitleaks" git --redact=100 --no-banner --log-opts="$BASE..HEAD" .
+          fi
 
-      - name: Typecheck all workspaces
-        run: npm run typecheck
-
-      # npm test builds all four apps first. The deterministic suite uses
-      # synthetic inputs and keeps live PostgreSQL and Redis tests opt-in.
-      - name: Build and run default tests
-        run: npm test
+  deploy_staging:
+    name: Deploy verified staging commit
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy_staging && github.ref == 'refs/heads/staging'
+    needs: [validate, security]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: staging
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .node-version
+      - name: Request exact-commit Render deployments
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_STAGING_WEB_SERVICE_ID: ${{ vars.RENDER_STAGING_WEB_SERVICE_ID }}
+          RENDER_STAGING_API_SERVICE_ID: ${{ vars.RENDER_STAGING_API_SERVICE_ID }}
+        run: node scripts/render-deploy-staging.mjs

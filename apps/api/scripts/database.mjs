@@ -49,7 +49,24 @@ export async function reviewedMigration() {
   const approved = await readFile(path.join(root, 'Docs/lld/01-database/schema/schema.prisma'), 'utf8');
   const guards = await readFile(path.join(root, 'Docs/lld/01-database/constraints/guards.sql'), 'utf8');
   const sql = await readFile(path.join(root, migrationPath), 'utf8');
-  if (schema.slice(schema.indexOf('enum AccountStatus')) !== approved.slice(approved.indexOf('enum AccountStatus')) ||
+  // The M02 tool still applies only the baseline. Project the later reviewed
+  // P9 additions out of the runtime schema before comparing its baseline domain.
+  const baselineDomain = schema.slice(schema.indexOf('enum AccountStatus'))
+    .replace('  providerReceipt GenerationProviderReceipt?\n', '')
+    .replace('  leaseClaimant        String? @db.VarChar(63)\n', '')
+    .replace(`model GenerationProviderReceipt {
+  attemptId    String @id @db.Uuid
+  attempt      GenerationAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  leaseEpoch   Int
+  responseId   String? @db.VarChar(256)
+  inputTokens  Int
+  outputTokens Int
+  totalTokens  Int
+  observedAt   DateTime @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(3)
+}
+
+`, '');
+  if (baselineDomain !== approved.slice(approved.indexOf('enum AccountStatus')) ||
     !sql.includes(guards) || (sql.match(/^CREATE TABLE /gm) ?? []).length !== 24 ||
     (sql.match(/^CREATE TYPE /gm) ?? []).length !== 24 ||
     /\b(DROP|TRUNCATE|DELETE FROM|ALTER SYSTEM|CREATE ROLE|CREATE DATABASE)\b/i.test(sql.replace(/--[^\r\n]*/g, ''))) {

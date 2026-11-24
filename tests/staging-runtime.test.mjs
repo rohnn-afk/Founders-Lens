@@ -26,6 +26,25 @@ test('staging requires exact origins, independent private services and restricte
   ]) assert.throws(() => stagingConfig({ ...settings, ...changes }));
 });
 
+test('Render requires private primary logins and a verified TLS authority endpoint', () => {
+  const render = {
+    ...settings, RENDER: 'true',
+    FL_WORKSPACE_DATABASE_URL: settings.FL_WORKSPACE_DATABASE_URL.replace('primary-postgres.railway.internal', 'dpg-fixture-a'),
+    FL_CONVERSATIONS_DATABASE_URL: settings.FL_CONVERSATIONS_DATABASE_URL.replace('primary-postgres.railway.internal', 'dpg-fixture-a'),
+    FL_AUTHORITY_DATABASE_URL: 'postgresql://ledger_reader:fixture@authority.example.test/suppression_proof?sslmode=verify-full'
+  };
+  assert.equal(stagingConfig(render).bindHost, '0.0.0.0');
+  assert.equal(stagingConfig(settings).bindHost, '::');
+  for (const authority of [
+    render.FL_AUTHORITY_DATABASE_URL.replace('verify-full', 'require'),
+    render.FL_AUTHORITY_DATABASE_URL.replace('?sslmode=verify-full', ''),
+    render.FL_AUTHORITY_DATABASE_URL + '&sslmode=disable',
+    render.FL_AUTHORITY_DATABASE_URL.replace('authority.example.test', '127.0.0.1')
+  ]) assert.throws(() => stagingConfig({ ...render, FL_AUTHORITY_DATABASE_URL: authority }));
+  assert.throws(() => stagingConfig({ ...render, NODE_TLS_REJECT_UNAUTHORIZED: '0' }));
+  assert.throws(() => stagingConfig({ ...render, FL_WORKSPACE_DATABASE_URL: settings.FL_WORKSPACE_DATABASE_URL }));
+});
+
 test('readiness fails when dependency evidence is lost and browser CORS remains exact and read only', async t => {
   let verified = true;
   const router = Router();

@@ -1,0 +1,37 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Known key names and prose in staging documentation"
+condition = "AND"
+regexTarget = "line"
+paths = ['(^|/)RAILWAY-STAGING\.md$']
+regexes = ['^- API clearance: `FL_SUBJECT_KEY_V1`, `FL_CURSOR_KEY`, `FL_AUTHORITY_INTEGRITY_KEY`']
+
+[[allowlists]]
+description = "Credential-policy prose"
+condition = "AND"
+regexTarget = "line"
+paths = ['(^|/)Docs/lld/08-testing-quality/testing-security-observability-integration-review\.md$']
+regexes = ['^6\. Authorized provider validation: only after cost budget, credentials, region/retention/privacy and test purpose are approved\.$']
+
+[[allowlists]]
+description = "Nonsecret Blueprint variable name"
+condition = "AND"
+regexTarget = "line"
+paths = ['(^|/)render\.yaml$']
+regexes = ['^\s*- key: FL_SUBJECT_KEY_V1\s*$']
+
+[[allowlists]]
+description = "Existing shell canary and environment reference"
+condition = "AND"
+regexTarget = "line"
+paths = ['(^|/)tests/shell-smoke\.test\.mjs$', '(^|/)scripts/p9-cedar-bootstrap\.mjs$']
+regexes = ["API_PORT: 'm01-invalid-secret-canary' \\}\\);$", 'FL_P6_INTEGRITY_KEY: env\.FL_P6_INTEGRITY_KEY \};$']
+
+[[allowlists]]
+description = "Deliberately invalid Clerk key in the configuration rejection test"
+condition = "AND"
+regexTarget = "line"
+paths = ['(^|/)tests/authentication-contract\.test\.mjs$']
+regexes = ["^\\s*\\{ CLERK_SECRET_KEY: 'sk_live_[a-zA-Z0-9]{10}' \\}, \\{ CLERK_AUDIENCE: '\\[\\]' \\}, \\{ CLERK_JWT_KEY: 'not a public key' \\}\\]\\) \\{$"]

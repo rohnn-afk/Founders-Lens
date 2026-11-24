@@ -60,7 +60,8 @@ const attempt = (f, number, extra = {}) => ({ id: randomUUID(), conversationId: 
 test('Prisma 7 translation preserves the entire approved domain and additive guard order', async () => {
   const { sql } = await reviewedMigration();
   const schema = await readFile(path.join(root, 'apps/api/prisma/schema.prisma'), 'utf8');
-  assert.equal((schema.match(/^model /gm) ?? []).length, 24);
+  assert.equal((schema.match(/^model /gm) ?? []).length, 25);
+  assert.match(schema, /^model GenerationProviderReceipt \{/m);
   assert.equal((schema.match(/^enum /gm) ?? []).length, 24);
   assert.ok(sql.indexOf('CREATE TRIGGER') > sql.lastIndexOf('ADD CONSTRAINT', sql.indexOf('-- Approved SQL guards')));
   assert.match(sql, /experiment_plan_title_shape[\s\S]*?NOT VALID/);

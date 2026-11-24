@@ -1,5 +1,5 @@
 // API process entry point. It validates runtime configuration, starts the
-// Express app on loopback, and owns the server's shutdown lifecycle.
+// Express app for the selected environment and owns its shutdown lifecycle.
 
 import { z } from 'zod';
 import { stagingConfig } from './workspace/staging-config.js';
@@ -12,6 +12,12 @@ const config = z.object({
 }).safeParse({ port: process.env['API_PORT'] });
 
 const deployment = process.env['FL_DEPLOYMENT'];
+function logLifecycle(event: string, localMessage: string, failure = false, port?: number) {
+  const log = failure ? console.error : console.log;
+  log(deployment === 'staging' ? JSON.stringify({
+    event, service: 'api', environment: 'staging', ...(port !== undefined && { port })
+  }) : localMessage);
+}
 if (deployment !== undefined && deployment !== 'staging') {
   console.error('Unsupported API deployment.');
   process.exitCode = 1;
@@ -22,7 +28,7 @@ if (deployment !== undefined && deployment !== 'staging') {
   try {
     await startApi(config.data.port);
   } catch {
-    console.error('API startup denied.');
+    logLifecycle('api_startup_denied', 'API startup denied.', true);
     process.exitCode = 1;
   }
 }
@@ -34,25 +40,31 @@ async function startApi(localPort: number) {
     console.error('Local workspace clearance unavailable.');
     return undefined;
   });
-  const server = createApp(local?.router, hosted?.ready).listen(staging?.port ?? localPort, staging ? '::' : '127.0.0.1', () => {
+  let stopping = false;
+  const readiness = hosted && (async () => {
+    if (stopping) throw new Error('API is stopping');
+    await hosted.ready();
+  });
+  const server = createApp(local?.router, readiness).listen(staging?.port ?? localPort, staging?.bindHost ?? '127.0.0.1', () => {
     const address = server.address();
     if (address && typeof address !== 'string') {
-      console.log(staging ? `Staging API listening on port ${address.port}.` : `API shell listening on http://127.0.0.1:${address.port}`);
+      logLifecycle('api_listening', `API shell listening on http://127.0.0.1:${address.port}`, false, address.port);
     }
   });
   server.on('error', async () => {
-    console.error('API server failed.');
-    await local?.close().catch(() => console.error('API shutdown incomplete.'));
+    logLifecycle('api_listener_failed', 'API server failed.', true);
+    await local?.close().catch(() => logLifecycle('api_shutdown_incomplete', 'API shutdown incomplete.', true));
     process.exitCode = 1;
   });
 
-  let stopping = false;
   const shutdown = () => {
     if (stopping) return;
     stopping = true;
     // Graceful shutdown stops new connections and lets active requests finish.
     // The deadline caps that wait by closing any remaining active connections.
+    let forced = false;
     const deadline = setTimeout(() => {
+      forced = true;
       server.closeAllConnections();
       process.exitCode = 1;
     }, 5000);
@@ -60,8 +72,9 @@ async function startApi(localPort: number) {
     server.close(async (error) => {
       clearTimeout(deadline);
       const closed = await local?.close().then(() => true, () => false);
-      process.exitCode = error || closed === false ? 1 : 0;
-      console.log('API shell stopped.');
+      const failed = forced || Boolean(error) || closed === false;
+      process.exitCode = failed ? 1 : 0;
+      logLifecycle(failed ? 'api_shutdown_incomplete' : 'api_stopped', 'API shell stopped.', failed);
     });
   };
   process.on('SIGINT', shutdown);
