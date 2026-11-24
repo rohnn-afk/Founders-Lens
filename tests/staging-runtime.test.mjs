@@ -69,3 +69,26 @@ test('readiness fails when dependency evidence is lost and browser CORS remains 
   assert.equal((await fetch(endpoint + '/health/ready')).status, 503);
   assert.equal((await fetch(endpoint + '/health/live')).status, 200);
 });
+
+test('Render accepts a separate direct Oregon Neon primary with verified TLS', () => {
+  const host = 'ep-workspace-fixture.us-west-2.aws.neon.tech';
+  const connection = (role, target = host) =>
+    'postgresql://' + role + ':fixture@' + target + '/founders_lens_staging?sslmode=verify-full';
+  const neon = {
+    ...settings, RENDER: 'true', FL_STAGING_PRIMARY_PROVIDER: 'neon',
+    FL_WORKSPACE_DATABASE_URL: connection('fl_p6_workspace'),
+    FL_CONVERSATIONS_DATABASE_URL: connection('fl_p8_conversations'),
+    FL_AUTHORITY_DATABASE_URL: 'postgresql://ledger_reader:fixture@ep-authority.us-west-2.aws.neon.tech/ledger?sslmode=verify-full'
+  };
+  assert.equal(stagingConfig(neon).workspace.hostname, host);
+  for (const changes of [
+    { FL_STAGING_PRIMARY_PROVIDER: 'unknown' },
+    { FL_STAGING_PRIMARY_PROVIDER: undefined },
+    { RENDER: undefined },
+    { FL_WORKSPACE_DATABASE_URL: neon.FL_WORKSPACE_DATABASE_URL.replace('verify-full', 'require') },
+    { FL_WORKSPACE_DATABASE_URL: connection('fl_p6_workspace', host.replace('.', '-pooler.')) },
+    { FL_WORKSPACE_DATABASE_URL: connection('fl_p6_workspace', host + ':5433') },
+    { FL_CONVERSATIONS_DATABASE_URL: connection('fl_p8_conversations', host.replace('workspace', 'other')) },
+    { FL_AUTHORITY_DATABASE_URL: connection('ledger_reader', host.replace('.', '-pooler.')) }
+  ]) assert.throws(() => stagingConfig({ ...neon, ...changes }));
+});

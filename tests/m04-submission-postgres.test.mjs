@@ -302,10 +302,13 @@ test('isolated atomic submission, quota and replay in PostgreSQL', { skip: !proc
       assert.ok(!JSON.stringify(denied.body).includes(body.content));
     }
     let attemptedOutbox;
-    const broken = runtime.$extends({ query: { outboxEvent: { create({ args }) {
-      attemptedOutbox = args.data.aggregateId;
-      throw new Error('Synthetic late write failure');
-    } } } });
+    const broken = runtime.$extends({ query: { $executeRaw({ args, query }) {
+      if (args.strings?.[0]?.includes('INSERT INTO "OutboxEvent"')) {
+        attemptedOutbox = args.values[2];
+        throw new Error('Synthetic late write failure');
+      }
+      return query(args);
+    } } });
     await assert.rejects(service(broken).submit(principal, id, 'rollback-key', body), /Synthetic late write failure/);
     assert.ok(attemptedOutbox);
     assert.equal(await runtime.outboxEvent.count({ where: { aggregateId: attemptedOutbox } }), 0);

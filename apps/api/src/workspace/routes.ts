@@ -44,6 +44,9 @@ function authenticatedRequest(authenticate: Authenticate, action: Handler) {
     try {
       const principal = await authenticate(request);
       if (!principal) throw new SecurityError('UNAUTHENTICATED');
+      if (request.method === 'GET' && (request.get('transfer-encoding') || Number(request.get('content-length') ?? 0) > 0)) {
+        throw new WorkspaceError(400, 'VALIDATION_ERROR');
+      }
       await action(request, response, principal);
     } catch (error) {
       const failure = error instanceof SubmissionError ? error.failure(requestId) : error instanceof WorkspaceError
@@ -67,12 +70,7 @@ export type LocalConversationOperations = {
 /** Mount the local conversation contract without mounting the generation submission router. */
 export function localConversationRoutes(operations: LocalConversationOperations, authenticate: Authenticate): Router {
   const router = Router();
-  const handle = (action: Handler) => authenticatedRequest(authenticate, async (req, res, principal) => {
-    if (req.method === 'GET' && (req.get('transfer-encoding') || Number(req.get('content-length') ?? 0) > 0)) {
-      throw new WorkspaceError(400, 'VALIDATION_ERROR');
-    }
-    await action(req, res, principal);
-  });
+  const handle = (action: Handler) => authenticatedRequest(authenticate, action);
   const routeId = (request: Request, name: string) => input(uuid, request.params[name]);
   router.get('/ideas/:ideaId', handle(async (req, res, principal) => {
     input(emptyQuery, req.query);
