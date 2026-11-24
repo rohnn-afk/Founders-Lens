@@ -3,7 +3,7 @@ set -euo pipefail
 
 image=${1:?Pass the local image reference}
 sha=${2:?Pass the application source SHA}
-test "$(docker image inspect --format '{{.Os}}/{{.Architecture}} {{.Config.User}} {{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "linux/amd64 node $sha"
+test "$(docker image inspect --format '{{.Os}}/{{.Architecture}} {{.Config.User}} {{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "linux/amd64 1000:1000 $sha"
 env=$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$image")
 grep -Fx 'NODE_ENV=production' <<< "$env"
 if grep -Eq '^(FL_|CLERK_|.*DATABASE_URL=|NODE_TLS_REJECT_UNAUTHORIZED=)' <<< "$env"; then
@@ -28,6 +28,8 @@ docker exec "$local_api" node --input-type=module -e '
   import { access } from "node:fs/promises";
   import { setTimeout } from "node:timers/promises";
   await access("/etc/ssl/certs/ca-certificates.crt");
+  await assert.rejects(access("/usr/local/bin/npm"), { code: "ENOENT" });
+  await assert.rejects(access("/usr/bin/openssl"), { code: "ENOENT" });
   const { PrismaClient } = await import("/app/apps/api/dist/generated/prisma/client.js");
   const { PrismaPg } = await import("@prisma/adapter-pg");
   const db = new PrismaClient({
