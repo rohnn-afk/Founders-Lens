@@ -16,22 +16,25 @@ function page<T>(value: Page<T>, item: (value: T) => boolean): Page<T> {
   }
   return value;
 }
-const idea = (value: Idea, id?: string) => typeof value?.id === 'string' && (!id || id === value.id) &&
-  typeof value.title === 'string' && ['ACTIVE', 'ARCHIVED'].includes(value.status);
+const positiveInteger = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+const timestamp = (value: unknown) => typeof value === 'string' &&
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value) && Number.isFinite(Date.parse(value));
 const projectedIdea = (value: unknown): value is Idea =>
   typeof value === 'object' && value !== null && 'id' in value && typeof value.id === 'string' &&
   'title' in value && typeof value.title === 'string' &&
   (!('summary' in value) || value.summary == null || typeof value.summary === 'string') &&
-  'createdAt' in value && typeof value.createdAt === 'string' &&
-  'updatedAt' in value && typeof value.updatedAt === 'string' &&
-  'version' in value && typeof value.version === 'number' && Number.isSafeInteger(value.version) &&
+  'createdAt' in value && timestamp(value.createdAt) &&
+  'updatedAt' in value && timestamp(value.updatedAt) &&
+  'version' in value && positiveInteger(value.version) &&
   'status' in value && (value.status === 'ACTIVE' || value.status === 'ARCHIVED');
 const conversation = (value: Conversation, ideaId?: string) => typeof value?.id === 'string' &&
   typeof value.ideaId === 'string' && (!ideaId || value.ideaId === ideaId) &&
-  (value.title == null || typeof value.title === 'string') && ['ACTIVE', 'ARCHIVED'].includes(value.status);
+  (value.title == null || typeof value.title === 'string') && ['ACTIVE', 'ARCHIVED'].includes(value.status) &&
+  typeof value.proactiveResearch === 'boolean' && positiveInteger(value.version) &&
+  (value.createdAt === undefined || timestamp(value.createdAt));
 const message = (value: Message, id: string) => typeof value?.id === 'string' && value.conversationId === id &&
   Number.isSafeInteger(value.sequence) && value.sequence > 0 && ['USER', 'ASSISTANT'].includes(value.role) &&
-  typeof value.content === 'string' && typeof value.createdAt === 'string';
+  typeof value.content === 'string' && timestamp(value.createdAt);
 
 /** Construct session-scoped P8 and opt-in generation transports. */
 export function createLocalConversationApi(getToken: () => Promise<string | null>, makeKey = () => crypto.randomUUID()) {
@@ -70,8 +73,8 @@ export function createLocalConversationApi(getToken: () => Promise<string | null
     };
   }
   const api: WorkspaceApi = {
-    ideas: (cursor, signal) => request<Page<Idea>>(withCursor('/ideas', cursor), signal, v => page(v, item => idea(item))),
-    idea: (id, signal) => request<Idea>(ideaPath(id), signal, verify(v => idea(v, id))),
+    ideas: (cursor, signal) => request<Page<Idea>>(withCursor('/ideas', cursor), signal, v => page(v, projectedIdea)),
+    idea: (id, signal) => request<Idea>(ideaPath(id), signal, verify(v => projectedIdea(v) && v.id === id)),
     conversations: (id, cursor, signal) => request<Page<Conversation>>(withCursor(ideaPath(id) + '/conversations', cursor), signal,
       v => page(v, item => conversation(item, id))),
     conversation: (id, signal) => request<Conversation>(conversationPath(id), signal, verify(v => conversation(v) && v.id === id)),

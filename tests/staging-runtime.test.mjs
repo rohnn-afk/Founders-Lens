@@ -4,6 +4,9 @@ import test from 'node:test';
 import { createApp } from '../apps/api/dist/app.js';
 import { stagingConfig } from '../apps/api/dist/workspace/staging-config.js';
 import { workspaceIdeasCors } from '../apps/api/dist/workspace/read-only-composition.js';
+import { localConversationRoutes, workspaceIdeaListRoutes } from '../apps/api/dist/workspace/routes.js';
+import { WorkspaceError } from '../apps/api/dist/workspace/contracts.js';
+import { SecurityError } from '../apps/api/dist/security/errors.js';
 import { Router } from 'express';
 
 const settings = {
@@ -49,7 +52,31 @@ test('readiness fails when dependency evidence is lost and browser CORS remains 
   let verified = true;
   const router = Router();
   router.use(workspaceIdeasCors(false, { create: false, save: false }, undefined, settings.FL_WEB_ORIGIN));
-  router.get('/ideas', (req, res) => res.sendStatus(req.get('Authorization') === 'Bearer fixture' ? 200 : 401));
+  const ideaId = 'e2ef13d2-bbcd-47dc-b546-cc0cb6fb80bc';
+  const conversationId = 'eb53c219-84a2-45b3-93d3-b20874d7e52c';
+  const time = '2026-01-01T00:00:00.000Z';
+  const idea = { id: ideaId, title: 'Fixture', version: 1, status: 'ACTIVE', createdAt: time, updatedAt: time };
+  const conversation = { id: conversationId, ideaId, status: 'ACTIVE', proactiveResearch: false, version: 1 };
+  const page = items => ({ items, page: { hasMore: false, nextCursor: null } });
+  const owned = (principal, id, dto) => {
+    if (principal.localUserId !== 'owner' || id !== dto.id) throw new WorkspaceError(404, 'RESOURCE_NOT_FOUND');
+    return dto;
+  };
+  const authenticate = async req => {
+    switch (req.get('Authorization')) {
+      case 'Bearer fixture': return { localUserId: 'owner' };
+      case 'Bearer foreign': return { localUserId: 'foreign' };
+      case 'Bearer unbound': throw new SecurityError('ACCOUNT_UNAVAILABLE');
+      default: throw new SecurityError('UNAUTHENTICATED');
+    }
+  };
+  router.use(workspaceIdeaListRoutes({ ideas: async principal => page(principal.localUserId === 'owner' ? [idea] : []) }, authenticate));
+  router.use(localConversationRoutes({
+    idea: async (principal, id) => owned(principal, id, idea),
+    conversations: async (principal, id) => { owned(principal, id, idea); return page([conversation]); },
+    conversation: async (principal, id) => owned(principal, id, conversation),
+    history: async (principal, id) => { owned(principal, id, conversation); return page([]); }
+  }, authenticate));
   const server = createApp(router, async () => { if (!verified) throw new Error('Fixture outage'); }).listen(0, '127.0.0.1');
   await once(server, 'listening');
   t.after(() => new Promise(resolve => server.close(resolve)));
@@ -61,7 +88,34 @@ test('readiness fails when dependency evidence is lost and browser CORS remains 
   } });
   assert.equal(preflight.status, 204);
   assert.equal(preflight.headers.get('Access-Control-Allow-Origin'), settings.FL_WEB_ORIGIN);
-  assert.equal((await fetch(endpoint + '/api/v1/ideas', { headers })).status, 200);
+  const requests = [
+    ['/ideas', page([idea])],
+    ['/ideas/' + ideaId, idea],
+    ['/ideas/' + ideaId + '/conversations', page([conversation])],
+    ['/conversations/' + conversationId, conversation],
+    ['/conversations/' + conversationId + '/messages', page([])]
+  ];
+  for (const [path, body] of requests) {
+    const url = endpoint + '/api/v1' + path;
+    const response = await fetch(url, { headers });
+    assert.equal(response.status, 200, path);
+    assert.deepEqual(await response.json(), body);
+    assert.equal(response.headers.get('Cache-Control'), 'no-store');
+    assert.ok(response.headers.get('X-Request-Id'));
+    if (path === '/ideas') assert.equal(response.headers.get('X-Workspace-Conversations'), 'enabled');
+    const denied = await fetch(url, { headers: { ...headers, Authorization: 'Bearer unbound' } });
+    assert.equal(denied.status, 403);
+    assert.equal((await denied.json()).error.code, 'ACCOUNT_UNAVAILABLE');
+    const foreign = await fetch(url, { headers: { ...headers, Authorization: 'Bearer foreign' } });
+    assert.equal(foreign.status, path === '/ideas' ? 200 : 404);
+    const foreignBody = await foreign.json();
+    if (path === '/ideas') assert.deepEqual(foreignBody, page([]));
+    else assert.equal(foreignBody.error.code, 'RESOURCE_NOT_FOUND');
+    assert.equal((await fetch(url + '?unexpected=true', { headers })).status, 400);
+    for (const method of ['POST', 'HEAD']) {
+      assert.equal((await fetch(url, { method, headers })).status, 404);
+    }
+  }
   assert.equal((await fetch(endpoint + '/api/v1/ideas', { headers: { Origin: settings.FL_WEB_ORIGIN } })).status, 401);
   assert.equal((await fetch(endpoint + '/api/v1/ideas', { headers: { ...headers, Origin: 'https://foreign.example.test' } })).status, 403);
   assert.equal((await fetch(endpoint + '/api/v1/ideas', { method: 'POST', headers })).status, 404);

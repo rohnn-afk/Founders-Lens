@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
-import { connection, databases, main, migrationPath, reviewedMigration, root, settings } from '../apps/api/scripts/database.mjs';
+import { connection, databases, main, migrationPath, reviewedMigration, root, settings, sha256 } from '../apps/api/scripts/database.mjs';
 import { databaseConfig } from '../apps/api/dist/persistence/config.js';
 import { createDatabaseClient } from '../apps/api/dist/persistence/client.js';
 
@@ -167,17 +167,21 @@ test('real PostgreSQL database foundation', { skip: !live, timeout: 90_000 }, as
   const values = await settings();
   const { sql, checksum } = await reviewedMigration();
 
-  await t.test('both databases have the reviewed migration, all constraints, indexes, enums and triggers', async () => {
+  await t.test('both databases have the reviewed migrations, constraints, indexes, enums and triggers', async () => {
+    const expectedMigrations = [
+      ['0001_approved_baseline', checksum],
+      ...await Promise.all(['0002_p9_context', '0003_p9_provider_receipt'].map(async name => [
+        name, sha256(await readFile(path.join(root, 'apps/api/prisma/migrations', name, 'migration.sql')))
+      ]))
+    ];
     for (const key of ['MIGRATION_DATABASE_URL', 'TEST_MIGRATION_DATABASE_URL']) {
       await transaction(values[key], async client => {
-        const migrations = (await client.query('SELECT migration_name,checksum,finished_at,rolled_back_at FROM "_prisma_migrations"')).rows;
-        assert.equal(migrations.length, 1);
-        assert.equal(migrations[0].migration_name, '0001_approved_baseline');
-        assert.equal(migrations[0].checksum, checksum);
-        assert.ok(migrations[0].finished_at);
-        assert.equal(migrations[0].rolled_back_at, null);
+        const migrations = (await client.query('SELECT migration_name,checksum,finished_at,rolled_back_at FROM "_prisma_migrations" ORDER BY started_at')).rows;
+        assert.deepEqual(migrations.map(row => [row.migration_name, row.checksum]), expectedMigrations);
+        assert.ok(migrations.every(row => row.finished_at && row.rolled_back_at === null));
         const tables = (await client.query("SELECT tablename,tableowner FROM pg_tables WHERE schemaname='public'")).rows;
-        assert.equal(tables.length, 25);
+        assert.equal(tables.length, 26);
+        assert.ok(tables.some(row => row.tablename === 'GenerationProviderReceipt'));
         assert.ok(tables.every(row => row.tableowner === 'fl_m02_migrator'));
         const enums = (await client.query("SELECT t.typname, array_agg(e.enumlabel::text ORDER BY e.enumsortorder) AS labels FROM pg_type t JOIN pg_enum e ON e.enumtypid=t.oid JOIN pg_namespace n ON n.oid=t.typnamespace WHERE n.nspname='public' GROUP BY t.typname")).rows;
         assert.equal(enums.length, 24);

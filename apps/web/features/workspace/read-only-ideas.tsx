@@ -201,6 +201,7 @@ function IdeasForSession({ account, getToken }: { account: string; getToken: () 
         {creation === 'blocked' && <p role="alert">You do not currently have access to save ideas.</p>}
         {view.kind === 'ready' && (view.ideas.length === 0 ? <p className={styles['feedback']} role="status">You don’t have any ideas yet.{canCreate && ' Save an idea to start a conversation.'}</p> :
           <ul className={styles['list']}>{view.ideas.map(idea => <li key={idea.id}><h2>{idea.title}</h2>{idea.summary && <p>{idea.summary}</p>}
+            {idea.status === 'ARCHIVED' && <p>Archived</p>}
             {view.conversations && idea.status === 'ACTIVE' && <Link prefetch={false} aria-label={`Open conversations for ${idea.title}`}
               href={'/app/ideas/' + encodeURIComponent(idea.id) + '/think'}>Open conversations</Link>}</li>)}</ul>)}
         {view.kind === 'ready' && view.cursor && <button type="button" onClick={() => load(view.cursor, view.ideas)}>
