@@ -1,6 +1,6 @@
 ﻿import { workspaceEndpoints } from '../../../features/workspace/endpoints';
 
-/** Readiness uses Railway's private API address and never forwards Clerk credentials. */
+/** Check the configured API without forwarding Clerk credentials. */
 export async function GET() {
   let ready = false;
   try {
@@ -13,9 +13,10 @@ export async function GET() {
       !hasSecretKey ||
       !Array.isArray(parties) || parties.length !== 1 || parties[0] !== webOrigin) throw new Error();
     workspaceEndpoints({ frontend: webOrigin, api: apiOrigin });
-    const upstream = new URL(process.env.FL_INTERNAL_API_ORIGIN ?? '');
-    if (upstream.hostname !== 'api.railway.internal' || upstream.protocol !== 'http:' ||
-      upstream.href !== upstream.origin + '/' || upstream.origin !== process.env.FL_INTERNAL_API_ORIGIN) throw new Error();
+    const internal = process.env.FL_INTERNAL_API_ORIGIN;
+    const upstream = new URL(internal ?? apiOrigin);
+    if (internal !== undefined && (upstream.hostname !== 'api.railway.internal' || upstream.protocol !== 'http:' ||
+      internal !== upstream.origin)) throw new Error();
     const response = await fetch(new URL('/health/ready', upstream), {
       cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(2500)
     });

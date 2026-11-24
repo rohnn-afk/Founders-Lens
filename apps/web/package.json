@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node ../../scripts/next.mjs dev --hostname 127.0.0.1",
-    "build": "node ../../scripts/next.mjs build",
+    "build": "node ../../scripts/next.mjs build --webpack",
     "start": "node ../../scripts/next.mjs start --hostname 127.0.0.1",
     "lint": "eslint app next.config.ts --max-warnings=0",
     "typecheck": "node ../../scripts/next.mjs typegen && tsc --noEmit"

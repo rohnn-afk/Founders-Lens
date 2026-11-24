@@ -1,0 +1,86 @@
+# Render permits one Free Postgres per workspace.
+# Supply the independent authority using FL_AUTHORITY_DATABASE_URL.
+services:
+  - type: web
+    name: founders-lens-staging-web
+    runtime: node
+    plan: free
+    region: oregon
+    branch: staging
+    autoDeployTrigger: 'off'
+    buildCommand: npm ci --include=dev && node scripts/next.mjs build --webpack
+    startCommand: node scripts/next.mjs start --hostname 0.0.0.0 --port "$PORT"
+    healthCheckPath: /health/live
+    envVars:
+      - key: NODE_VERSION
+        value: '24.22.3'
+      - key: SKIP_INSTALL_DEPS
+        value: 'true'
+      - key: NEXT_PUBLIC_FL_WEB_ORIGIN
+        sync: false
+      - key: NEXT_PUBLIC_FL_API_ORIGIN
+        sync: false
+      - key: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false
+      - key: CLERK_AUTHORIZED_PARTIES
+        sync: false
+  - type: web
+    name: founders-lens-staging-api
+    runtime: node
+    plan: free
+    region: oregon
+    branch: staging
+    autoDeployTrigger: 'off'
+    buildCommand: npm ci --include=dev && npm run db:generate && npm run build --workspace=@founders-lens/api
+    startCommand: node apps/api/dist/main.js
+    healthCheckPath: /health/live
+    envVars:
+      - key: NODE_VERSION
+        value: '24.22.3'
+      - key: SKIP_INSTALL_DEPS
+        value: 'true'
+      - key: NODE_ENV
+        value: production
+      - key: FL_DEPLOYMENT
+        value: staging
+      - key: FL_WEB_ORIGIN
+        sync: false
+      - key: CLERK_INSTANCE_ID
+        sync: false
+      - key: CLERK_ISSUER
+        sync: false
+      - key: CLERK_PUBLISHABLE_KEY
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false
+      - key: CLERK_AUTHORIZED_PARTIES
+        sync: false
+      - key: CLERK_AUDIENCE
+        sync: false
+      - key: FL_WORKSPACE_DATABASE_URL
+        sync: false
+      - key: FL_CONVERSATIONS_DATABASE_URL
+        sync: false
+      - key: FL_AUTHORITY_DATABASE_URL
+        sync: false
+      - key: FL_SUBJECT_KEY_V1
+        sync: false
+      - key: FL_CURSOR_KEY
+        sync: false
+      - key: FL_AUTHORITY_INTEGRITY_KEY
+        sync: false
+      - key: FL_AUTHORITY_EPOCH
+        sync: false
+      - key: FL_AUTHORITY_NAMESPACE
+        sync: false
+      - key: FL_OPERATOR_PUBLIC_KEY
+        sync: false
+      # Set fresh decisions in the API dashboard just before the smoke window.
+databases:
+  - name: founders-lens-staging-primary
+    databaseName: founders_lens_staging
+    plan: free
+    region: oregon
+    ipAllowList: []
