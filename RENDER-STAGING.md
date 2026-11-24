@@ -24,12 +24,7 @@ On the operator workstation, build the API before running the signer. Set `FL_CO
 
 ## GitHub release gate and rollback
 
-1. Protect `staging` with required GitHub Actions checks **Build and test** and **Secret and dependency checks**. Restrict the GitHub Actions environment named `staging` to the exact branch. Use an independent reviewer when one is available. For a solo-maintained repository, keep the environment branch-restricted and use explicit owner dispatch after the deployment gates are satisfied. The initial CI-only run needs no deploy credentials.
-2. In that environment only, set the secret `RENDER_API_KEY` and variables `RENDER_STAGING_WEB_SERVICE_ID` and `RENDER_STAGING_API_SERVICE_ID`. Keep automatic deploys off on both Render services, and disable any competing deploy hooks or Blueprint auto-sync that would deploy code independently. Enable the GitHub repository connection for the intended Render workspace.
-3. Dispatch **CI** on branch `staging` with **deploy_staging** selected. Both CI jobs must pass in that run. The deployment job verifies the two named Free staging services against the repository and branch before requesting the exact tested commit from Render. An accepted request means Render queued it. Verify both revisions and the smoke endpoints before declaring a deployment live. Production has no deployment job in this workflow.
-4. Record the last known-good deploy IDs for both services. On a partial or uncertain rollout, inspect Render deploy history before dispatching again. Roll back the affected services to the matching known-good deploys. Confirm the same database targets, fresh signed clearance, and readiness. Application rollback does not roll back schema, database data, or authority history. A first deploy has no prior version to restore.
-
-The API retains its existing sanitized startup, shutdown and request events, graceful connection draining, and exact-origin CORS. CI exercises PostgreSQL, independent authority, Redis and the BullMQ pipeline with disposable loopback fixtures and deterministic generation. Hosted workers, Redis, Groq, and database migrations stay outside the staging deploy workflow.
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the digest-pinned API release workflow, protected GitHub configuration, operator renewal, and rollback checks. The public demo remains separately managed.
 
 ## Public portfolio demo
 

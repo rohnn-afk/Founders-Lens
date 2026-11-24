@@ -5,18 +5,13 @@ on:
   push:
     branches: [main, staging]
   workflow_dispatch:
-    inputs:
-      deploy_staging:
-        description: Deploy this CI-verified staging commit to Render
-        type: boolean
-        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ inputs.deploy_staging || false }}
-  cancel-in-progress: ${{ !inputs.deploy_staging }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/staging' }}
 
 jobs:
   validate:
@@ -53,6 +48,8 @@ jobs:
           docker pull docker.io/library/redis:7.4.12-bookworm@sha256:2e3eb11462c4e3759e6972678dd051d150ff54b1e60714b3c33b701260172a90
       - name: PostgreSQL and independent authority
         run: node tests/p6-runtime-recovery-clearance.test.mjs --p6-runtime-recovery-live
+      - name: Authority mailbox privilege and lifecycle checks
+        run: node tests/suppression-ledger.test.mjs --suppression-live
       - name: PostgreSQL, independent authority, and Redis pipeline
         run: node tests/m05-local-generation.test.mjs --live
 
@@ -84,25 +81,86 @@ jobs:
           if [[ "$BASE" =~ ^[0-9a-f]{40}$ ]] && [[ "$BASE" != 0000000000000000000000000000000000000000 ]]; then
             "$RUNNER_TEMP/gitleaks" git --redact=100 --no-banner --log-opts="$BASE..HEAD" .
           fi
-
-  deploy_staging:
-    name: Deploy verified staging commit
-    if: github.event_name == 'workflow_dispatch' && inputs.deploy_staging && github.ref == 'refs/heads/staging'
-    needs: [validate, security]
+  image:
+    name: Build and smoke-test the API image
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    environment: staging
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-          ref: ${{ github.sha }}
+      - run: bash scripts/build-api-image.sh "$GITHUB_SHA" founders-lens-api:ci
+      - run: bash scripts/smoke-api-image.sh founders-lens-api:ci "$GITHUB_SHA"
+      - name: Save tested image
+        run: |
+          mkdir release
+          docker image inspect --format '{{.Id}}' founders-lens-api:ci > release/index-digest
+          docker save --output release/api.tar founders-lens-api:ci
+      - name: Scan image filesystem and configuration
+        run: |
+          docker run --rm -v "$PWD/release:/release" \
+            aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e \
+            image --input /release/api.tar --scanners vuln,secret --image-config-scanners secret \
+            --format json --output /release/scan.json
+          node scripts/check-image-scan.mjs release/scan.json release/scan-summary.json
+      - name: Preserve scan diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: api-image-scan
+          path: release/scan-summary.json
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
+        with:
+          name: tested-api-image
+          path: |
+            release/api.tar
+            release/index-digest
+          compression-level: 0
+          retention-days: 2
+
+  release:
+    name: Publish and deploy staging API
+    if: github.event_name == 'push' && github.ref == 'refs/heads/staging' && vars.FL_STAGING_RELEASE_ENABLED == 'true'
+    needs: [validate, security, image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: staging
+    concurrency:
+      group: founders-lens-staging-api
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version-file: .node-version
-      - name: Request exact-commit Render deployments
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: tested-api-image
+          path: release
+      - name: Verify staging tip
         env:
+          GH_TOKEN: ${{ github.token }}
+        run: test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/staging" --jq .object.sha)" = "$GITHUB_SHA"
+      - name: Publish tested image and verify registry manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/publish-staging-image.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: staging-api-release
+          path: release/manifest.json
+      - name: Deploy exact image and smoke-test the API
+        env:
+          GH_TOKEN: ${{ github.token }}
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-          RENDER_STAGING_WEB_SERVICE_ID: ${{ vars.RENDER_STAGING_WEB_SERVICE_ID }}
           RENDER_STAGING_API_SERVICE_ID: ${{ vars.RENDER_STAGING_API_SERVICE_ID }}
-        run: node scripts/render-deploy-staging.mjs
+        run: |
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/staging" --jq .object.sha)" = "$GITHUB_SHA"
+          node scripts/render-deploy-staging.mjs release/manifest.json
