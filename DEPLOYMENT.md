@@ -12,6 +12,17 @@ After one-time enablement, the protected `staging` job packages the already-test
 
 The job polls the Render deploy ID and confirms the expected image, then checks API liveness, readiness, and unauthenticated denial. A failed check fails the release job. A dropped submission response is ambiguous. Check the Render **Events** page before trying again. A successful health probe does not replace a signed-in workspace check.
 
+## OpenAPI release checks
+
+The existing API image serves Swagger UI and OpenAPI 3.1. The **Build and test** job validates the specification and checks it against the staging route registrations. The image smoke test verifies that the production container can serve the specification and its bundled Swagger assets without network access.
+
+Leave `FL_API_DOCS` unset or set it to `reference` on the existing Render API. Set it to `off` to disable the documentation routes. Staging publishes the health probes and five authenticated workspace reads as a browsable reference. Verify these URLs after the protected release succeeds.
+
+- Swagger UI at [https://founders-lens-staging-api.onrender.com/docs](https://founders-lens-staging-api.onrender.com/docs)
+- OpenAPI JSON at [https://founders-lens-staging-api.onrender.com/openapi.json](https://founders-lens-staging-api.onrender.com/openapi.json)
+
+The documentation-only runtime review identifies its exact fingerprint in the existing staging risk record. The same expiry, binary checks and finding limits apply. Run the normal scan and smoke gates on every candidate. Keep continuous authority renewal active throughout release verification. [API authentication guide](apps/api/API-AUTHENTICATION.md)
+
 ## One-time setup
 
 1. Give this repository **Manage Actions access** to the private GHCR package. Leave package visibility private. The publication job requests `packages: write`; normal CI has only read access.

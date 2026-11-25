@@ -168,3 +168,5 @@ jobs:
           test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/staging" --jq .object.sha)" = "$GITHUB_SHA"
           node -e 'const r = require("./release/scan-summary.json"); if (r.vulnerabilities.some(v => v.accepted) && !(Date.now() < Date.parse(r.exceptionExpiresAt))) process.exit(1)'
           node scripts/render-deploy-staging.mjs release/manifest.json
+      - name: Verify deployed Swagger and OpenAPI
+        run: node scripts/smoke-staging-openapi.mjs
