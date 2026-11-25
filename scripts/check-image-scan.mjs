@@ -57,13 +57,13 @@ export function assessScan(scan, policy, { staging, now, source, runtime }) {
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
-  const [input, output, image] = process.argv.slice(2);
+  const [input, output, image, archiveConfigDigest] = process.argv.slice(2);
   const scan = JSON.parse(readFileSync(input, 'utf8'));
   const policy = JSON.parse(readFileSync(new URL('./staging-image-risk.json', import.meta.url), 'utf8'));
   const staging = stagingContext(process.env);
   const revision = git(['rev-parse', 'HEAD']).trim();
-  const imageId = execFileSync('docker', ['image', 'inspect', '--format', '{{.Id}}', image], { encoding: 'utf8' }).trim();
-  if (imageId !== scan.Metadata?.ImageID || revision !== process.env.GITHUB_SHA) {
+  if (!/^sha256:[0-9a-f]{64}$/.test(archiveConfigDigest) ||
+    archiveConfigDigest !== scan.Metadata?.ImageID || revision !== process.env.GITHUB_SHA) {
     throw new Error('Image scan identity does not match the selected CI run');
   }
   const source = sourceFingerprint(revision);
