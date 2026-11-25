@@ -1,5 +1,6 @@
 // Isolated Express adapter. The test composition injects verified identity and
 // mounts this router explicitly; the normal application does not import it.
+import { documentedRoute } from '../documentation/routes.js';
 import { json, Router, type Request, type Response } from 'express';
 import { bearerToken } from '../security/bearer.js';
 import { SecurityError, securityFailure } from '../security/errors.js';
@@ -58,7 +59,7 @@ export function generationRoutes(service: GenerationService, authenticate: (requ
       response.status(failure.status).json(failure.body);
     }
   };
-  router.get('/generations/:generationId', handle('status'));
+  documentedRoute(router, 'get', '/generations/:generationId', handle('status'));
   if (!statusOnly) {
     router.post('/generations/:generationId/cancel', handle('cancel'));
     router.post('/conversations/:conversationId/regenerations', handle('regenerate'));

@@ -1,12 +1,14 @@
 // Express application layer. The startup module calls this factory to assemble
 // public health endpoints and request middleware without opening a listener.
 
-import express, { type Router } from 'express';
+import express, { Router } from 'express';
+import { documentedRoute, workspacePrefix } from './documentation/routes.js';
+import { mountDocumentation, type DocumentationMode } from './documentation/ui.js';
 import helmet from 'helmet';
 import { attachRequestContext, isConversationSubmission, traceSubmissionFailure } from './security/request-context.js';
 import { securityErrorHandler } from './security/errors.js';
 
-export function createApp(workspace?: Router, readiness?: () => Promise<void>) {
+export function createApp(workspace?: Router, readiness?: () => Promise<void>, docs: DocumentationMode = 'reference') {
   const app = express();
   app.disable('x-powered-by');
   // Middleware runs in order before the route handler. Here it adds security
@@ -17,8 +19,9 @@ export function createApp(workspace?: Router, readiness?: () => Promise<void>) {
     response.setHeader('Cache-Control', 'no-store');
     next();
   });
-  app.get('/health/live', (_request, response) => { response.status(200).end(); });
-  app.get('/health/ready', async (_request, response) => {
+  const health = Router();
+  documentedRoute(health, 'get', '/health/live', (_request, response) => { response.status(200).end(); });
+  documentedRoute(health, 'get', '/health/ready', async (_request, response) => {
     if (!readiness) { response.status(503).end(); return; }
     try {
       await readiness();
@@ -27,7 +30,9 @@ export function createApp(workspace?: Router, readiness?: () => Promise<void>) {
       response.status(503).end();
     }
   });
-  if (workspace) app.use('/api/v1', workspace);
+  app.use(health);
+  mountDocumentation(app, docs, health, workspace);
+  if (workspace) app.use(workspacePrefix, workspace);
   app.use((request, response) => {
     if (isConversationSubmission(request.method, request.path.replace(/^\/api\/v1(?=\/)/, ''))) {
       traceSubmissionFailure(response, 404, 'WRONG_ROUTE');

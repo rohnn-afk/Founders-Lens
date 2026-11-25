@@ -51,4 +51,18 @@ docker exec "$local_api" node --input-type=module -e '
   }
   assert.equal((await fetch(base + "/health/ready")).status, 503);
   assert.equal((await fetch(base + "/api/v1/ideas")).status, 404);
+  const docs = await fetch(base + "/docs");
+  assert.equal(docs.status, 200);
+  assert.match(await docs.text(), /\/docs\/swagger-ui-bundle\.js/);
+  const bundle = await fetch(base + "/docs/swagger-ui-bundle.js");
+  assert.equal(bundle.status, 200);
+  assert.ok((await bundle.arrayBuffer()).byteLength > 0);
+  const initializer = await fetch(base + "/docs/initialize.js");
+  assert.equal(initializer.status, 200);
+  assert.match(await initializer.text(), /supportedSubmitMethods: \[\]/);
+  const response = await fetch(base + "/openapi.json");
+  assert.equal(response.status, 200);
+  const spec = await response.json();
+  assert.equal(spec.openapi, "3.1.0");
+  assert.deepEqual(Object.keys(spec.paths).sort(), ["/health/live", "/health/ready"]);
 '

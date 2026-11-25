@@ -46,6 +46,7 @@
     }
   },
   "devDependencies": {
+    "@scalar/openapi-validator": "0.1.26",
     "@types/node": "24.10.1",
     "eslint": "10.15.0",
     "prisma": "7.10.1",

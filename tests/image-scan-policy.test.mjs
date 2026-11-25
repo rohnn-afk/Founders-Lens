@@ -35,6 +35,17 @@ test('exception fails closed on expiry, source changes, different binaries and o
   }
 });
 
+test('an exact documentation review uses the same staging exception and expiry', () => {
+  const source = policy.equivalentRuntimeReviews[0].sourceFingerprint;
+  assert.equal(assessScan(report([finding]), policy, { ...context, source }).blockers.length, 0);
+  assert.equal(assessScan(report([finding]), policy, {
+    ...context, source, runtime: ['changed']
+  }).blockers.length, 1);
+  assert.equal(assessScan(report([finding]), policy, {
+    ...context, source, now: Date.parse(policy.expiresAt)
+  }).blockers.length, 1);
+});
+
 test('unlisted findings, critical severity, package changes and available fixes block', () => {
   for (const patch of [{ VulnerabilityID: 'CVE-0000-0000' }, { Severity: 'CRITICAL' },
     { InstalledVersion: 'changed' }, { PkgName: 'other' }, { FixedVersion: 'available' }]) {

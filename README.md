@@ -18,3 +18,9 @@ Product and engineering documents:
 - [HLD](Docs/architecture/HLD.md): architecture, deployment boundaries, trust, and failure handling.
 - [Database LLD](Docs/lld/01-database/logical-design.md): logical entities, transactions, and integrity rules.
 - [ADR-013: Express with TypeScript](Docs/architecture/adr/013-express-typescript-api.md): the backend decision confirmed on 2026-11-15, superseding the earlier Fastify choice.
+
+## API reference
+
+Start the API with `npm run dev:api`. Swagger UI is at [http://127.0.0.1:3001/docs](http://127.0.0.1:3001/docs), and the OpenAPI 3.1 document is at [http://127.0.0.1:3001/openapi.json](http://127.0.0.1:3001/openapi.json). The default local shell shows health routes. A workspace runtime adds its admitted operations at startup.
+
+See the [API authentication guide](apps/api/API-AUTHENTICATION.md) for the signed-in developer workflow and documentation modes. See [Deployment](DEPLOYMENT.md) for the staging URLs and release gates.

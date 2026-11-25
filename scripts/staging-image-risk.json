@@ -6,6 +6,13 @@
   "reviewedIndexDigest": "sha256:c03d923a6366c7cf1c01a2ac9b4b8d094cc49754351ddada0975652184215d8c",
   "reviewedAmd64Digest": "sha256:9789659d488d0db43ef21d7cfb5a9031cfa869eb2e31e883079e00d70b7b4844",
   "runtimeSourceFingerprint": "8a46bc94e9f1931f91cd380f2337f11de3f2aa5516505628bc53dd3571f708f7",
+  "equivalentRuntimeReviews": [
+    {
+      "sourceRevision": "52c3b46fd48acf959f57633fe8bb60231299cd88",
+      "sourceFingerprint": "040b74fa8685bdb53fb752d21c9544a41590074b53a4bdd3d0fc7cda94b36dd6",
+      "reason": "Reference-only Swagger serves local browser assets and a synthetic specification. Route metadata records the same authenticated read handlers. No change to the Linux runtime, TLS or OpenSSL usage, Clerk verification, authority checks, or staging data access."
+    }
+  ],
   "runtimeBinaryFingerprints": [
     "a7ec1b37e6ff9d187e4198c5b6df9a4eb1c74dd31804fb3bac55cc4ceca1ac01",
     "a890bcf10b78b752135a035809a10792330ff9b9c2ae3bb2239d7a08a5a6610b",

@@ -33,6 +33,11 @@ export function stagingContext(env) {
       (['push', 'workflow_dispatch'].includes(env.GITHUB_EVENT_NAME) && env.GITHUB_REF === 'refs/heads/staging'));
 }
 
+function reviewedSource(policy, fingerprint) {
+  return fingerprint === policy.runtimeSourceFingerprint ||
+    (policy.equivalentRuntimeReviews ?? []).some(review => review.sourceFingerprint === fingerprint);
+}
+
 export function assessScan(scan, policy, { staging, now, source, runtime }) {
   if (scan.SchemaVersion !== 2 || !Array.isArray(scan.Results) ||
     !scan.Results.some(result => result.Class === 'os-pkgs' && result.Type === 'debian') ||
@@ -42,7 +47,7 @@ export function assessScan(scan, policy, { staging, now, source, runtime }) {
   const approvedFrom = Date.parse(policy.approvedAt);
   const expiresAt = Date.parse(policy.expiresAt);
   const eligible = staging && now >= approvedFrom && now < expiresAt &&
-    expiresAt - approvedFrom <= 30 * 86_400_000 && source === policy.runtimeSourceFingerprint &&
+    expiresAt - approvedFrom <= 30 * 86_400_000 && reviewedSource(policy, source) &&
     Array.isArray(runtime) && JSON.stringify(runtime) === JSON.stringify(policy.runtimeBinaryFingerprints);
   const vulnerabilities = scan.Results.flatMap(result => (result.Vulnerabilities ?? []).map(v => ({
     id: v.VulnerabilityID, severity: v.Severity, package: v.PkgName,
@@ -67,7 +72,7 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
     throw new Error('Image scan identity does not match the selected CI run');
   }
   const source = sourceFingerprint(revision);
-  const runtime = staging && source === policy.runtimeSourceFingerprint ? inspectRuntime(image) : null;
+  const runtime = staging && reviewedSource(policy, source) ? inspectRuntime(image) : null;
   const report = assessScan(scan, policy, { staging, now: Date.now(), source, runtime });
   writeFileSync(output, JSON.stringify(report, null, 2));
   const accepted = report.vulnerabilities.filter(v => v.accepted).length;

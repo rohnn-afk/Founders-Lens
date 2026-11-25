@@ -1,4 +1,5 @@
 ﻿import { createPublicKey, randomUUID } from 'node:crypto';
+import { mountDocumentedRouter } from '../documentation/routes.js';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Router, type Request } from 'express';
 import pg from 'pg';
@@ -9,6 +10,7 @@ import { SecurityError } from '../security/errors.js';
 import { ClerkIdentityProvider } from '../security/identity-provider.js';
 import { PrismaIdentityRepository } from '../security/identity-repository.js';
 import { IdentityService } from '../security/identity-service.js';
+import type { Principal } from '../security/principal.js';
 import { requestContext } from '../security/request-context.js';
 import { SubjectKeys } from '../security/subject-key.js';
 import { createSuppressionLedger } from '../security/suppression-ledger.js';
@@ -16,10 +18,20 @@ import { WorkspaceCursor } from './contracts.js';
 import { localConversationOperations } from './local-conversations.js';
 import { workspaceIdeasCors } from './read-only-composition.js';
 import { WorkspaceRepository } from './repository.js';
-import { localConversationRoutes, workspaceIdeaListRoutes } from './routes.js';
+import { localConversationRoutes, workspaceIdeaListRoutes, type LocalConversationOperations } from './routes.js';
 import { WorkspaceService } from './service.js';
 import { stagingConfig } from './staging-config.js';
 import { stagingDecisions } from './staging-decisions.js';
+
+export function stagingReadRoutes(origin: string, authenticate: (request: Request) => Promise<Principal>,
+  ideas: Pick<WorkspaceService, 'ideas'>, reads: Pick<LocalConversationOperations, 'idea' | 'conversations' | 'conversation' | 'history'>) {
+  const router = Router();
+  router.use(workspaceIdeasCors(false, { create: false, save: false }, undefined, origin));
+  mountDocumentedRouter(router, workspaceIdeaListRoutes(ideas, authenticate));
+  const { idea, conversations, conversation, history } = reads;
+  mountDocumentedRouter(router, localConversationRoutes({ idea, conversations, conversation, history }, authenticate));
+  return router;
+}
 
 /** Compose the hosted read surface with independent, expiring operator grants. */
 export async function stagingWorkspace(env: NodeJS.ProcessEnv, settings: ReturnType<typeof stagingConfig>) {
@@ -100,17 +112,13 @@ export async function stagingWorkspace(env: NodeJS.ProcessEnv, settings: ReturnT
       await ready();
       return identity.resolve(verified, request.res ? requestContext(request.res).requestId : randomUUID());
     }
-    const router = Router();
-    router.use(workspaceIdeasCors(false, { create: false, save: false }, undefined, origin));
-    router.use(workspaceIdeaListRoutes({ ideas: async (principal, query) => {
+    const router = stagingReadRoutes(origin, authenticate, { ideas: async (principal, query) => {
       const deadline = await verifiedDeadline();
       return workspace.ideas(principal, query, async () => {
         await ready();
         if (Date.now() >= deadline) throw new SecurityError('DEPENDENCY_UNAVAILABLE');
       });
-    } }, authenticate));
-    router.use(localConversationRoutes(localConversationOperations(conversationDb, authority.authority,
-      cursorKey, { read: verifiedDeadline }), authenticate));
+    } }, localConversationOperations(conversationDb, authority.authority, cursorKey, { read: verifiedDeadline }));
     return { router, ready, close };
   } catch (error) {
     await close().catch(() => console.error('Staging shutdown incomplete.'));
