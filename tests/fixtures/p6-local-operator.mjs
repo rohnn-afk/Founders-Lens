@@ -150,6 +150,12 @@ export async function prepareP7IdeaWriter(context, confirmation) {
     '.env.p7.writer.local', 'FL_P7_IDEA_CREATE_PASSWORD');
 }
 
+export async function prepareIdeaEditor(context, confirmation) {
+  assert.ok(!context.isolated && confirmation === 'prepare-local-idea-editor', 'Explicit local P6 approval required');
+  await prepareWorkspaceRole(context, 'fl_idea_edit', './idea-edit-grants.sql',
+    '.env.idea-editor.local', 'FL_IDEA_EDIT_PASSWORD');
+}
+
 /** Provision only the P8 role on the verified local primary, without inserting application data. */
 export async function prepareP8Conversations(context, confirmation) {
   assert.ok(confirmation === 'prepare-p8-conversations', 'Explicit operator approval required');
@@ -244,6 +250,12 @@ export async function signP8Clearances(context, privateKeyPath, publicKeyPath, c
     .map(purpose => signWorkspaceDecision(context, privateKeyPath, publicKeyPath, purpose)));
   return { FL_P8_READ_DECISION: decisions[0].envelope, FL_P8_CREATE_DECISION: decisions[1].envelope,
     FL_P8_SAVE_DECISION: decisions[2].envelope };
+}
+
+export async function signIdeaEditClearance(context, privateKeyPath, publicKeyPath, confirmation) {
+  assert.ok(confirmation === 'approve-local-idea-edit', 'Explicit operator approval required');
+  const { envelope } = await signWorkspaceDecision(context, privateKeyPath, publicKeyPath, 'edit-idea');
+  return { FL_IDEA_EDIT_DECISION: envelope };
 }
 
 async function signWorkspaceDecision(context, privateKeyPath, publicKeyPath, purpose) {

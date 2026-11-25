@@ -1,7 +1,6 @@
 // Browser-side workspace contracts. Views and controllers share these wire
 // shapes while the application supplies an API implementation at composition.
-// Entity versions support optimistic concurrency: a future edit can require
-// the version it read before writing. The current workspace only creates rows.
+// Entity versions support optimistic concurrency for idea edits.
 export type Idea = {
   id: string; title: string; summary?: string | null; version: number;
   status: 'ACTIVE' | 'ARCHIVED' | 'DELETION_REQUESTED' | 'PURGING' | 'DELETED';
@@ -13,12 +12,13 @@ export type Conversation = {
 };
 export type Page<T> = { items: T[]; page: { nextCursor: string | null; hasMore: boolean } };
 export type IdeaCreate = { title: string; summary?: string };
+export type IdeaEdit = { title?: string; summary?: string | null };
 export type ConversationCreate = { title?: string; proactiveResearch?: boolean };
 
 // An adapter supplies decoded DTOs and HTTP failures. No credentials belong
 // in view state or in the session snapshot used to scope this client.
-export type Reply<T> = { status: 200 | 201; data: T } |
-  { status: 400 | 401 | 403 | 404 | 409 | 413 | 415 | 429 | 500 | 503; requestId?: string };
+type ReplyFailure = { status: 400 | 401 | 403 | 404 | 409 | 412 | 413 | 415 | 428 | 429 | 500 | 503; requestId?: string };
+export type Reply<T> = { status: 200 | 201; data: T } | ReplyFailure;
 export type Message = {
   id: string; conversationId: string; sequence: number; role: 'USER' | 'ASSISTANT'; content: string; createdAt: string;
 };
@@ -44,7 +44,7 @@ export type Generation = {
   selected: boolean; createdAt: string; outputMessageId?: string; startedAt?: string; finishedAt?: string;
   error?: { code: string; retryable: boolean };
 };
-type GenerationFailure = { status: 400 | 401 | 403 | 404 | 409 | 413 | 415 | 429 | 500 | 503;
+type GenerationFailure = ReplyFailure & {
   retryAfterMs?: number; error?: { code: string; requestId: string; retryable: boolean } };
 export type GenerationReply = { status: 200 | 202; data: Generation } | GenerationFailure;
 export type GenerationApi = {

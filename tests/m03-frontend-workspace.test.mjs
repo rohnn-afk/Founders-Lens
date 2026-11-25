@@ -38,7 +38,7 @@ test('owned ideas transport distinguishes empty, unauthorized, unavailable and m
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'window');
   Object.defineProperty(globalThis, 'window', { configurable: true, value: { location: { origin: 'http://127.0.0.1:3000' } } });
   t.after(() => { if (previous) Object.defineProperty(globalThis, 'window', previous); else delete globalThis.window; });
-  const headers = { 'X-Workspace-Conversations': 'enabled', 'X-Workspace-Idea-Creation': 'enabled' };
+  const headers = { 'X-Workspace-Conversations': 'enabled', 'X-Workspace-Idea-Creation': 'enabled', 'X-Workspace-Idea-Editing': 'enabled' };
   const responses = [
     Response.json(page([]), { headers }),
     new Response(null, { status: 401, headers }),
@@ -59,11 +59,11 @@ test('owned ideas transport distinguishes empty, unauthorized, unavailable and m
   const signal = new AbortController().signal;
   const client = createLocalConversationApi(async () => 'fixture-token');
   assert.deepEqual(await client.listOwnedIdeas('a+b', signal), {
-    reply: ok(page([])), canCreate: true, conversations: true
+    reply: ok(page([])), canCreate: true, canEdit: true, conversations: true
   });
   for (const status of [401, 403, 503]) {
     assert.deepEqual(await client.listOwnedIdeas('a+b', signal), {
-      reply: { status }, canCreate: false, conversations: false
+      reply: { status }, canCreate: false, canEdit: false, conversations: false
     });
   }
   await assert.rejects(client.listOwnedIdeas('a+b', signal), /Invalid workspace page/);
@@ -73,6 +73,28 @@ test('owned ideas transport distinguishes empty, unauthorized, unavailable and m
   const expired = createLocalConversationApi(async () => null);
   assert.equal((await expired.listOwnedIdeas(null, signal)).reply.status, 401);
   assert.equal(fetch.mock.callCount(), 7);
+});
+
+test('idea editor sends the original version and surfaces a stale write without retrying', async t => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: { location: { origin: 'http://127.0.0.1:3000' } } });
+  t.after(() => { if (previous) Object.defineProperty(globalThis, 'window', previous); else delete globalThis.window; });
+  const patch = { title: 'Revised idea', summary: null };
+  const updated = { ...idea('idea-id'), ...patch, version: 3 };
+  const responses = [new Response(null, { status: 412 }), Response.json(updated)];
+  const fetch = t.mock.method(globalThis, 'fetch', async (url, options) => {
+    assert.equal(url, 'http://127.0.0.1:3001/api/v1/ideas/idea-id');
+    assert.equal(options.method, 'PATCH');
+    assert.equal(options.headers['If-Match'], '"v2"');
+    assert.equal(options.headers.Authorization, 'Bearer fixture-token');
+    assert.deepEqual(JSON.parse(options.body), patch);
+    return responses.shift();
+  });
+  const client = createLocalConversationApi(async () => 'fixture-token');
+  const signal = new AbortController().signal;
+  assert.deepEqual(await client.editIdea('idea-id', 2, patch, signal), { status: 412 });
+  assert.equal(fetch.mock.callCount(), 1);
+  assert.deepEqual(await client.editIdea('idea-id', 2, patch, signal), ok(updated));
 });
 
 test('generation capability distinguishes save-only access from a failed read', async t => {

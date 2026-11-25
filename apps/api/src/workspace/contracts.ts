@@ -25,9 +25,14 @@ function boundedText(maxCodePoints: number) {
   return storageText.refine(value => Array.from(value).length <= maxCodePoints).meta({ maxLength: maxCodePoints });
 }
 const title = boundedText(200);
-export const ideaCreate = z.strictObject({ title, summary: boundedText(5000).optional() });
+const ideaTitle = title.refine(value => value.trim().length > 0);
+const ideaSummary = boundedText(5000);
+export const ideaCreate = z.strictObject({ title: ideaTitle, summary: ideaSummary.optional() });
 export const ideaPatch = z.strictObject({ title: title.optional(), summary: storageText.nullable().optional(),
   status: z.enum(['ACTIVE', 'ARCHIVED']).optional() });
+export const ideaDetailsPatch = z.strictObject({
+  title: ideaTitle.optional(), summary: ideaSummary.nullable().optional()
+}).refine(value => value.title !== undefined || value.summary !== undefined).meta({ minProperties: 1 });
 export const conversationCreate = z.strictObject({ title: title.optional(), proactiveResearch: z.boolean().optional() });
 export const preferencesPatch = z.strictObject({ language: z.enum(['en', 'hinglish']).optional(), researchEnabled: z.boolean().optional() });
 export const idempotencyKey = z.string().min(8).max(128);

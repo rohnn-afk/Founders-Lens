@@ -20,6 +20,8 @@ const p6Bind = process.argv.includes('--p6-bind-account');
 const p6Sign = process.argv.includes('--p6-sign-clearance');
 const p7Sign = process.argv.includes('--p7-sign-create');
 const p7Prepare = process.argv.includes('--p7-prepare-writer');
+const ideaEditPrepare = process.argv.includes('--prepare-idea-editor');
+const ideaEditSign = process.argv.includes('--sign-idea-edit');
 const workspaceCreateLive = process.argv.includes('--p7-create-browser-live');
 const p8Prepare = process.argv.includes('--p8-prepare-role');
 const p8Sign = process.argv.includes('--p8-sign-conversations');
@@ -30,10 +32,24 @@ const p9SecondBind = process.argv.includes('--p9-bind-second-isolated');
 const p9CedarBind = process.argv.includes('--p9-bind-cedar-isolated');
 const p9CedarReadiness = process.argv.includes('--p9-cedar-readiness');
 const p9Diagnose = process.argv.includes('--p9-diagnose-harbor');
-const modes = [browserLive, reverificationLive, p6Bind, p6Sign, p7Sign, p7Prepare, workspaceCreateLive,
+const modes = [browserLive, reverificationLive, p6Bind, p6Sign, p7Sign, p7Prepare, ideaEditPrepare, ideaEditSign, workspaceCreateLive,
   p8Prepare, p8Sign, p8Live, p9Sign, p9Bind, p9SecondBind, p9CedarBind, p9CedarReadiness, p9Diagnose];
 const interactiveMode = modes.some(Boolean);
 if (modes.filter(Boolean).length > 1) throw new Error('Select exactly one Clerk test mode.');
+
+test('local operator prepares and signs idea edit admission', {
+  skip: !ideaEditPrepare && !ideaEditSign, timeout: 25_000
+}, async t => {
+  const { p6Operator, prepareIdeaEditor, signIdeaEditClearance } = await import('./fixtures/p6-local-operator.mjs');
+  const context = await p6Operator(t);
+  if (ideaEditPrepare) {
+    await prepareIdeaEditor(context, process.env.P6_OPERATOR_CONFIRM);
+    return;
+  }
+  const { FL_IDEA_EDIT_DECISION } = await signIdeaEditClearance(context, process.env.P6_OPERATOR_PRIVATE_KEY_FILE,
+    process.env.P6_OPERATOR_PUBLIC_KEY_FILE, process.env.P6_OPERATOR_CONFIRM);
+  await writeFile('.env.idea-edit.decision.local', `FL_IDEA_EDIT_DECISION='${FL_IDEA_EDIT_DECISION}'\n`, { flag: 'wx', mode: 0o600 });
+});
 
 test('P9 operator signs isolated runtime permissions', { skip: !p9Sign, timeout: 25_000 }, async t => {
   assert.equal(process.env.P6_OPERATOR_CONFIRM, 'approve-p9-isolated-runtime');

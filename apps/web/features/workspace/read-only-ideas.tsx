@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Idea, SessionSource } from './contracts';
 import { createIdeaCommandController } from './create-controller';
+import { IdeaEditForm } from './idea-edit-form';
 import { createLocalConversationApi } from './local-conversation-api';
 import { createRecoveryStorage } from './submission-recovery-storage';
 import styles from './workspace.module.css';
@@ -101,6 +102,9 @@ function IdeasForSession({ account, getToken }: { account: string; getToken: () 
   const activeRead = useRef<AbortController | null>(null);
   const latestToken = useRef(getToken);
   const [canCreate, setCanCreate] = useState(false);
+  const [canEdit, setCanEdit] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [savedEdit, setSavedEdit] = useState(false);
   const [title, setTitle] = useState('');
   const [summary, setSummary] = useState('');
   const [creation, setCreation] = useState<'idle' | 'pending' | 'uncertain' | 'rejected' | 'blocked' | 'conflict'>('idle');
@@ -118,7 +122,7 @@ function IdeasForSession({ account, getToken }: { account: string; getToken: () 
     activeRead.current = controller;
     async function load() {
       try {
-        const { reply, canCreate, conversations } = await transport.listOwnedIdeas(request.cursor, controller.signal);
+        const { reply, canCreate, canEdit, conversations } = await transport.listOwnedIdeas(request.cursor, controller.signal);
         controller.signal.throwIfAborted();
         if (reply.status === 401 || reply.status === 403) {
           // A revoked session may still look signed in to the SDK.
@@ -132,11 +136,13 @@ function IdeasForSession({ account, getToken }: { account: string; getToken: () 
         if (reply.status !== 200) {
           previousPage.current = [];
           setCanCreate(false);
+          setCanEdit(false);
           setView({ kind: reply.status === 401 ? 'expired' : reply.status === 403 ? 'denied' :
             reply.status === 404 || reply.status === 503 ? 'unavailable' : 'error' });
           return;
         }
         setCanCreate(canCreate);
+        setCanEdit(canEdit);
         setView({ kind: 'ready', ideas: [...previousPage.current, ...reply.data.items], cursor: reply.data.page.nextCursor,
           conversations });
         previousPage.current = [];
@@ -144,6 +150,7 @@ function IdeasForSession({ account, getToken }: { account: string; getToken: () 
         if (!controller.signal.aborted) {
           previousPage.current = [];
           setCanCreate(false);
+          setCanEdit(false);
           setView({ kind: 'error' });
         }
       }
@@ -153,9 +160,24 @@ function IdeasForSession({ account, getToken }: { account: string; getToken: () 
   }, [request, commands, transport]);
 
   function load(cursor: string | null, previous: Idea[] = []) {
+    setEditingId(null);
     setView({ kind: 'loading' });
     previousPage.current = previous;
     setRequest({ cursor });
+  }
+  function editDenied(status: 401 | 403) {
+    activeRead.current?.abort();
+    writeLifetime.current?.abort();
+    writeLifetime.current = new AbortController();
+    commands.clear();
+    previousPage.current = [];
+    setTitle('');
+    setSummary('');
+    setCreation('idle');
+    setCanCreate(false);
+    setCanEdit(false);
+    setEditingId(null);
+    setView({ kind: status === 401 ? 'expired' : 'denied' });
   }
   async function create(retry = false) {
     const signal = writeLifetime.current?.signal;
@@ -191,6 +213,7 @@ function IdeasForSession({ account, getToken }: { account: string; getToken: () 
     {view.kind === 'ready' && origin.startsWith('https://') && <p className={styles['feedback']}>This workspace is read-only.</p>}
     <div className={styles['overview']}>
       <section aria-label="Owned ideas">
+        {savedEdit && <p role="status">Idea updated.</p>}
         {view.kind === 'loading' && <p className={styles['feedback']} role="status">Loading ideas…</p>}
         {view.kind === 'expired' && <SessionExpired />}
         {view.kind === 'denied' && <p className={styles['feedback']} role="alert">This account cannot access the workspace.</p>}
@@ -202,6 +225,10 @@ function IdeasForSession({ account, getToken }: { account: string; getToken: () 
         {view.kind === 'ready' && (view.ideas.length === 0 ? <p className={styles['feedback']} role="status">You don’t have any ideas yet.{canCreate && ' Save an idea to start a conversation.'}</p> :
           <ul className={styles['list']}>{view.ideas.map(idea => <li key={idea.id}><h2>{idea.title}</h2>{idea.summary && <p>{idea.summary}</p>}
             {idea.status === 'ARCHIVED' && <p>Archived</p>}
+            {canEdit && idea.status === 'ACTIVE' && (editingId === idea.id
+              ? <IdeaEditForm idea={idea} edit={transport.editIdea} denied={editDenied} reload={() => load(null)}
+                close={() => setEditingId(null)} saved={() => { setSavedEdit(true); load(null); }} />
+              : <button type="button" onClick={() => { setSavedEdit(false); setEditingId(idea.id); }}>Edit {idea.title}</button>)}
             {view.conversations && idea.status === 'ACTIVE' && <Link prefetch={false} aria-label={`Open conversations for ${idea.title}`}
               href={'/app/ideas/' + encodeURIComponent(idea.id) + '/think'}>Open conversations</Link>}</li>)}</ul>)}
         {view.kind === 'ready' && view.cursor && <button type="button" onClick={() => load(view.cursor, view.ideas)}>

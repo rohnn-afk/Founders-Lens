@@ -1,7 +1,7 @@
 ﻿import { z } from 'zod';
 import { generation } from '../generation/contracts.js';
 import { acceptanceRef, messageCreate, messageDto, transcriptQuery } from '../submission/contracts.js';
-import { conversationCreate, conversationDto, ideaCreate, ideaDto, idempotencyKey, listQuery, uuid } from '../workspace/contracts.js';
+import { conversationCreate, conversationDto, ideaCreate, ideaDetailsPatch, ideaDto, idempotencyKey, listQuery, uuid } from '../workspace/contracts.js';
 import { workspacePrefix, type RegisteredOperation } from './routes.js';
 
 const tags = ['Health', 'Ideas', 'Conversations', 'Messages', 'Generation', 'Memory', 'Research'] as const;
@@ -67,8 +67,10 @@ const errors = {
   403: ['ACCOUNT_UNAVAILABLE', 'The account is unavailable. A disallowed browser origin receives an empty 403.', false],
   404: ['RESOURCE_NOT_FOUND', 'The requested resource is unavailable or outside the caller’s authorized scope. Some route restrictions return an empty 404.', false],
   409: ['IDEMPOTENCY_KEY_REUSED', 'An idempotency key or submission identifier conflicts with a prior intent, or a generation is already in progress.', false],
+  412: ['PRECONDITION_FAILED', 'The idea version changed. Reload before editing again.', false],
   413: ['PAYLOAD_TOO_LARGE', 'The request body is too large.', false],
   415: ['UNSUPPORTED_MEDIA_TYPE', 'The request must contain JSON.', false],
+  428: ['PRECONDITION_REQUIRED', 'The current idea version is required.', false],
   429: ['QUOTA_EXCEEDED', 'The submission quota is exhausted.', false],
   500: ['INTERNAL_ERROR', 'An internal error occurred.', false],
   503: ['DEPENDENCY_UNAVAILABLE', 'A required dependency, clearance or projection is unavailable.', true]
@@ -107,7 +109,8 @@ const catalog: Record<string, Operation> = {
     parameters: workspaceQuery, extraErrors: [404], responses: { 200: success(pageOf(listIdeaDto), { items: [idea], page }) }
   },
   'post /ideas': {
-    operationId: 'createIdea', tag: 'Ideas', summary: 'Create an idea', description: 'Create an owned idea with idempotent retries. ' + textRule,
+    operationId: 'createIdea', tag: 'Ideas', summary: 'Create an idea',
+    description: 'Create an owned idea with idempotent retries. The title must contain a non-whitespace character. ' + textRule,
     parameters: [key], requestBody: ideaBody, extraErrors: [409, 413, 415],
     responses: { 201: { ...success(listIdeaDto, idea, 'Idea created or original result replayed.'), headers: {
       ...location, ETag: { description: 'Current version validator.', schema: { type: 'string' }, example: '"v1"' }
@@ -116,6 +119,16 @@ const catalog: Record<string, Operation> = {
   'get /ideas/:ideaId': {
     operationId: 'getIdea', tag: 'Ideas', summary: 'Read an owned idea', description: 'Returns the current projection of an owned active idea.',
     extraErrors: [404], responses: { 200: success(activeIdeaDto, idea) }
+  },
+  'patch /ideas/:ideaId': {
+    operationId: 'editIdea', tag: 'Ideas', summary: 'Edit an owned idea',
+    description: 'Update the title or summary of an active idea. A title must contain a non-whitespace character. Send null to clear the summary. ' + textRule,
+    parameters: [parameter('If-Match', 'header', 'Strong version validator from the current idea.', { type: 'string', pattern: '^"v[0-9]+"$' }, '"v1"')],
+    requestBody: body(schema(ideaDetailsPatch), { title: 'Revised study planner' }, '64 KiB'),
+    extraErrors: [404, 412, 413, 415, 428],
+    responses: { 200: { ...success(activeIdeaDto, { ...idea, version: 2 }), headers: {
+      ETag: { description: 'Updated version validator.', schema: { type: 'string' }, example: '"v2"' }
+    } } }
   },
   'get /ideas/:ideaId/conversations': {
     operationId: 'listConversations', tag: 'Conversations', summary: 'List conversations for an owned idea',

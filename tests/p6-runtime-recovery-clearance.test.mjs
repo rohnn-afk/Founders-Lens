@@ -79,12 +79,12 @@ test('runtime recovery rejects unsigned, malformed, expired and noncanonical dec
   await assert.rejects(writeGuard(signed(decision)).assertClearance(), denied);
   await assert.rejects(guard(signed({ ...decision, purpose: create })).assertClearance(), denied);
   assert.equal(await writeGuard(signed({ ...decision, purpose: create })).verifiedDeadline(), decision.expiresAt);
-  const p8 = ['read-conversations', 'create-conversation', 'save-user-message']
+  const localPurposes = ['edit-idea', 'read-conversations', 'create-conversation', 'save-user-message']
     .map(operation => 'founders-lens:local-workspace:' + operation);
-  for (const purpose of p8) {
+  for (const purpose of localPurposes) {
     const verifier = encoded => createRuntimeRecoveryClearance({ decision: encoded, operatorPublicKey: operator.publicKey,
       primary, authority, subjectKeys, purpose });
-    for (const other of [decision.purpose, create, ...p8]) {
+    for (const other of [decision.purpose, create, ...localPurposes]) {
       const check = verifier(signed({ ...decision, purpose: other })).assertClearance();
       if (other === purpose) await check;
       else await assert.rejects(check, denied);
@@ -455,6 +455,32 @@ test('runtime decision is invalidated by live PostgreSQL target and authority ch
               [`public."${table}"`])).rows[0].allowed, false);
           }
         } finally { await client.$disconnect(); }
+      });
+      await workspaceTest.test('restricted editor changes idea details only', async () => {
+        const password = randomBytes(32).toString('hex');
+        await primary.query(`CREATE ROLE fl_idea_edit LOGIN NOINHERIT PASSWORD '${password}'`);
+        const rules = await readFile('tests/fixtures/idea-edit-grants.sql', 'utf8');
+        await primary.query(rules.replaceAll('founders_lens_p6_local', 'primary_proof'));
+        const target = pool(primaryPort, 'primary_proof', 'fl_idea_edit', password);
+        const editor = new PrismaClient({ adapter: new PrismaPg(target), log: [], errorFormat: 'minimal' });
+        try {
+          const edits = new WorkspaceService(new WorkspaceRepository(editor), new WorkspaceCursor(randomBytes(32)), authority.authority);
+          const { id, version } = (await service.ideas(owner, {})).items[0];
+          const sign = async () => Date.now() + 30_000;
+          await assert.rejects(edits.patchIdea(foreign, id, `"v${version}"`, { title: 'Foreign' }, sign),
+            { code: 'RESOURCE_NOT_FOUND' });
+          const edited = await edits.patchIdea(owner, id, `"v${version}"`, { summary: 'Restricted edit' }, sign);
+          assert.equal(edited.version, version + 1);
+          assert.equal(edited.summary, 'Restricted edit');
+          const { rows: [access] } = await target.query(`SELECT
+            has_column_privilege(current_user,'public."Idea"','title','UPDATE') AS title,
+            has_column_privilege(current_user,'public."Idea"','status','UPDATE') AS status,
+            has_any_column_privilege(current_user,'public."Idea"','INSERT') AS insert,
+            has_table_privilege(current_user,'public."Idea"','DELETE') AS delete,
+            has_any_column_privilege(current_user,'public."IdempotencyRecord"','SELECT') AS receipts,
+            has_function_privilege(current_user,'pg_catalog.pg_control_system()','EXECUTE') AS identity`);
+          assert.deepEqual(access, { title: true, status: false, insert: false, delete: false, receipts: false, identity: true });
+        } finally { await editor.$disconnect(); }
       });
       await workspaceTest.test('P7 restricted writer creates atomically and replays through the same account lock', async () => {
         const password = randomBytes(32).toString('hex');

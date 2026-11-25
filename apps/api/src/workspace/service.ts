@@ -46,6 +46,22 @@ export class WorkspaceService {
     const metadata = await this.repo.ideaMetadata(principal, id);
     await authorizeIdea(principal, metadata, authority, access);
   }
+  private async writeWindow(verifyWrite?: () => Promise<number>) {
+    let validUntil = verifyWrite ? await verifyWrite() : Infinity;
+    const authority: SuppressionAuthority = { lookup: async (scope, request) => {
+      const evidence = await this.authority.lookup(scope, request);
+      if (evidence) validUntil = Math.min(validUntil, evidence.validUntil);
+      return evidence;
+    } };
+    const requireFresh = () => {
+      if (Date.now() >= validUntil) throw new SecurityError('DEPENDENCY_UNAVAILABLE');
+    };
+    const verifyAfterCommit = async () => {
+      if (verifyWrite) await verifyWrite();
+      requireFresh();
+    };
+    return { authority, requireFresh, verifyAfterCommit };
+  }
   private cursorScope(principal: Principal, parent?: string) {
     // A cursor marks where to resume a sorted list. Bind it to the caller,
     // optional parent idea, and sort order so it cannot cross those boundaries.
@@ -106,19 +122,10 @@ export class WorkspaceService {
   }
   /** Create or replay under the account lock, with authority I/O outside primary transactions. */
   async createIdea(principal: Principal, key: string, body: z.infer<typeof ideaCreate>, verifyWrite?: () => Promise<number>) {
-    let validUntil = verifyWrite ? await verifyWrite() : Infinity;
-    const authority: SuppressionAuthority = { lookup: async (scope, request) => {
-      const evidence = await this.authority.lookup(scope, request);
-      if (evidence) validUntil = Math.min(validUntil, evidence.validUntil);
-      return evidence;
-    } };
-    const requireFresh = () => {
-      if (Date.now() >= validUntil) throw new SecurityError('DEPENDENCY_UNAVAILABLE');
-    };
+    const { authority, requireFresh, verifyAfterCommit } = await this.writeWindow(verifyWrite);
     const finish = async <T>(result: T): Promise<T> => {
       // Failure here may follow commit. Keep the key replayable under the existing 503 contract.
-      if (verifyWrite) await verifyWrite();
-      requireFresh();
+      await verifyAfterCommit();
       return result;
     };
     await this.requireAccountClearance(principal, authority);
@@ -167,17 +174,24 @@ export class WorkspaceService {
     });
     return finish(result);
   }
-  async patchIdea(principal: Principal, id: string, match: string, patch: z.infer<typeof ideaPatch>) {
-    await this.authorizeIdeaAccess(principal, id, 'write');
-    return this.repo.transaction(principal, async tx => {
-      const row = await tx.idea(principal, id, 'write');
+  async patchIdea(principal: Principal, id: string, match: string, patch: z.infer<typeof ideaPatch>,
+    verifyWrite?: () => Promise<number>) {
+    const { authority, requireFresh, verifyAfterCommit } = await this.writeWindow(verifyWrite);
+    await this.authorizeIdeaAccess(principal, id, 'write', authority);
+    const result = await this.repo.transaction(principal, async tx => {
+      const row = await tx.idea(principal, id, 'write', requireFresh);
       // Optimistic concurrency compares the caller's version with the locked
       // row so a stale client cannot silently overwrite a more recent edit.
       if (etag(row.version) !== match) throw new WorkspaceError(412, 'PRECONDITION_FAILED');
-      return projectIdea(await tx.updateIdea(id, row.version,
+      requireFresh();
+      const idea = projectIdea(await tx.updateIdea(id, row.version,
         { version: { increment: 1 }, ...(patch.title === undefined ? {} : { title: patch.title }),
           ...(patch.summary === undefined ? {} : { summary: patch.summary }), ...(patch.status === undefined ? {} : { status: patch.status }) }));
+      requireFresh();
+      return idea;
     });
+    await verifyAfterCommit();
+    return result;
   }
   async conversations(principal: Principal, id: string, query: List, localGuard?: () => void) {
     const access = localGuard ? 'write' : 'read';

@@ -4,7 +4,7 @@ import { json, Router, type Request, type Response } from 'express';
 import { SecurityError, securityFailure } from '../security/errors.js';
 import type { Principal } from '../security/principal.js';
 import { attachRequestContext, requestContext } from '../security/request-context.js';
-import { conversationCreate, emptyQuery, etag, ideaCreate, ideaPatch, idempotencyKey, ifMatch, input,
+import { conversationCreate, emptyQuery, etag, ideaCreate, ideaDetailsPatch, ideaPatch, idempotencyKey, ifMatch, input,
   listQuery, preferencesPatch, uuid, WorkspaceError } from './contracts.js';
 import type { WorkspaceService } from './service.js';
 import { messageCreate, SubmissionError, transcriptQuery, type MessageCreate, type TranscriptQuery } from '../submission/contracts.js';
@@ -110,16 +110,27 @@ export function localConversationRoutes(operations: LocalConversationOperations,
   return router;
 }
 
-/** Register only idea listing. The caller must supply a verified runtime admission boundary. */
+/** Register idea listing and any separately admitted local write operations. */
 export function workspaceIdeaListRoutes(service: Pick<WorkspaceService, 'ideas'>, authenticate: Authenticate,
-  create?: Pick<WorkspaceService, 'createIdea'>): Router {
+  create?: Pick<WorkspaceService, 'createIdea'>, edit?: Pick<WorkspaceService, 'patchIdea'>): Router {
   const router = Router();
   router.use(attachRequestContext);
   // Express ordinarily treats HEAD as GET. The local slice admits only GET.
   router.head('/ideas', (_request, response) => { response.set('Cache-Control', 'no-store').status(404).end(); });
   documentedRoute(router, 'get', '/ideas', authenticatedRequest(authenticate, listIdeas(service)));
   if (create) documentedRoute(router, 'post', '/ideas', authenticatedRequest(authenticate, createIdea(create)));
+  if (edit) documentedRoute(router, 'patch', '/ideas/:ideaId', authenticatedRequest(authenticate, patchIdea(edit, ideaDetailsPatch)));
   return router;
+}
+
+function patchIdea(service: Pick<WorkspaceService, 'patchIdea'>, contract: z.ZodType<z.infer<typeof ideaPatch>>): Handler {
+  return async (req, res, principal) => {
+    input(emptyQuery, req.query);
+    const id = input(uuid, req.params['ideaId']), match = ifMatch(readSingleHeader(req, 'if-match'), true);
+    await parseRequestBody(req, res);
+    const result = await service.patchIdea(principal, id, match, input(contract, req.body));
+    sendReadDto(res.set('ETag', etag(result.version)), result);
+  };
 }
 
 function createIdea(service: Pick<WorkspaceService, 'createIdea'>): Handler {
@@ -153,13 +164,7 @@ export function workspaceRoutes(service: WorkspaceRouteOperations, authenticate:
   }));
   // The ETag identifies the version last read. If-Match carries that version
   // back on a write so the service can reject a stale update.
-  router.patch('/ideas/:ideaId', withAuthenticatedRequest(async (req, res, p) => {
-    input(emptyQuery, req.query);
-    const id = input(uuid, req.params['ideaId']), match = ifMatch(readSingleHeader(req, 'if-match'), true);
-    await parseRequestBody(req, res);
-    const result = await service.patchIdea(p, id, match, input(ideaPatch, req.body));
-    res.set('ETag', etag(result.version)).json(result);
-  }));
+  router.patch('/ideas/:ideaId', withAuthenticatedRequest(patchIdea(service, ideaPatch)));
   router.get('/ideas/:ideaId/conversations', withAuthenticatedRequest(async (req, res, p) => {
     sendReadDto(res, await service.conversations(p, input(uuid, req.params['ideaId']), input(listQuery, req.query)));
   }));

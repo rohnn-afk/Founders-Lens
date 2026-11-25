@@ -1,4 +1,4 @@
-// Local-only composition for idea listing and optionally creation. Runtime uses restricted
+// Local-only workspace composition. Runtime uses restricted
 // database logins and a public verification key supplied by the operator.
 import { mountDocumentedRouter } from '../documentation/routes.js';
 import { createPublicKey, randomUUID } from 'node:crypto';
@@ -34,11 +34,13 @@ const localOrigin = 'http://127.0.0.1:3000';
 
 /** Limit local browser access to the exact configured ideas endpoint and methods. */
 export function workspaceIdeasCors(allowCreate: boolean, conversations?: { create: boolean; save: boolean },
-  generationConversation?: string, origin = localOrigin): RequestHandler {
+  generationConversation?: string, origin = localOrigin, allowEdit = false): RequestHandler {
+  const editEnabled = allowEdit && origin === localOrigin;
   return (request, response, next) => {
     const path = request.path;
     const allowSubmission = Boolean(generationConversation);
     const ideas = path === '/ideas';
+    const edit = editEnabled && /^\/ideas\/[^/]+$/.test(path);
     const conversationCollection = /^\/ideas\/[^/]+\/conversations$/.test(path);
     const conversationRead = conversations && (conversationCollection || /^\/ideas\/[^/]+$/.test(path) ||
       /^\/conversations\/[^/]+(?:\/messages)?$/.test(path));
@@ -56,12 +58,15 @@ export function workspaceIdeasCors(allowCreate: boolean, conversations?: { creat
       }
       response.status(status).end();
     };
-    if (request.baseUrl !== '/api/v1' || !(allowRead || save)) { rejectRoute(404); return; }
+    const patchHeaders = 'authorization,content-type,if-match';
+    if (request.baseUrl !== '/api/v1' || !(allowRead || save || edit)) { rejectRoute(404); return; }
     response.vary('Origin');
     const caller = request.get('Origin');
     if (caller && caller !== origin) { rejectRoute(403); return; }
     if (caller === origin) response.set({ 'Access-Control-Allow-Origin': origin,
-      'Access-Control-Expose-Headers': 'X-Request-Id, X-Workspace-Idea-Creation, X-Workspace-Conversations, X-Workspace-Generation' });
+      'Access-Control-Expose-Headers': 'X-Request-Id, X-Workspace-Idea-Creation, X-Workspace-Conversations, X-Workspace-Generation' +
+        (editEnabled ? ', X-Workspace-Idea-Editing, ETag' : '') });
+    if (request.method === 'GET' && ideas && editEnabled) response.set('X-Workspace-Idea-Editing', 'enabled');
     if (request.method === 'GET' && generationConversation && path === '/conversations/' + generationConversation) {
       response.set('X-Workspace-Generation', 'enabled');
     }
@@ -72,12 +77,14 @@ export function workspaceIdeasCors(allowCreate: boolean, conversations?: { creat
     if (request.method === 'OPTIONS') {
       response.vary('Access-Control-Request-Method').vary('Access-Control-Request-Headers');
       if (caller === origin && ((method === 'GET' && allowRead && headers === 'authorization') ||
-        (postHeaders && method === 'POST' && headers === postHeaders))) {
+        (postHeaders && method === 'POST' && headers === postHeaders) ||
+        (edit && method === 'PATCH' && headers === patchHeaders))) {
         response.set({ 'Access-Control-Allow-Methods': method, 'Access-Control-Allow-Headers': headers }).status(204).end();
       } else response.status(404).end();
       return;
     }
-    if ((request.method !== 'GET' || !allowRead) && (request.method !== 'POST' || !postHeaders)) {
+    if ((request.method !== 'GET' || !allowRead) && (request.method !== 'POST' || !postHeaders) &&
+      (request.method !== 'PATCH' || !edit)) {
       rejectRoute(404); return;
     }
     next();
@@ -121,6 +128,8 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
   const prisma = new PrismaClient({ adapter: new PrismaPg(primary), log: [], errorFormat: 'minimal' });
   let writePool: pg.Pool | undefined;
   let writeClient: PrismaClient | undefined;
+  let editPool: pg.Pool | undefined;
+  let editClient: PrismaClient | undefined;
   let conversationPool: pg.Pool | undefined;
   let conversationClient: PrismaClient | undefined;
   let submissionPool: pg.Pool | undefined;
@@ -129,6 +138,8 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
     await prisma.$disconnect();
     await writeClient?.$disconnect();
     await writePool?.end();
+    await editClient?.$disconnect();
+    await editPool?.end();
     await conversationClient?.$disconnect();
     await conversationPool?.end();
     await submissionClient?.$disconnect();
@@ -164,6 +175,22 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
       } catch {
         await writePool?.end();
         writePool = undefined;
+      }
+    }
+    let edit: Pick<WorkspaceService, 'patchIdea'> | undefined;
+    if (!isolated && !cedar && env['FL_DEPLOYMENT'] === undefined && env['FL_IDEA_EDIT'] === '1') {
+      try {
+        editPool = pool(primaryPort, primaryDatabase, 'fl_idea_edit', required('FL_IDEA_EDIT_PASSWORD'));
+        editPool.on('error', () => {});
+        const editClearance = createRuntimeRecoveryClearance({ decision: required('FL_IDEA_EDIT_DECISION'), operatorPublicKey,
+          primary: editPool, authority, subjectKeys, purpose: 'founders-lens:local-workspace:edit-idea' });
+        await editClearance.assertClearance();
+        editClient = new PrismaClient({ adapter: new PrismaPg(editPool), log: [], errorFormat: 'minimal' });
+        const editor = new WorkspaceService(new WorkspaceRepository(editClient), cursor, authority.authority);
+        edit = { patchIdea: (principal, id, match, body) => editor.patchIdea(principal, id, match, body, editClearance.verifiedDeadline) };
+      } catch {
+        await editPool?.end();
+        editPool = undefined;
       }
     }
     let conversations: LocalConversationOperations | undefined;
@@ -233,7 +260,7 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
     }
     const router = Router();
     router.use(workspaceIdeasCors(Boolean(create), conversations && { create: Boolean(conversations.create), save: Boolean(conversations.save) },
-      generationConversation));
+      generationConversation, origin, Boolean(edit)));
     const authenticate = async (request: Request) => {
       const verified = await clerk.authenticate(request.headers, request.rawHeaders);
       if (!config.audience && Object.hasOwn(JSON.parse(Buffer.from(request.get('Authorization')!.split('.')[1]!, 'base64url').toString()), 'aud')) {
@@ -244,7 +271,7 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
     };
     mountDocumentedRouter(router, workspaceIdeaListRoutes({ ideas(principal, query) {
       return workspace.ideas(principal, query, clearance.assertClearance);
-    } }, authenticate, create));
+    } }, authenticate, create, edit));
     if (submission && generation && generationReadDeadline && generationConversation) {
       mountDocumentedRouter(router, submissionRoutes(submission, authenticate, { readDeadline: generationReadDeadline,
         readConversation: generationConversation }));

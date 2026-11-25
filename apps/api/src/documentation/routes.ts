@@ -1,7 +1,7 @@
 import type { RequestHandler, Router } from 'express';
 
 export const workspacePrefix = '/api/v1';
-export type DocumentedMethod = 'get' | 'post';
+export type DocumentedMethod = 'get' | 'post' | 'patch';
 export type RegisteredOperation = { method: DocumentedMethod; path: string };
 const registrations = new WeakMap<Router, RegisteredOperation[]>();
 
