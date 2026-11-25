@@ -11,6 +11,11 @@
       "sourceRevision": "52c3b46fd48acf959f57633fe8bb60231299cd88",
       "sourceFingerprint": "040b74fa8685bdb53fb752d21c9544a41590074b53a4bdd3d0fc7cda94b36dd6",
       "reason": "Reference-only Swagger serves local browser assets and a synthetic specification. Route metadata records the same authenticated read handlers. No change to the Linux runtime, TLS or OpenSSL usage, Clerk verification, authority checks, or staging data access."
+    },
+    {
+      "sourceRevision": "e1542c58194977d759a5c7a9f1e65d868c0485aa",
+      "sourceFingerprint": "5318a26638f5dd6e360e818c135e5cba72cd423d2c72c7e950fbec2542e8bde2",
+      "reason": "Swagger treats an absent method as GET and resolves the specification URL against the same origin. The same exact path and method allowlist applies. Playwright is test-only. The Linux runtime and its TLS, Clerk and authority paths are unchanged."
     }
   ],
   "runtimeBinaryFingerprints": [
