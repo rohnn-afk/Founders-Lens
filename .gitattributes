@@ -10,3 +10,4 @@
 # Keep Docker release scripts usable with Bash on Windows.
 /scripts/build-api-image.sh text eol=lf
 /scripts/smoke-api-image.sh text eol=lf
+/scripts/publish-staging-image.sh text eol=lf

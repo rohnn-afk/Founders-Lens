@@ -1,0 +1,21 @@
+{
+  "scope": "Read-only founders-lens-staging-api, linux/amd64. Never production.",
+  "approvedAt": "2026-11-25T12:32:47Z",
+  "expiresAt": "2026-12-25T12:32:47Z",
+  "reviewedSource": "b7f96629c0900e38f7a0fbfa3a7619ca1e5b4fe8",
+  "reviewedIndexDigest": "sha256:c03d923a6366c7cf1c01a2ac9b4b8d094cc49754351ddada0975652184215d8c",
+  "reviewedAmd64Digest": "sha256:9789659d488d0db43ef21d7cfb5a9031cfa869eb2e31e883079e00d70b7b4844",
+  "runtimeSourceFingerprint": "8a46bc94e9f1931f91cd380f2337f11de3f2aa5516505628bc53dd3571f708f7",
+  "runtimeBinaryFingerprints": [
+    "a7ec1b37e6ff9d187e4198c5b6df9a4eb1c74dd31804fb3bac55cc4ceca1ac01",
+    "a890bcf10b78b752135a035809a10792330ff9b9c2ae3bb2239d7a08a5a6610b",
+    "a4e00ad0bb09d820ba5c41672567e965d4ca03153f7842751ef243355a569805"
+  ],
+  "sourcePackage": "openssl",
+  "binaryPackage": "libssl3t64",
+  "packageVersion": "3.5.9-1~deb13u1",
+  "trivyIds": ["CVE-2026-107494", "CVE-2026-124709"],
+  "scoutIds": ["CVE-2026-107493", "CVE-2026-84786", "CVE-2026-107496"],
+  "justification": "The reviewed runtime uses HTTP and TLS over TCP, a controlled CA bundle and JSON/JWT verification. It does not enable QUIC or DANE, append untrusted PEM entries to a caller-supplied stack or process CMS encryption. The vulnerable packages remain installed.",
+  "remediation": "Upgrade Debian and Node OpenSSL when supported patches are available. Rebuild, rescan with Trivy and Scout, and repeat the TLS, Clerk, startup and mailbox tests. Reassess on advisory or relevant runtime changes."
+}
