@@ -49,12 +49,14 @@ export function mountDocumentation(app: Router, mode: DocumentationMode, health:
     supportedSubmitMethods: ${JSON.stringify(methods)},
     requestInterceptor: request => {
       const url = new URL(request.url, window.location.origin);
+      // Swagger Client omits the method when it downloads the specification.
+      const method = (request.method ?? 'GET').toUpperCase();
       const allowed = url.pathname === '/openapi.json' ||
         (${mode === 'local-health'} && ['/health/live', '/health/ready'].includes(url.pathname));
-      if (url.origin !== window.location.origin || request.method?.toUpperCase() !== 'GET' || !allowed) {
+      if (url.origin !== window.location.origin || method !== 'GET' || !allowed) {
         throw new Error('This documentation cannot execute that request.');
       }
-      return request;
+      return { ...request, url: url.href, method };
     },
     plugins: [() => ({
       components: { authorizeBtn: () => null, authorizeOperationBtn: () => null, curl: () => null },

@@ -37,6 +37,10 @@ jobs:
       - run: npm run typecheck
       - name: Run tests and validate the OpenAPI 3.1 document
         run: npm test
+      - name: Install locked Playwright Chromium
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Verify Swagger in Chromium
+        run: node --test tests/swagger-browser.mjs
       - name: Verify the dependency-free public demo
         env:
           FL_PUBLIC_DEMO: 'true'

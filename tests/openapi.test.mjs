@@ -101,7 +101,14 @@ async function checkUi(base, interactive) {
   assert.equal(config.validatorUrl, null);
   const read = url => config.requestInterceptor({ url, method: 'GET' });
   assert.doesNotThrow(() => read('/openapi.json'));
+  for (const url of ['/openapi.json', base + '/openapi.json']) {
+    const request = config.requestInterceptor({ url });
+    assert.equal(request.url, base + '/openapi.json');
+    assert.equal(request.method, 'GET');
+  }
   assert.throws(() => read('/api/v1/ideas'));
+  assert.throws(() => config.requestInterceptor({ url: '/api/v1/ideas' }));
+  assert.throws(() => config.requestInterceptor({ url: '/openapi.json', method: 'POST' }));
   assert.throws(() => read('https://other.example.test/openapi.json'));
   assert.throws(() => config.requestInterceptor({ url: '/health/live', method: 'POST' }));
   if (interactive) assert.doesNotThrow(() => read('/health/live'));
