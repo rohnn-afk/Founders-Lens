@@ -22,7 +22,7 @@ const storageText = z.string().refine(value => value.isWellFormed() && !value.in
 function boundedText(maxCodePoints: number) {
   // The string iterator counts Unicode code points. String.length counts UTF-16
   // units, so a character such as an emoji can count as two with String.length.
-  return storageText.refine(value => Array.from(value).length <= maxCodePoints);
+  return storageText.refine(value => Array.from(value).length <= maxCodePoints).meta({ maxLength: maxCodePoints });
 }
 const title = boundedText(200);
 export const ideaCreate = z.strictObject({ title, summary: boundedText(5000).optional() });

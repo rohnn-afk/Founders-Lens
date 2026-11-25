@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { stagingConfig } from './workspace/staging-config.js';
 import { stagingWorkspace } from './workspace/staging-composition.js';
 import { createApp } from './app.js';
+import { documentationMode } from './documentation/ui.js';
 import { localReadOnlyWorkspace } from './workspace/read-only-composition.js';
 
 const config = z.object({
@@ -34,6 +35,7 @@ if (deployment !== undefined && deployment !== 'staging') {
 }
 
 async function startApi(localPort: number) {
+  const docs = documentationMode(process.env);
   const staging = deployment === 'staging' ? stagingConfig(process.env) : undefined;
   const hosted = staging && await stagingWorkspace(process.env, staging);
   const local = hosted ?? await localReadOnlyWorkspace(process.env).catch(() => {
@@ -45,7 +47,7 @@ async function startApi(localPort: number) {
     if (stopping) throw new Error('API is stopping');
     await hosted.ready();
   });
-  const server = createApp(local?.router, readiness).listen(staging?.port ?? localPort, staging?.bindHost ?? '127.0.0.1', () => {
+  const server = createApp(local?.router, readiness, docs).listen(staging?.port ?? localPort, staging?.bindHost ?? '127.0.0.1', () => {
     const address = server.address();
     if (address && typeof address !== 'string') {
       logLifecycle('api_listening', `API shell listening on http://127.0.0.1:${address.port}`, false, address.port);

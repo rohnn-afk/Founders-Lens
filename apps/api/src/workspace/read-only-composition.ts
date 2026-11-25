@@ -1,5 +1,6 @@
 // Local-only composition for idea listing and optionally creation. Runtime uses restricted
 // database logins and a public verification key supplied by the operator.
+import { mountDocumentedRouter } from '../documentation/routes.js';
 import { createPublicKey, randomUUID } from 'node:crypto';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Router, type Request, type RequestHandler } from 'express';
@@ -241,15 +242,15 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
       await clearance.assertClearance();
       return identity.resolve(verified, request.res ? requestContext(request.res).requestId : randomUUID());
     };
-    router.use(workspaceIdeaListRoutes({ ideas(principal, query) {
+    mountDocumentedRouter(router, workspaceIdeaListRoutes({ ideas(principal, query) {
       return workspace.ideas(principal, query, clearance.assertClearance);
     } }, authenticate, create));
     if (submission && generation && generationReadDeadline && generationConversation) {
-      router.use(submissionRoutes(submission, authenticate, { readDeadline: generationReadDeadline,
+      mountDocumentedRouter(router, submissionRoutes(submission, authenticate, { readDeadline: generationReadDeadline,
         readConversation: generationConversation }));
-      router.use(generationRoutes(generation, authenticate, { statusOnly: true }));
+      mountDocumentedRouter(router, generationRoutes(generation, authenticate, { statusOnly: true }));
     }
-    if (conversations) router.use(localConversationRoutes(conversations, authenticate));
+    if (conversations) mountDocumentedRouter(router, localConversationRoutes(conversations, authenticate));
     return { router, close };
   } catch (error) {
     await close();

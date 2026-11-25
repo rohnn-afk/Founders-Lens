@@ -1,4 +1,5 @@
 // Adapts the workspace service to the eight HTTP routes in an isolated harness.
+import { documentedRoute } from '../documentation/routes.js';
 import { json, Router, type Request, type Response } from 'express';
 import { SecurityError, securityFailure } from '../security/errors.js';
 import type { Principal } from '../security/principal.js';
@@ -72,23 +73,23 @@ export function localConversationRoutes(operations: LocalConversationOperations,
   const router = Router();
   const handle = (action: Handler) => authenticatedRequest(authenticate, action);
   const routeId = (request: Request, name: string) => input(uuid, request.params[name]);
-  router.get('/ideas/:ideaId', handle(async (req, res, principal) => {
+  documentedRoute(router, 'get', '/ideas/:ideaId', handle(async (req, res, principal) => {
     input(emptyQuery, req.query);
     sendReadDto(res, await operations.idea(principal, routeId(req, 'ideaId')));
   }));
-  router.get('/ideas/:ideaId/conversations', handle(async (req, res, principal) => {
+  documentedRoute(router, 'get', '/ideas/:ideaId/conversations', handle(async (req, res, principal) => {
     sendReadDto(res, await operations.conversations(principal, routeId(req, 'ideaId'), input(listQuery, req.query)));
   }));
-  router.get('/conversations/:conversationId', handle(async (req, res, principal) => {
+  documentedRoute(router, 'get', '/conversations/:conversationId', handle(async (req, res, principal) => {
     input(emptyQuery, req.query);
     sendReadDto(res, await operations.conversation(principal, routeId(req, 'conversationId')));
   }));
-  router.get('/conversations/:conversationId/messages', handle(async (req, res, principal) => {
+  documentedRoute(router, 'get', '/conversations/:conversationId/messages', handle(async (req, res, principal) => {
     sendReadDto(res, await operations.history(principal, routeId(req, 'conversationId'), input(transcriptQuery, req.query)));
   }));
   if (operations.create) {
     const create = operations.create;
-    router.post('/ideas/:ideaId/conversations', handle(async (req, res, principal) => {
+    documentedRoute(router, 'post', '/ideas/:ideaId/conversations', handle(async (req, res, principal) => {
       input(emptyQuery, req.query);
       const id = routeId(req, 'ideaId');
       await parseRequestBody(req, res);
@@ -98,7 +99,7 @@ export function localConversationRoutes(operations: LocalConversationOperations,
   if (operations.save) {
     const save = operations.save;
     const messageJson = json({ limit: '128kb' });
-    router.post('/conversations/:conversationId/messages/save', handle(async (req, res, principal) => {
+    documentedRoute(router, 'post', '/conversations/:conversationId/messages/save', handle(async (req, res, principal) => {
       input(emptyQuery, req.query);
       const id = routeId(req, 'conversationId');
       const key = input(idempotencyKey, readSingleHeader(req, 'idempotency-key'));
@@ -116,8 +117,8 @@ export function workspaceIdeaListRoutes(service: Pick<WorkspaceService, 'ideas'>
   router.use(attachRequestContext);
   // Express ordinarily treats HEAD as GET. The local slice admits only GET.
   router.head('/ideas', (_request, response) => { response.set('Cache-Control', 'no-store').status(404).end(); });
-  router.get('/ideas', authenticatedRequest(authenticate, listIdeas(service)));
-  if (create) router.post('/ideas', authenticatedRequest(authenticate, createIdea(create)));
+  documentedRoute(router, 'get', '/ideas', authenticatedRequest(authenticate, listIdeas(service)));
+  if (create) documentedRoute(router, 'post', '/ideas', authenticatedRequest(authenticate, createIdea(create)));
   return router;
 }
 

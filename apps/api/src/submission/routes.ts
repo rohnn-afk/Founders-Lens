@@ -1,5 +1,6 @@
 // Isolated HTTP adapter for submission. The caller injects verified identity
 // and a service; this factory is never mounted by the application shell.
+import { documentedRoute } from '../documentation/routes.js';
 import { json, Router, type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { bearerToken } from '../security/bearer.js';
@@ -59,7 +60,7 @@ export function submissionRoutes(service: SubmissionService, authenticate: (requ
         response.status(failure.status).json(failure.body);
       }
     };
-  if (!submitOnly) router.get('/conversations/:conversationId/submissions/:clientSubmissionId', read(async (request, principal) => {
+  if (!submitOnly) documentedRoute(router, 'get', '/conversations/:conversationId/submissions/:clientSubmissionId', read(async (request, principal) => {
     if (Object.keys(request.query).length) throw new SubmissionError('VALIDATION_ERROR');
     const conversationId = validate(uuid, request.params['conversationId']);
     const clientSubmissionId = validate(uuid, request.params['clientSubmissionId']);
@@ -67,9 +68,9 @@ export function submissionRoutes(service: SubmissionService, authenticate: (requ
     const { statusUrl, eventsUrl } = acceptance({ messageId, generationId });
     return { clientSubmissionId, messageId, generationId, statusUrl, eventsUrl };
   }));
-  if (!submitOnly) router.get('/conversations/:conversationId/messages', read((request, principal) =>
+  if (!submitOnly) documentedRoute(router, 'get', '/conversations/:conversationId/messages', read((request, principal) =>
     service.history(principal, validate(uuid, request.params['conversationId']), validate(transcriptQuery, request.query))));
-  router.post('/conversations/:conversationId/messages', async (request, response) => {
+  documentedRoute(router, 'post', '/conversations/:conversationId/messages', async (request, response) => {
     response.set('Cache-Control', 'no-store');
     const { requestId } = requestContext(response);
     try {

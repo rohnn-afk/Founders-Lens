@@ -35,7 +35,8 @@ jobs:
       - run: npm run lint
       - run: npm run db:validate
       - run: npm run typecheck
-      - run: npm test
+      - name: Run tests and validate the OpenAPI 3.1 document
+        run: npm test
       - name: Verify the dependency-free public demo
         env:
           FL_PUBLIC_DEMO: 'true'

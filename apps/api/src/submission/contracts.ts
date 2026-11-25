@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 export const uuid = z.uuid();
 export const keySchema = z.string().min(8).max(128);
+const messageLength = { minLength: 1, maxLength: 10_000 };
 export const messageCreate = z.strictObject({
   clientSubmissionId: uuid,
   content: z.string().refine(value => {
@@ -12,8 +13,8 @@ export const messageCreate = z.strictObject({
     // cannot store NUL, and encoding a lone surrogate would change the text.
     if (!value.isWellFormed() || value.includes('\0')) return false;
     const length = Array.from(value).length;
-    return length >= 1 && length <= 10_000;
-  })
+    return length >= messageLength.minLength && length <= messageLength.maxLength;
+  }).meta(messageLength)
 });
 export const acceptanceRef = z.strictObject({ messageId: uuid, generationId: uuid });
 export type MessageCreate = z.infer<typeof messageCreate>;
