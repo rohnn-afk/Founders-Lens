@@ -19,6 +19,10 @@ const idea = { id, title: 'Synthetic study planner', status: 'ACTIVE', version: 
 const conversation = { id: otherId, ideaId: id, status: 'ACTIVE', proactiveResearch: false, version: 1, createdAt: time };
 const message = { id, conversationId: otherId, sequence: 1, role: 'USER', content: 'Compare two study schedules.', createdAt: time };
 const page = { hasMore: false, nextCursor: null };
+const listIdeaDto = ideaDto.extend({ status: ideaDto.shape.status.extract(['ACTIVE', 'ARCHIVED']) });
+const activeIdeaDto = ideaDto.extend({ status: z.literal('ACTIVE') });
+const activeConversationDto = conversationDto.extend({ status: z.literal('ACTIVE') });
+const savedMessageDto = messageDto.extend({ role: z.literal('USER') });
 
 function pageOf(item: z.ZodType) {
   return z.strictObject({ items: z.array(item), page: z.strictObject({ hasMore: z.boolean(), nextCursor: z.string().nullable() }) });
@@ -100,43 +104,43 @@ const catalog: Record<string, Operation> = {
   },
   'get /ideas': {
     operationId: 'listIdeas', tag: 'Ideas', summary: 'List owned ideas', description: workspacePaging,
-    parameters: workspaceQuery, responses: { 200: success(pageOf(ideaDto), { items: [idea], page }) }
+    parameters: workspaceQuery, extraErrors: [404], responses: { 200: success(pageOf(listIdeaDto), { items: [idea], page }) }
   },
   'post /ideas': {
     operationId: 'createIdea', tag: 'Ideas', summary: 'Create an idea', description: 'Create an owned idea with idempotent retries. ' + textRule,
     parameters: [key], requestBody: ideaBody, extraErrors: [409, 413, 415],
-    responses: { 201: { ...success(ideaDto, idea, 'Idea created or original result replayed.'), headers: {
+    responses: { 201: { ...success(listIdeaDto, idea, 'Idea created or original result replayed.'), headers: {
       ...location, ETag: { description: 'Current version validator.', schema: { type: 'string' }, example: '"v1"' }
     } } }
   },
   'get /ideas/:ideaId': {
-    operationId: 'getIdea', tag: 'Ideas', summary: 'Read an owned idea', description: 'Returns the current projection of an owned idea.',
-    extraErrors: [404], responses: { 200: success(ideaDto, idea) }
+    operationId: 'getIdea', tag: 'Ideas', summary: 'Read an owned idea', description: 'Returns the current projection of an owned active idea.',
+    extraErrors: [404], responses: { 200: success(activeIdeaDto, idea) }
   },
   'get /ideas/:ideaId/conversations': {
     operationId: 'listConversations', tag: 'Conversations', summary: 'List conversations for an owned idea',
-    description: workspacePaging, parameters: workspaceQuery, extraErrors: [404],
-    responses: { 200: success(pageOf(conversationDto), { items: [conversation], page }) }
+    description: 'Lists active conversations for an active idea. ' + workspacePaging, parameters: workspaceQuery, extraErrors: [404],
+    responses: { 200: success(pageOf(activeConversationDto), { items: [conversation], page }) }
   },
   'post /ideas/:ideaId/conversations': {
     operationId: 'createConversation', tag: 'Conversations', summary: 'Create a conversation',
     description: 'Creates a conversation under the owned idea. Each successful request creates a conversation. ' + textRule,
-    requestBody: conversationBody, extraErrors: [404, 413, 415], responses: { 201: success(conversationDto, conversation) }
+    requestBody: conversationBody, extraErrors: [404, 413, 415], responses: { 201: success(activeConversationDto, conversation) }
   },
   'get /conversations/:conversationId': {
     operationId: 'getConversation', tag: 'Conversations', summary: 'Read an owned conversation',
-    description: 'Returns the conversation projection after checking account and parent idea access.',
-    extraErrors: [404], responses: { 200: success(conversationDto, conversation) }
+    description: 'Returns an active conversation in an active idea after checking account and parent access.',
+    extraErrors: [404], responses: { 200: success(activeConversationDto, conversation) }
   },
   'get /conversations/:conversationId/messages': {
     operationId: 'listMessages', tag: 'Messages', summary: 'Read the conversation transcript',
-    description: transcriptPaging, parameters: messagesQuery, extraErrors: [404],
+    description: 'Returns the visible text for an active conversation in an active idea. ' + transcriptPaging, parameters: messagesQuery, extraErrors: [404],
     responses: { 200: success(pageOf(messageDto), { items: [message], page }) }
   },
   'post /conversations/:conversationId/messages/save': {
     operationId: 'saveMessage', tag: 'Messages', summary: 'Save a user message',
     description: 'Saves user text without enqueuing generation. Retry the same intent using the original key and submission ID. ' + textRule,
-    parameters: [key], requestBody: messageBody, extraErrors: [404, 409, 413, 415], responses: { 201: success(messageDto, message) }
+    parameters: [key], requestBody: messageBody, extraErrors: [404, 409, 413, 415], responses: { 201: success(savedMessageDto, message) }
   },
   'post /conversations/:conversationId/messages': {
     operationId: 'submitMessage', tag: 'Generation', summary: 'Submit a message for generation',
