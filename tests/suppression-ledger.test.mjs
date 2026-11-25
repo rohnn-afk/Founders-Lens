@@ -80,7 +80,20 @@ test('independent PostgreSQL suppression ledger lifecycle', {
       await client.query('SET ROLE staging_decision_writer');
       const update = 'UPDATE staging_release.read_decisions SET issued_at = $1, pair = $2 WHERE singleton AND issued_at < $1';
       assert.equal((await client.query(update, [100, pair])).rowCount, 1);
+      assert.equal((await client.query(update, [100, {}])).rowCount, 0);
       assert.equal((await client.query(update, [99, {}])).rowCount, 0);
+      const competing = await admin.connect();
+      try {
+        await competing.query('SET ROLE staging_decision_writer');
+        const [, newer] = await Promise.all([
+          competing.query(update, [101, { ...pair, FL_STAGING_IDEAS_DECISION: 'older' }]),
+          client.query(update, [102, pair])
+        ]);
+        assert.equal(newer.rowCount, 1);
+      } finally {
+        await competing.query('RESET ROLE');
+        competing.release();
+      }
       await assert.rejects(client.query(sql), { code: '42501' });
       await assert.rejects(client.query('DELETE FROM staging_release.read_decisions'), { code: '42501' });
       await assert.rejects(client.query('UPDATE authority.coverage SET singleton = true'), { code: '42501' });

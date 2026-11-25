@@ -10,7 +10,7 @@ const busy = new Set(['created', 'queued', 'build_in_progress', 'update_in_progr
 
 export async function deployStaging(env, release, request = fetch, pause = delay, report = console.log) {
   const id = env.RENDER_STAGING_API_SERVICE_ID;
-  if (env.GITHUB_ACTIONS !== 'true' || env.GITHUB_EVENT_NAME !== 'push' ||
+  if (env.GITHUB_ACTIONS !== 'true' || !['push', 'workflow_dispatch'].includes(env.GITHUB_EVENT_NAME) ||
     env.GITHUB_REF !== 'refs/heads/staging' || env.GITHUB_REPOSITORY !== repository ||
     !/^[0-9a-f]{40}$/.test(env.GITHUB_SHA ?? '') || release.sourceRevision !== env.GITHUB_SHA ||
     !release.reference?.startsWith(image + '@') || !digest.test(release.reference.slice(image.length + 1)) ||
@@ -32,7 +32,7 @@ export async function deployStaging(env, release, request = fetch, pause = delay
   if (service.id !== id || service.name !== 'founders-lens-staging-api' || service.type !== 'web_service' ||
     service.autoDeploy !== 'no' || (service.autoDeployTrigger && service.autoDeployTrigger !== 'off') ||
     service.serviceDetails?.runtime !== 'image' || service.serviceDetails.url !== api ||
-    service.serviceDetails.healthCheckPath !== '/health/ready' ||
+    !['/health/live', '/health/ready'].includes(service.serviceDetails.healthCheckPath) ||
     !new RegExp('^ghcr\\.io/rohnn-afk/founders-lens-api(?=[:@]|$)').test(service.imagePath ?? '')) {
     throw new Error('Render API service image configuration does not match staging policy');
   }

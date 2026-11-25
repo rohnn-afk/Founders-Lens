@@ -1,0 +1,33 @@
+[Unit]
+Description=Founder's Lens staging read-decision signer
+Wants=network-online.target time-sync.target
+After=network-online.target time-sync.target
+
+[Service]
+Type=notify
+NotifyAccess=all
+DynamicUser=yes
+WorkingDirectory=/opt/founders-lens-staging-signer
+LoadCredentialEncrypted=operator.env:/etc/credstore.encrypted/founders-lens-staging-signer.env
+LoadCredentialEncrypted=operator.pem:/etc/credstore.encrypted/founders-lens-staging-signer.pem
+Environment=FL_OPERATOR_PRIVATE_KEY_FILE=%d/operator.pem
+ExecStart=/usr/bin/node --env-file=%d/operator.env scripts/renew-staging-decisions.mjs
+TimeoutStartSec=150
+WatchdogSec=150
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LimitCORE=0
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

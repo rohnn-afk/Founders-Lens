@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "$GITHUB_ACTIONS" == true && "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/heads/staging ]]
+[[ "$GITHUB_ACTIONS" == true && "$GITHUB_REF" == refs/heads/staging ]]
+[[ "$GITHUB_EVENT_NAME" == push || "$GITHUB_EVENT_NAME" == workflow_dispatch ]]
 [[ "$GITHUB_REPOSITORY" == rohnn-afk/Founders-Lens && "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
 image=ghcr.io/rohnn-afk/founders-lens-api
 tag="$image:$GITHUB_SHA"
@@ -11,6 +12,7 @@ printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-std
 docker load --input release/api.tar
 [[ "$(docker image inspect --format '{{.Id}}' founders-lens-api:ci)" == "$(cat release/index-digest)" ]]
 bash scripts/smoke-api-image.sh founders-lens-api:ci "$GITHUB_SHA"
+bash scripts/scan-api-image.sh
 config_file=$(tar -xOf release/api.tar manifest.json | jq -er '.[0].Config')
 config_digest="sha256:$(tar -xOf release/api.tar "$config_file" | sha256sum | cut -d ' ' -f 1)"
 

@@ -97,12 +97,7 @@ jobs:
           docker image inspect --format '{{.Id}}' founders-lens-api:ci > release/index-digest
           docker save --output release/api.tar founders-lens-api:ci
       - name: Scan image filesystem and configuration
-        run: |
-          docker run --rm -v "$PWD/release:/release" \
-            aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e \
-            image --input /release/api.tar --scanners vuln,secret --image-config-scanners secret \
-            --format json --output /release/scan.json
-          node scripts/check-image-scan.mjs release/scan.json release/scan-summary.json
+        run: bash scripts/scan-api-image.sh
       - name: Preserve scan diagnostics
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -111,7 +106,7 @@ jobs:
           path: release/scan-summary.json
           if-no-files-found: ignore
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/staging'
         with:
           name: tested-api-image
           path: |
@@ -122,7 +117,7 @@ jobs:
 
   release:
     name: Publish and deploy staging API
-    if: github.event_name == 'push' && github.ref == 'refs/heads/staging' && vars.FL_STAGING_RELEASE_ENABLED == 'true'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/staging' && vars.FL_STAGING_RELEASE_ENABLED == 'true'
     needs: [validate, security, image]
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -152,6 +147,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash scripts/publish-staging-image.sh
+      - name: Preserve promotion scan diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: staging-api-promotion-scan
+          path: release/scan-summary.json
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: staging-api-release
@@ -163,4 +165,5 @@ jobs:
           RENDER_STAGING_API_SERVICE_ID: ${{ vars.RENDER_STAGING_API_SERVICE_ID }}
         run: |
           test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/staging" --jq .object.sha)" = "$GITHUB_SHA"
+          node -e 'const r = require("./release/scan-summary.json"); if (r.vulnerabilities.some(v => v.accepted) && !(Date.now() < Date.parse(r.exceptionExpiresAt))) process.exit(1)'
           node scripts/render-deploy-staging.mjs release/manifest.json

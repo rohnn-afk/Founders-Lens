@@ -15,6 +15,11 @@
     "apps/dispatcher"
   ],
   "scripts": {
+    "signer:check": "node scripts/windows-staging-signer.mjs check",
+    "signer:start": "node scripts/windows-staging-signer.mjs start",
+    "signer:stop": "node scripts/windows-staging-signer.mjs stop",
+    "signer:status": "node scripts/windows-staging-signer.mjs status",
+    "deploy:staging-api": "node scripts/deploy-staging-api.mjs",
     "check-toolchain": "node scripts/check-toolchain.mjs",
     "dev": "npm run dev:web",
     "dev:web": "npm run dev --workspace=@founders-lens/web",

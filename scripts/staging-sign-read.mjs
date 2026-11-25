@@ -21,14 +21,14 @@ export function directStagingPool(connectionString, connectionTimeoutMillis, exp
   return pool;
 }
 
-export async function issueStagingPair(env) {
+export async function issueStagingPair(env, operatorKey) {
   const required = name => {
     if (!env[name]) throw new Error('Missing operator setting');
     return env[name];
   };
   if (required('FL_CONFIRM_STAGING_READ') !== 'approve-staging-read-only' ||
     env.NODE_TLS_REJECT_UNAUTHORIZED === '0') throw new Error('Approval required');
-  const privateKey = createPrivateKey(await readFile(required('FL_OPERATOR_PRIVATE_KEY_FILE')));
+  const privateKey = operatorKey ?? createPrivateKey(await readFile(required('FL_OPERATOR_PRIVATE_KEY_FILE')));
   if (privateKey.asymmetricKeyType !== 'ed25519') throw new Error('Invalid operator key');
   const expectedPrimary = required('FL_EXPECTED_PRIMARY_IDENTITY');
   const expectedAuthority = required('FL_EXPECTED_AUTHORITY_IDENTITY');

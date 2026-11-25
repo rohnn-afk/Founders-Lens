@@ -80,6 +80,52 @@ test('publication uses one monotonic, parameterized update after verifying autho
   assert.equal(calls.length, 3);
 });
 
+test('a database stall cannot publish evidence that went stale during the identity query', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 2_000_000 });
+  const issuedAt = Date.now();
+  let queries = 0;
+  const client = { query: async () => {
+    queries++;
+    t.mock.timers.tick(60_000);
+    return { rows: [{ identity: snapshot.authorityIdentity }] };
+  } };
+  await assert.rejects(publishStagingPair(client, snapshot.authorityIdentity, { issuedAt, pair: pair(issuedAt) }), /stale/);
+  assert.equal(queries, 1);
+});
+
+test('renewal survives multiple lifetimes and a restart while rejecting skew, replay and invalid evidence', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 2_000_000 });
+  let stored = pair(), current = snapshot;
+  const first = stored;
+  const primary = { options: { connectionTimeoutMillis: 4000 }, query: async () => ({ rows: [{ identity: primaryTarget }] }) };
+  const boot = () => stagingDecisions(async () => stored, {
+    retainedSubjectVersions: [1], hostedStaging: true, operatorPublicKey: publicKey,
+    authority: { runtimeSnapshot: async () => current }
+  }, primary, primary);
+  let ready = boot();
+  for (let minute = 1; minute <= 16; minute++) {
+    t.mock.timers.tick(60_000);
+    await assert.doesNotReject(ready);
+    stored = pair();
+    if (minute === 8) ready = boot();
+    assert.equal(await ready(), Date.now() + 300_000);
+  }
+  stored = first;
+  await assert.rejects(ready);
+  stored = pair(Date.now() + 1_000);
+  await assert.rejects(ready);
+  stored = pair();
+  current = { ...snapshot, subjectVersions: [1, 2] };
+  await assert.rejects(ready);
+  current = snapshot;
+  const envelope = JSON.parse(stored[keys[0]]);
+  envelope.signature = (envelope.signature[0] === 'A' ? 'B' : 'A') + envelope.signature.slice(1);
+  stored[keys[0]] = JSON.stringify(envelope);
+  await assert.rejects(ready);
+  stored = pair();
+  await assert.doesNotReject(ready);
+});
+
 test('signer rejects pooled, non-TLS and wrong-role URLs before connecting', () => {
   for (const [host, query, role] of [
     ['ep-test-pooler', '?sslmode=verify-full', 'ledger_reader'],
