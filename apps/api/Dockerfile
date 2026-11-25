@@ -36,7 +36,20 @@ RUN node --input-type=module -e '\
     writeFileSync("package.json", JSON.stringify({ name, version, dependencies, overrides }));' \
     && npm ci --omit=dev --omit=peer --ignore-scripts
 
+FROM base AS zstd-security
+# DSA-6657-1. Remove this overlay when the pinned Distroless base includes the fix.
+RUN mkdir /patch /runtime && cd /patch \
+    && apt-get update \
+    && apt-get download libzstd1=1.5.7+dfsg-1+deb13u1 \
+    && echo '23a6f8a774d5dceda5f759b4ecdcdd652dfbefbf8271912e6a7ab0ee3250dc75  libzstd1_1.5.7+dfsg-1+deb13u1_amd64.deb' | sha256sum -c - \
+    && dpkg-deb -x ./*.deb /runtime \
+    && dpkg-deb -e ./*.deb /patch/control \
+    && mkdir -p /runtime/var/lib/dpkg/status.d \
+    && { printf 'Status: install ok installed\n'; cat /patch/control/control; } > /runtime/var/lib/dpkg/status.d/libzstd1 \
+    && cp /patch/control/md5sums /runtime/var/lib/dpkg/status.d/libzstd1.md5sums
+
 FROM gcr.io/distroless/cc-debian13:nonroot-amd64@sha256:a10bdce4a54ae11746dd88386f9860c1d178d137b56166a620898ba1bf6001cd
+COPY --from=zstd-security /runtime/ /
 WORKDIR /app
 ENV NODE_ENV=production
 ARG SOURCE_SHA
