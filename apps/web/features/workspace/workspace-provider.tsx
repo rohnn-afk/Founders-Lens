@@ -15,6 +15,7 @@ import styles from './workspace.module.css';
 
 type Workspace = {
   readOnly: boolean;
+  canSaveMessages: boolean;
   api: WorkspaceApi;
   reads: ReadController;
   commands: ReturnType<typeof createCommandController>;
@@ -26,8 +27,9 @@ type Workspace = {
 };
 const WorkspaceContext = createContext<Workspace | null>(null);
 
-export function WorkspaceProvider({ children, api, session, messageApi, recoveryTtl, savedMessages, recoverySessionId, accountAction, readOnly = false }: {
-  children: ReactNode; accountAction?: ReactNode; readOnly?: boolean; api?: WorkspaceApi; session?: SessionSource;
+export function WorkspaceProvider({ children, api, session, messageApi, recoveryTtl, savedMessages, recoverySessionId, accountAction,
+  readOnly = false, canSaveMessages = false }: {
+  children: ReactNode; accountAction?: ReactNode; readOnly?: boolean; canSaveMessages?: boolean; api?: WorkspaceApi; session?: SessionSource;
   messageApi?: MessageApi; recoveryTtl?: number; savedMessages?: SavedMessageApi; recoverySessionId?: string;
 }) {
   const pathname = usePathname();
@@ -124,7 +126,7 @@ export function WorkspaceProvider({ children, api, session, messageApi, recovery
 
   const scope = view?.pathname === pathname ? view.scope : null;
   const value = scope && reads.isCurrent(scope) && api && commands
-    ? { readOnly, scope, api, reads, commands, invalidateSession, messageApi, recovery, savedMessages } : null;
+    ? { readOnly, canSaveMessages, scope, api, reads, commands, invalidateSession, messageApi, recovery, savedMessages } : null;
   return <WorkspaceShell accountAction={accountAction}>
     {value ? <WorkspaceContext.Provider key={scope?.routeGeneration} value={value}>{children}</WorkspaceContext.Provider>
       : session && access === 'checking' ? <p role="status">Checking your workspace session…</p>
@@ -144,13 +146,13 @@ export function useWorkspace() {
 }
 
 export function useWorkspaceRead<T>(load: (workspace: Workspace) => Promise<ReadResult<T>>) {
-  const { readOnly, api, reads, commands, scope, invalidateSession, messageApi, recovery, savedMessages } = useWorkspace();
+  const { readOnly, canSaveMessages, api, reads, commands, scope, invalidateSession, messageApi, recovery, savedMessages } = useWorkspace();
   const [state, setState] = useState<{ load: typeof load; result: ReadResult<T> }>();
   useEffect(() => {
     // React renders the current state. Effects start asynchronous work after
     // a render and clean up when that input changes or the view unmounts.
     let active = true;
-    void load({ readOnly, api, reads, commands, scope, invalidateSession, messageApi, recovery, savedMessages }).then(result => {
+    void load({ readOnly, canSaveMessages, api, reads, commands, scope, invalidateSession, messageApi, recovery, savedMessages }).then(result => {
       if (!active || !reads.isCurrent(scope)) return;
       if (result.kind === 'signed-out' || result.kind === 'blocked') {
         invalidateSession(result.kind);
@@ -159,7 +161,7 @@ export function useWorkspaceRead<T>(load: (workspace: Workspace) => Promise<Read
       setState({ load, result });
     });
     return () => { active = false; };
-  }, [readOnly, api, reads, commands, scope, load, invalidateSession, messageApi, recovery, savedMessages]);
+  }, [readOnly, canSaveMessages, api, reads, commands, scope, load, invalidateSession, messageApi, recovery, savedMessages]);
   return state?.load === load ? state.result : { kind: 'loading' as const };
 }
 

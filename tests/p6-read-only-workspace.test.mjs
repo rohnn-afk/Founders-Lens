@@ -46,7 +46,13 @@ test('P8 exposes conversation reads and approved POSTs without exposing generati
   const headers = { Authorization: 'Bearer fixture', Origin: origin };
   const request = (path, method = 'GET', extra = {}, body) => fetch(endpoint + path,
     { method, headers: { ...headers, ...extra }, ...(body && { body: JSON.stringify(body) }) });
-  assert.equal((await request(collection)).status, 200);
+  const listing = await request(collection);
+  assert.equal(listing.status, 200);
+  assert.equal(listing.headers.get('X-Workspace-Conversation-Creation'), 'enabled');
+  assert.equal((await request('/conversations/' + conversationId)).headers.get('X-Workspace-Message-Save'), 'enabled');
+  const unauthorized = await request(collection, 'GET', { Authorization: 'Bearer missing' });
+  assert.equal(unauthorized.status, 401);
+  assert.equal(unauthorized.headers.get('X-Workspace-Conversation-Creation'), null);
   assert.equal((await request(transcript)).status, 200);
   assert.equal(writes, 0);
   assert.equal((await request(transcript, 'POST', { 'Content-Type': 'application/json' }, {})).status, 404);

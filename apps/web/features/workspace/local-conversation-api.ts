@@ -78,8 +78,13 @@ export function createLocalConversationApi(getToken: () => Promise<string | null
   const api: WorkspaceApi = {
     ideas: (cursor, signal) => request<Page<Idea>>(withCursor('/ideas', cursor), signal, v => page(v, projectedIdea)),
     idea: (id, signal) => request<Idea>(ideaPath(id), signal, verify(v => projectedIdea(v) && v.id === id)),
-    conversations: (id, cursor, signal) => request<Page<Conversation>>(withCursor(ideaPath(id) + '/conversations', cursor), signal,
-      v => page(v, item => conversation(item, id))),
+    async conversations(id, cursor, signal) {
+      let canCreate = false;
+      const reply = await request<Page<Conversation>>(withCursor(ideaPath(id) + '/conversations', cursor), signal,
+        v => page(v, item => conversation(item, id)), undefined,
+        headers => { canCreate = !origin.startsWith('https://') && headers.get('X-Workspace-Conversation-Creation') === 'enabled'; });
+      return 'data' in reply ? { ...reply, data: { ...reply.data, canCreate } } : reply;
+    },
     conversation: (id, signal) => request<Conversation>(conversationPath(id), signal, verify(v => conversation(v) && v.id === id)),
     createConversation: (id, body, signal) => request<Conversation>(ideaPath(id) + '/conversations', signal,
       verify(v => conversation(v, id)), { body }),
@@ -151,10 +156,13 @@ export function createLocalConversationApi(getToken: () => Promise<string | null
       conversations = headers.get('X-Workspace-Conversations') === 'enabled';
     });
     return { reply, canCreate, canEdit, conversations };
-  }, async generationEnabled(id: string, signal: AbortSignal) {
-    let enabled = false;
+  }, async conversationPermissions(id: string, signal: AbortSignal) {
+    let generation = false, save = false;
     const reply = await request<Conversation>(conversationPath(id), signal, verify(value => conversation(value) && value.id === id), undefined,
-      headers => { enabled = headers.get('X-Workspace-Generation') === 'enabled'; });
-    return reply.status === 200 ? enabled : null;
+      headers => {
+        generation = headers.get('X-Workspace-Generation') === 'enabled';
+        save = headers.get('X-Workspace-Message-Save') === 'enabled';
+      });
+    return reply.status === 200 ? { generation, save } : null;
   } };
 }

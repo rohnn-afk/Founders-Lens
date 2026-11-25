@@ -28,10 +28,12 @@ export function ThinkView({ ideaId }: { ideaId: string }) {
   const base = '/app/ideas/' + encodeURIComponent(ideaId);
   if (result.kind !== 'ready') return <><h1>Think</h1>{readNotice(result.kind, retry)}</>;
   const { idea, conversations } = result.data;
+  const canCreate = !workspace.readOnly && conversations.canCreate === true && idea.status === 'ACTIVE';
   const commandState = creation ?? workspace.commands.conversationState(ideaId);
 
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!canCreate) return;
     const { scope, commands, reads, invalidateSession } = workspace;
     setCreation('pending');
     const outcome = await commands.submitConversation(scope, ideaId, title ? { title } : {});
@@ -55,7 +57,7 @@ export function ThinkView({ ideaId }: { ideaId: string }) {
         <h2 id="conversation-list">Conversations</h2>
         {idea.status === 'ARCHIVED' && <p role="status">Archived (read only)</p>}
         {conversations.items.length === 0 ? <div className={styles['empty']}><p>{cursor ? 'No conversations on this page.' : 'No conversations yet.'}</p>
-          {!cursor && !workspace.readOnly && idea.status === 'ACTIVE' && <p>Start with a question about this idea.</p>}</div> :
+          {!cursor && canCreate && <p>Start with a question about this idea.</p>}</div> :
           <ul className={styles['list']}>
             {conversations.items.map(item => <li key={item.id}>
               <Link prefetch={false} href={base + '/conversations/' + encodeURIComponent(item.id)}>{item.title || 'Untitled conversation'}</Link>
@@ -68,7 +70,7 @@ export function ThinkView({ ideaId }: { ideaId: string }) {
             <button onClick={() => setCursors([...cursors, conversations.page.nextCursor])}>Next page</button>}
         </nav>
       </section>
-      {!workspace.readOnly && idea.status === 'ACTIVE' && <section aria-labelledby="new-conversation" className={styles['panel']}>
+      {canCreate && <section aria-labelledby="new-conversation" className={styles['panel']}>
         <h2 id="new-conversation">New conversation</h2>
         {createNotice(commandState)}
         {commandState === 'uncertain'

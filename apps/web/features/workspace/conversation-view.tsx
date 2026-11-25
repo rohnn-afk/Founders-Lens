@@ -45,12 +45,12 @@ export function ConversationView({ ideaId, conversationId }: { ideaId: string; c
 function ConversationMessages({ ideaId, conversationId, archived }: {
   ideaId: string; conversationId: string; archived: boolean;
 }) {
-  const { messageApi, recovery, savedMessages } = useWorkspace();
+  const { messageApi, recovery, savedMessages, canSaveMessages } = useWorkspace();
   // Prefer generation only when a complete generation transport is injected.
   if (messageApi?.generation && recovery) {
     return <MessagePanel api={messageApi} recovery={recovery} ideaId={ideaId} conversationId={conversationId} archived={archived} />;
   }
-  if (savedMessages) return <SavedTranscript api={savedMessages} conversationId={conversationId} archived={archived} />;
+  if (savedMessages) return <SavedTranscript api={savedMessages} conversationId={conversationId} archived={archived || !canSaveMessages} />;
   if (!messageApi || !recovery) return null;
   return <MessagePanel api={messageApi} recovery={recovery} ideaId={ideaId} conversationId={conversationId} archived={archived} />;
 }

@@ -104,7 +104,7 @@ test('generation capability distinguishes save-only access from a failed read', 
   const headers = { 'X-Workspace-Generation': 'enabled' };
   const responses = [
     Response.json(chat('current', 'idea'), { headers }),
-    Response.json(chat('current', 'idea')),
+    Response.json(chat('current', 'idea'), { headers: { 'X-Workspace-Message-Save': 'enabled' } }),
     new Response(null, { status: 503, headers }),
     new Response(null, { status: 404 }),
     Response.json(chat('wrong', 'idea'), { headers })
@@ -115,8 +115,10 @@ test('generation capability distinguishes save-only access from a failed read', 
     return responses.shift();
   });
   const client = createLocalConversationApi(async () => 'fixture-token');
-  const probe = () => client.generationEnabled('current', new AbortController().signal);
-  for (const expected of [true, false, null, null]) assert.equal(await probe(), expected);
+  const probe = () => client.conversationPermissions('current', new AbortController().signal);
+  for (const expected of [{ generation: true, save: false }, { generation: false, save: true }, null, null]) {
+    assert.deepEqual(await probe(), expected);
+  }
   await assert.rejects(probe, /Invalid workspace response/);
 });
 
