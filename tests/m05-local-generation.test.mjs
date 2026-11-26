@@ -1255,7 +1255,8 @@ test('isolated HTTP submission through outbox, BullMQ and the fake generation wo
     await until(() => redis.ping().catch(() => false));
     assert.equal((await redis.info('keyspace')).trim(), '# Keyspace');
     assert.equal((await redis.client('LIST')).trim().split('\n').length, 1);
-    const quotaClient = new Redis(redisUrl.href, { maxRetriesPerRequest: 0, connectTimeout: 1000 });
+    const connectQuotaClient = () => new Redis(redisUrl.href, { maxRetriesPerRequest: 0, connectTimeout: 1000 });
+    let quotaClient = connectQuotaClient();
     try {
       const organization = randomBytes(32).toString('hex');
       const policy = { inputTokens: 1800, completionTokens: 1200,
@@ -1265,7 +1266,7 @@ test('isolated HTTP submission through outbox, BullMQ and the fake generation wo
       assert.equal(accepted.length, 1);
       await accepted[0].value(); // Unknown usage keeps the full reservation.
       quotaClient.disconnect();
-      await quotaClient.connect();
+      quotaClient = connectQuotaClient();
       // Simulate lease expiry without advancing the usage window.
       await redis.del(`founders-lens:groq-free:{${organization}}:active`);
       await assert.rejects(groqFreeQuota(quotaClient, organization, policy).reserve(), /quota is currently unavailable/);
