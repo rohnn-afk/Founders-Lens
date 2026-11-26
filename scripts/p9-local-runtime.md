@@ -34,13 +34,15 @@ paths in the operator shell. With port 3001 clear, launch:
 node scripts/p9-offline-acceptance.mjs workspace
 ```
 
-Create and edit a synthetic idea, then create an empty conversation. Copy the
-conversation ID from the browser URL. Stop the launcher and run:
+Create and edit a synthetic idea, then create an empty conversation. Stop the
+launcher and run:
 
 ```powershell
-node scripts/p9-offline-acceptance.mjs generation <conversation-id>
+node scripts/p9-offline-acceptance.mjs generation
 ```
 
+The launcher selects the sole owned empty conversation. If several qualify,
+pass the exact conversation ID from the browser URL after `generation`.
 Reload the conversation, submit the printed synthetic prompt exactly, and
 reload after completion to verify history. The operator keys and database
 admin credentials stay outside the API and background processes. Ctrl+C stops

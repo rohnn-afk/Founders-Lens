@@ -15,7 +15,8 @@ const children = [];
 try {
   const [phase, conversation, ...extra] = process.argv.slice(2);
   assert.ok(extra.length === 0 && (phase === 'workspace' && conversation === undefined ||
-    phase === 'generation' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(conversation ?? '')), 'Invalid acceptance phase');
+    phase === 'generation' && (conversation === undefined ||
+      /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(conversation.trim()))), 'Invalid acceptance phase');
   assert.ok(process.env.FL_DEPLOYMENT === undefined && process.env.NODE_ENV !== 'production', 'Local operator process required');
   const secretInput = await manifest('.env.clerk-staging.local');
   const local = await manifest('.env.p9-offline-api.local');
@@ -48,15 +49,15 @@ try {
   let processor;
   if (phase === 'generation') {
     const account = accounts[0].id;
-    const { rowCount } = await context.primary.query(`SELECT c.id FROM public."Conversation" c
-      JOIN public."Idea" i ON i.id=c."ideaId" WHERE c.id=$1 AND i."ownerId"=$2
+    const { rows } = await context.primary.query(`SELECT c.id FROM public."Conversation" c
+      JOIN public."Idea" i ON i.id=c."ideaId" WHERE ($1::uuid IS NULL OR c.id=$1) AND i."ownerId"=$2
       AND c.status='ACTIVE' AND i.status='ACTIVE' AND c."nextSequence"=1
       AND NOT EXISTS (SELECT FROM public."Message" WHERE "conversationId"=c.id)
       AND NOT EXISTS (SELECT FROM public."GenerationAttempt" g JOIN public."Conversation" existing
         ON existing.id=g."conversationId" JOIN public."Idea" owned ON owned.id=existing."ideaId"
-        WHERE owned."ownerId"=$2)`, [conversation, account]);
-    assert.equal(rowCount, 1, 'An owned, empty conversation and unused offline account are required');
-    const scope = { FL_P9_SYNTHETIC_ACCOUNT: account, FL_P9_SYNTHETIC_CONVERSATION: conversation,
+        WHERE owned."ownerId"=$2) LIMIT 2`, [conversation?.trim() ?? null, account]);
+    assert.equal(rows.length, 1, 'Select one owned, empty conversation on an unused offline account');
+    const scope = { FL_P9_SYNTHETIC_ACCOUNT: account, FL_P9_SYNTHETIC_CONVERSATION: rows[0].id,
       FL_P9_SYNTHETIC_TEXT_SHA256: createHash('sha256').update(fixturePrompt).digest('hex') };
     const decisions = await signP9Clearances(context, ...keys, 'approve-p9-isolated-runtime');
     const { FL_P9_DISPATCH_DECISION, FL_P9_EXECUTE_DECISION, ...apiDecisions } = decisions;
