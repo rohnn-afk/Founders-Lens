@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
-import { connection, databases, main, migrationPath, reviewedMigration, root, settings, sha256 } from '../apps/api/scripts/database.mjs';
+import { connection, databases, localMigrationChecksumMatches, main, migrationPath, reviewedMigration, root, settings, sha256 } from '../apps/api/scripts/database.mjs';
 import { databaseConfig } from '../apps/api/dist/persistence/config.js';
 import { createDatabaseClient } from '../apps/api/dist/persistence/client.js';
 
@@ -177,7 +177,10 @@ test('real PostgreSQL database foundation', { skip: !live, timeout: 90_000 }, as
     for (const key of ['MIGRATION_DATABASE_URL', 'TEST_MIGRATION_DATABASE_URL']) {
       await transaction(values[key], async client => {
         const migrations = (await client.query('SELECT migration_name,checksum,finished_at,rolled_back_at FROM "_prisma_migrations" ORDER BY started_at')).rows;
-        assert.deepEqual(migrations.map(row => [row.migration_name, row.checksum]), expectedMigrations);
+        assert.deepEqual(migrations.map(row => row.migration_name), expectedMigrations.map(([name]) => name));
+        for (const [index, [name, checksum]] of expectedMigrations.entries()) {
+          assert.ok(localMigrationChecksumMatches({ name, checksum }, migrations[index].checksum));
+        }
         assert.ok(migrations.every(row => row.finished_at && row.rolled_back_at === null));
         const tables = (await client.query("SELECT tablename,tableowner FROM pg_tables WHERE schemaname='public'")).rows;
         assert.equal(tables.length, 26);

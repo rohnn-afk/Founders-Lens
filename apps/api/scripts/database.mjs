@@ -18,8 +18,13 @@ const approvedMigrations = [
   ['0001_approved_baseline', '19fcf7f5f144d1ff39a00a489193392e9deaa60617ebe2f42a8ee576e203032b'],
   ['0002_p9_context', 'e30c7f7003eb74fa715e3457d4ec220f08bc33f9b66287dab2d3979a1c212fff'],
   ['0003_p9_provider_receipt', 'a0a3a093f734c1f55440cd5b5a74f386191bb1a6e5403a78d7248511ecf03058'],
-  ['0004_m06_selected_context', '7533b2e2afdabf85653f100fce9abb7cf24d9a81f885dc740cd51fc975770194']
+  ['0004_m06_selected_context', '88c4a464f0f0f7fb27e028781ee2666334adffaf151f4a927cee535fa56a215e']
 ];
+// The first local application preceded Git's newline normalization. Accept
+// only that exact recorded checksum for the same SQL on the local targets.
+export const localMigrationChecksumMatches = (step, checksum) => checksum === step.checksum ||
+  step.name === '0004_m06_selected_context' &&
+  checksum === '7533b2e2afdabf85653f100fce9abb7cf24d9a81f885dc740cd51fc975770194';
 
 export async function settings(readSettingsFile = readFile) {
   const values = parseEnv(await readSettingsFile(path.join(root, '.env.database'), 'utf8'));
@@ -198,7 +203,8 @@ async function migrate(current, values, migration) {
         const rows = (await client.query('SELECT migration_name, checksum, finished_at, rolled_back_at FROM "_prisma_migrations" ORDER BY started_at')).rows;
         if (!rows.length || rows.length > migration.steps.length || rows.some((row, index) => {
           const step = migration.steps[index];
-          return row.migration_name !== step.name || row.checksum !== step.checksum || !row.finished_at || row.rolled_back_at;
+          return row.migration_name !== step.name || !localMigrationChecksumMatches(step, row.checksum) ||
+            !row.finished_at || row.rolled_back_at;
         })) {
           throw new DatabaseCliError('Unrecognized or failed migration history');
         }
