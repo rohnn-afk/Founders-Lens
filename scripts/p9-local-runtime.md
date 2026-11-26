@@ -9,6 +9,24 @@
 | Hosted staging | Clerk account binding, restricted Neon roles, independent authority and release gates | Read-only workspace |
 | Production | Separate identities and infrastructure, reviewed deployment and capability approvals | Provider activation requires separate authorization |
 
+## Configuration ownership
+
+Application code consumes only the generic local target variables
+`FL_LOCAL_PRIMARY_PORT`, `FL_LOCAL_AUTHORITY_PORT`, and
+`FL_LOCAL_PRIMARY_DATABASE`. Their values are validated at API startup; absent
+values select the ordinary P6 or isolated P9 local defaults. Fixed acceptance
+ports, database names, Docker projects, prompt hashes, and provider-specific
+bindings belong to `tests/fixtures/` and the operator scripts. This keeps the
+historical P9 acceptance evidence reproducible without making Cedar or any
+other fixture a product or application concept.
+
+The historical provider acceptance target remains isolated and opt-in. Its
+legacy names and persisted evidence are retained only by the acceptance
+harness; routine development uses the offline local target and
+`FL_P9_LOCAL_DEVELOPMENT=1` when multi-turn deterministic development is
+explicitly selected. Hosted deployment and paid-provider configuration remain
+rejected by the local launchers.
+
 For repeatable offline development, reuse the same stores, Clerk binding and
 operator key paths. Run `node scripts/p9-offline-acceptance.mjs development <conversation-id>`
 for an active owned conversation. This mode accepts multiple turns without a

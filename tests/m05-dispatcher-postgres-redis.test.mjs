@@ -57,7 +57,7 @@ test('isolated M05 PostgreSQL and Redis crash, fencing and reconciliation', {
   redis.on('error', () => {});
   const broker = new Queue('generation', { prefix: targets.prefix, connection: createIORedisClient(redis) });
   broker.on('error', () => {});
-  const queue = generationQueue(targets.redis, targets.prefix);
+  const queue = generationQueue(targets.redis, targets.prefix, undefined, Number(targets.redis.port));
   const rows = [];
   let writesAllowed = false;
   t.after(async () => {

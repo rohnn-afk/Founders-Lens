@@ -11,11 +11,11 @@ export type PublicationWindow = {
 type Broker = Queue<{ generationId: string }, void, 'generation.requested'>;
 type Connection = { queue: Pick<Broker, 'waitUntilReady' | 'getJob' | 'add' | 'close'>; disconnect: () => void };
 
-export function generationQueue(url: URL, prefix: string, connect?: () => Connection, profile: boolean | 'cedar' | 'cedar-recheck' | 'offline' = false) {
+export function generationQueue(url: URL, prefix: string, connect?: () => Connection, expectedPort?: number | true) {
   function open() {
     const legacy = url.port === '56380' && prefix === 'founders-lens-m05-test-ffb11ac8-505a-4094-bd89-8367450022e9';
     // The local runtime and disposable integration fixture use distinct loopback ports.
-    const integration = url.port === (profile === 'offline' ? '56385' : profile === 'cedar-recheck' ? '56384' : profile === 'cedar' ? '56383' : profile ? '56382' : '56381') &&
+    const integration = (expectedPort === true || (typeof expectedPort === 'number' && url.port === String(expectedPort))) &&
       ['founders-lens-m05-e2e-', 'founders-lens-p9-local-']
       .some(base => prefix.startsWith(base) && isUuid(prefix.slice(base.length)));
     if (url.protocol !== 'redis:' || url.hostname !== '127.0.0.1' || (!legacy && !integration) || url.pathname !== '/0' ||

@@ -6,7 +6,7 @@ import { parseEnv } from 'node:util';
 import pg from 'pg';
 import { createSuppressionLedger } from '../../apps/api/dist/security/suppression-ledger.js';
 import { SubjectKeys } from '../../apps/api/dist/security/subject-key.js';
-import { cedarAcceptanceTarget, cedarRecheckTarget, offlineAcceptanceTarget } from '../../apps/api/dist/generation/cedar-acceptance-target.js';
+import { p9AcceptanceTarget, p9RecheckTarget, p9OfflineTarget } from './p9-targets.mjs';
 
 /** Verify the isolated role inventory before altering any login. Administrators are trusted. */
 async function audit(pool, expected) {
@@ -190,7 +190,7 @@ export async function p6Operator(t, { isolated = false, cedar = false, recheck =
   assert.ok(!cedar || isolated, 'Isolated Cedar operator target required');
   assert.ok(!recheck || cedar, 'Cedar profile required for recheck target');
   assert.ok(!offline || isolated && !cedar, 'Dedicated offline operator target required');
-  const target = offline ? offlineAcceptanceTarget : recheck ? cedarRecheckTarget : cedarAcceptanceTarget;
+  const target = offline ? p9OfflineTarget : recheck ? p9RecheckTarget : p9AcceptanceTarget;
   const envPrefix = offline ? '.env.p9-offline-primary.' : recheck ? '.env.p9-cedar-recheck-primary.' :
     cedar ? '.env.p9-cedar-primary.' : isolated ? '.env.p9-primary.' : '.env.p6.';
   const local = parseEnv(await readFile(envPrefix + 'runtime.local', 'utf8'));

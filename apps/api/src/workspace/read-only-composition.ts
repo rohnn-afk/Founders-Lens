@@ -23,8 +23,7 @@ import { createGenerationRepository } from '../generation/repository.js';
 import { generationRoutes } from '../generation/routes.js';
 import { createGenerationService } from '../generation/service.js';
 import { localGenerationModel, localGenerationPolicy } from '../generation/local-policy.js';
-import { cedarAcceptanceEnabled, cedarAcceptanceTarget, cedarRecheckTarget, offlineAcceptanceEnabled,
-  offlineAcceptanceTarget, offlineDevelopmentEnabled } from '../generation/cedar-acceptance-target.js';
+import { localDevelopmentEnabled, localRuntimeTarget } from '../generation/local-runtime-config.js';
 import { WorkspaceCursor } from './contracts.js';
 import { WorkspaceRepository } from './repository.js';
 import { localConversationRoutes, workspaceIdeaListRoutes, type LocalConversationOperations } from './routes.js';
@@ -97,14 +96,11 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
   const origin = localOrigin;
   if (env['FL_P6_READ_ONLY'] !== '1' || env['NODE_ENV'] === 'production') return;
   const isolated = env['FL_P9_ISOLATED'] === '1';
-  const cedar = cedarAcceptanceEnabled(env);
-  const offline = offlineAcceptanceEnabled(env);
-  const offlineDevelopment = offlineDevelopmentEnabled(env);
-  const target = offline ? offlineAcceptanceTarget :
-    env['FL_P9_CEDAR_ACCEPTANCE'] === '2' ? cedarRecheckTarget : cedarAcceptanceTarget;
-  const primaryPort = cedar || offline ? target.primaryPort : isolated ? 55435 : 55437;
-  const authorityPort = cedar || offline ? target.authorityPort : isolated ? 55438 : 55436;
-  const primaryDatabase = cedar || offline ? target.database : isolated ? 'founders_lens_p9_local' : 'founders_lens_p6_local';
+  const offlineDevelopment = localDevelopmentEnabled(env);
+  const target = localRuntimeTarget(env);
+  const primaryPort = target.primaryPort;
+  const authorityPort = target.authorityPort;
+  const primaryDatabase = target.database;
   const required = (name: string) => {
     const value = env[name];
     if (!value) throw new Error('Local workspace configuration unavailable');
@@ -182,7 +178,7 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
       }
     }
     let edit: Pick<WorkspaceService, 'patchIdea'> | undefined;
-    if ((!isolated || offline) && !cedar && env['FL_DEPLOYMENT'] === undefined && env['FL_IDEA_EDIT'] === '1') {
+    if ((!isolated || offlineDevelopment) && env['FL_DEPLOYMENT'] === undefined && env['FL_IDEA_EDIT'] === '1') {
       try {
         editPool = pool(primaryPort, primaryDatabase, 'fl_idea_edit', required('FL_IDEA_EDIT_PASSWORD'));
         editPool.on('error', () => {});

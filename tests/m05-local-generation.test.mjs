@@ -669,7 +669,7 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, submissionPris
     if (executions === 1) return (await founderProvider.generate(founderPrompt(context), signal)).text;
     return fake ? fake() : syntheticContextResponse(context);
   });
-  const consumer = generationConsumer(redisUrl, prefix, worker, true);
+  const consumer = generationConsumer(redisUrl, prefix, worker, Number(redisUrl.port));
   startConsumer(consumer);
   await consumer.waitUntilReady();
 
@@ -677,7 +677,7 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, submissionPris
     const { id: eventId } = await outbox(id);
     allowed.add(id);
     const repository = outboxRepository(pools.dispatch, [eventId]);
-    const pump = dispatcher(repository, generationQueue(redisUrl, prefix, undefined, true),
+    const pump = dispatcher(repository, generationQueue(redisUrl, prefix, undefined, Number(redisUrl.port)),
       async (scope, query) => dispatchDenied ? null : evidence(scope, query), () => {});
     try { await pump.poll(); } finally { await pump.close(); }
     return eventId;

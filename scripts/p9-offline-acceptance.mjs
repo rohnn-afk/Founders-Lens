@@ -7,6 +7,7 @@ import { createServer } from 'node:net';
 import { parseEnv } from 'node:util';
 import { setTimeout as wait } from 'node:timers/promises';
 import { p6Operator, signIdeaEditClearance, signP6Clearance, signP8Clearances, signP9Clearances } from '../tests/fixtures/p6-local-operator.mjs';
+import { p9OfflineTarget } from '../tests/fixtures/p9-targets.mjs';
 
 const fixturePrompt = 'Fictional startup Lantern Locker rents reusable picnic kits. What should we test first?';
 const manifest = async path => parseEnv(await readFile(path, 'utf8'));
@@ -31,11 +32,13 @@ try {
   assert.ok(keys.every(Boolean), 'Protected operator key paths required');
   const settings = {
     NODE_ENV: 'development', FL_P9_OFFLINE_ACCEPTANCE: '1', FL_P9_LOCAL_RUNTIME: 'deterministic',
+    FL_LOCAL_PRIMARY_PORT: String(p9OfflineTarget.primaryPort), FL_LOCAL_AUTHORITY_PORT: String(p9OfflineTarget.authorityPort),
+    FL_LOCAL_PRIMARY_DATABASE: p9OfflineTarget.database,
     FL_P9_ISOLATED: '1', P9_GEMINI_MODEL: 'gemini-3.1-flash-lite', FL_P9_PRICE_VERSION: 'v1:offline-fixture',
     FL_P9_MAX_MICROS_PER_MILLION_TOKENS: '1500000', FL_P9_BUDGET_MICROS: '6912', FL_P9_ACCOUNT_TOKEN_BUDGET: '4608',
     FL_P9_MAX_ADMISSIONS: '1', FL_P9_REQUESTS_PER_MINUTE: '1'
   };
-  if (development) Object.assign(settings, { FL_P9_OFFLINE_DEVELOPMENT: '1', FL_P9_MAX_ADMISSIONS: '30',
+  if (development) Object.assign(settings, { FL_P9_LOCAL_DEVELOPMENT: '1', FL_P9_MAX_ADMISSIONS: '30',
     FL_P9_REQUESTS_PER_MINUTE: '6', FL_P9_BUDGET_MICROS: '207360', FL_P9_ACCOUNT_TOKEN_BUDGET: '138240' });
   const os = Object.fromEntries(['PATH', 'SystemRoot', 'TEMP', 'TMP'].filter(name => process.env[name])
     .map(name => [name, process.env[name]]));
