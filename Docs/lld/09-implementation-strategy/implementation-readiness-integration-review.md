@@ -80,9 +80,17 @@ lineage-aware revalidation is available. Version 1 remains text-only.
 The offline memory reader records bounded revision and approval provenance under
 the same one-use lease grant. The offline transcript validates stored
 references against same-idea source-checked evidence and exact support.
-Evidence creation, provider citation finalization, the founder-facing memory
-approval journey, and external-provider quality evaluation remain open. Staging image approval and hosted capability activation
-are tracked separately from local acceptance.
+The local synthetic Groq Free mode adds bounded context, structured response
+validation and shared Redis quotas. The twelve-case dry run and mocked provider
+checks passed. Live quality evaluation still requires confirmation of the key's
+organization plan, limits and data controls. Evidence creation, provider citation
+finalization and the founder-facing memory approval journey remain open.
+
+The stabilization run verified all four builds, 284 default test passes and
+separate disposable PostgreSQL, Redis, authority and browser suites. Idea and
+conversation changes are stacked in PRs #11 and #12. The image gate still
+requires an upstream fix or reviewed equivalence for the exact staging
+candidate. Hosted workspace writes remain disabled.
 
 ## 4. Milestone dependency and authority audit
 

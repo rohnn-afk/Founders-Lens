@@ -91,13 +91,17 @@ ignored manifests after verifying their identities and reviewing data retention.
 
 ### Groq Free evaluation
 
-Before live inference, confirm the organization which owns the key is on the
-Free plan. Record the lower of the displayed limits for enabled GPT-OSS models
+Before live inference, select the organization that owns the key in Groq
+Console. Confirm Free in Billing, then open Limits and record RPM, RPD, TPM
+and TPD for each enabled GPT-OSS model. If Limits shows separate input and
+output TPM, include both and use the smallest of the displayed per-minute
+token ceilings as the conservative combined cap. Record the lower limits
 in ignored `.env.groq-free.local` as `FL_GROQ_ORG_PLAN=free` and
 `FL_GROQ_ORG_RPM`, `FL_GROQ_ORG_RPD`, `FL_GROQ_ORG_TPM`, `FL_GROQ_ORG_TPD`.
 Use one stable SHA-256 organization identifier in `FL_GROQ_ORGANIZATION_SCOPE`
 across models and restarts. Keep the key only in the existing ignored worker
-manifest. Review Zero Data Retention in the same organization.
+manifest. Check Zero Data Retention under Data Controls in the same
+organization and record only its status. Keep evaluation inputs synthetic.
 
 Run `node scripts/evaluate-groq-free.mjs --dry-run` to list the checked-in
 synthetic cases without credentials. After plan verification, run
