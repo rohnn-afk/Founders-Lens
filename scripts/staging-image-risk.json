@@ -16,6 +16,21 @@
       "sourceRevision": "e1542c58194977d759a5c7a9f1e65d868c0485aa",
       "sourceFingerprint": "5318a26638f5dd6e360e818c135e5cba72cd423d2c72c7e950fbec2542e8bde2",
       "reason": "Swagger treats an absent method as GET and resolves the specification URL against the same origin. The same exact path and method allowlist applies. Playwright is test-only. The Linux runtime and its TLS, Clerk and authority paths are unchanged."
+    },
+    {
+      "sourceRevision": "6baeb40f275e404cc1ac77b1e1eccc2320ae30fd",
+      "sourceFingerprint": "130ae30ffc4f14a5c1ff2de6b102a5bdb5de932d4e55d1300871ad7fb961fc5d",
+      "reason": "PR #11 retains the reviewed read-only staging composition and OpenSSL paths. The linux/amd64 Node, libssl and libcrypto hashes and libssl3t64 version match the reviewed runtime. Trivy and Scout reported the same five reviewed high findings and zero critical findings. The approved scope and expiry are unchanged."
+    },
+    {
+      "sourceRevision": "b91ee49cbc30fea78468f2f06f81d92af466e49a",
+      "sourceFingerprint": "306a847b1ae89b0dea3f0d161f19f15bec5f2674e32453dbf87030573d448bf3",
+      "reason": "PR #12 changes local conversation capabilities and documentation while retaining read-only staging. The linux/amd64 runtime binaries, OpenSSL package version and five reviewed high findings match the approved scope."
+    },
+    {
+      "sourceRevision": "cbd42897cfbdab9df09511f3bfb43d9da670ebd5",
+      "sourceFingerprint": "0d4ddf732433507774ddc25300baac61799bbf620d5b806ad95c0e6214a4d003",
+      "reason": "PR #13 adds isolated local generation and remediation without activating hosted writes or inference. The archived linux/amd64 image matches the approved runtime binaries and OpenSSL package version, with the same five reviewed high findings."
     }
   ],
   "runtimeBinaryFingerprints": [
