@@ -155,7 +155,8 @@ test('production web renders the public entry and gates the workspace without Cl
   await new Promise((resolve, reject) => reservation.close((error) => error ? reject(error) : resolve()));
   const web = start(t, require.resolve('next/dist/bin/next'), [
     'start', 'apps/web', '--hostname', '127.0.0.1', '--port', String(port)
-  ], { MODEL_API_KEY: 'm01-web-secret-canary', DEBUG: 'next:start-server' });
+  ], { MODEL_API_KEY: 'm01-web-secret-canary', DEBUG: 'next:start-server',
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: '', CLERK_SECRET_KEY: '' });
   await until(() => /Ready in/.test(web.output()), 'web startup', web.output);
   const response = await fetch(`http://127.0.0.1:${port}`);
   assert.equal(response.status, 200);

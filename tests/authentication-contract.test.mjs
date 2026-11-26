@@ -76,11 +76,22 @@ test('synthetic Clerk SDK authentication; outbound provider calls are forbidden'
     assert.ok(!('token' in identity));
   });
 
+  await t.test('a slow workstation rejects a fresh session until its clock is synchronized', async t => {
+    const issuedAt = Math.floor(Date.now() / 1000);
+    const token = jwt({ iat: issuedAt, nbf: issuedAt - 1 });
+    const boundary = createClerkBoundary(config);
+    t.mock.timers.enable({ apis: ['Date'], now: issuedAt * 1000 - 3200 });
+    await assert.rejects(authenticate(boundary, token), { code: 'UNAUTHENTICATED' });
+    t.mock.timers.setTime(issuedAt * 1000);
+    assert.equal((await authenticate(boundary, token)).subject, 'user_synthetic');
+  });
+
   for (const [name, token] of [
     ['expired', jwt({ exp: Math.floor(Date.now() / 1000) - 30 })],
     ['forged signature', jwt({}, other.privateKey)],
     ['wrong issuer', jwt({ iss: 'https://foreign.clerk.accounts.dev' })],
     ['wrong party', jwt({ azp: 'https://foreign.invalid' })],
+    ['wrong loopback hostname', jwt({ azp: 'http://localhost:3000' })],
     ['missing party', jwt({ azp: undefined })],
     ['wrong audience', jwt({ aud: 'foreign' })],
     ['missing required audience', jwt({ aud: undefined })],

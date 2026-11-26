@@ -23,7 +23,7 @@ export function WorkspaceSignOut() {
     <SignOutButton redirectUrl="/sign-in"><button type="button">Sign out</button></SignOutButton>
   </span>;
 }
-type View = { kind: 'loading' | 'unavailable' | 'expired' | 'denied' | 'error' } | { kind: 'ready'; ideas: Idea[]; cursor: string | null; conversations: boolean };
+type View = { kind: 'loading' | 'unavailable' | 'authentication-rejected' | 'denied' | 'error' } | { kind: 'ready'; ideas: Idea[]; cursor: string | null; conversations: boolean };
 
 function SessionExpired() {
   return <div className={styles['feedback']}>
@@ -138,7 +138,7 @@ function IdeasForSession({ account, getToken }: { account: string; getToken: () 
           previousPage.current = [];
           setCanCreate(false);
           setCanEdit(false);
-          setView({ kind: reply.status === 401 ? 'expired' : reply.status === 403 ? 'denied' :
+          setView({ kind: reply.status === 401 ? 'authentication-rejected' : reply.status === 403 ? 'denied' :
             reply.status === 404 || reply.status === 503 ? 'unavailable' : 'error' });
           return;
         }
@@ -178,7 +178,7 @@ function IdeasForSession({ account, getToken }: { account: string; getToken: () 
     setCanCreate(false);
     setCanEdit(false);
     setEditingId(null);
-    setView({ kind: status === 401 ? 'expired' : 'denied' });
+    setView({ kind: status === 401 ? 'authentication-rejected' : 'denied' });
   }
   async function create(retry = false) {
     const signal = writeLifetime.current?.signal;
@@ -199,7 +199,7 @@ function IdeasForSession({ account, getToken }: { account: string; getToken: () 
     } else if (result.kind === 'signed-out' || result.kind === 'blocked') {
       activeRead.current?.abort();
       setCanCreate(false);
-      setView({ kind: result.kind === 'signed-out' ? 'expired' : 'denied' });
+      setView({ kind: result.kind === 'signed-out' ? 'authentication-rejected' : 'denied' });
       previousPage.current = [];
       if (result.kind === 'signed-out') { setTitle(''); setSummary(''); }
       setCreation('blocked');
@@ -216,7 +216,10 @@ function IdeasForSession({ account, getToken }: { account: string; getToken: () 
       <section aria-label="Owned ideas">
         {savedEdit && <p role="status">Idea updated.</p>}
         {view.kind === 'loading' && <p className={styles['feedback']} role="status">Loading ideas…</p>}
-        {view.kind === 'expired' && <SessionExpired />}
+        {view.kind === 'authentication-rejected' && <>
+          <p className={styles['feedback']} role="alert">The workspace could not verify your session.</p>
+          <button type="button" onClick={() => load(null)}>Retry</button>
+        </>}
         {view.kind === 'denied' && <p className={styles['feedback']} role="alert">This account cannot access the workspace.</p>}
         {(view.kind === 'unavailable' || view.kind === 'error') && <><p className={styles['feedback']} role="alert">
           {view.kind === 'unavailable' ? 'Workspace data is unavailable.' : 'We could not load your ideas.'}
