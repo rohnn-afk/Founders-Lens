@@ -100,6 +100,21 @@ tree. Deployment remains read-only. The exact staging image equivalence entries
 for this stack expire on 2026-12-25 at 12:32:47 UTC. Hosted workspace writes and
 live Groq evaluation retain separate activation requirements.
 
+The merged baseline is `62140461a4075a07f6dacb47ffb9d53ac352a361`.
+The evaluation harness now includes a thirteenth synthetic case for contextual
+follow-up. The initial quality pass and metrics are defined in the
+[local runtime runbook](../../../scripts/p9-local-runtime.md#groq-free-evaluation).
+Record live results only after the key's organization and quota have been
+verified. See the [deployment guide](../../../DEPLOYMENT.md#hosted-idea-write-readiness)
+for the separate staging write proposal.
+
+The local MVP readiness pass rechecked the two previously accepted attempts
+against the designated Clerk binding. Both remained completed and selected,
+with one execution attempt each, published outbox records, provider receipts
+and persisted v2 messages. A separate disposable browser and worker run passed
+on this baseline. These checks do not record a new manual Clerk walkthrough or
+live Groq quality results.
+
 ## 4. Milestone dependency and authority audit
 
 | Milestone | Dependency / founder result | Phase 7C task coverage | Mandatory proof emphasis | Gate / exception |

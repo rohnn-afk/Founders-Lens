@@ -117,6 +117,17 @@ and 120,000 tokens per day, each clamped to the organization limits. One
 reservation is active at a time. Missing usage retains the original reserve.
 The evaluator stops at a denial or transport failure without retrying it.
 
+For the initial quality pass, run `weak-demand`, `contextual-follow-up`,
+`small-experiment` and `invented-research` in that order. Use the default 20B
+model and low reasoning. Record HTTP status, schema validity, wall-clock
+latency, reported input and completion tokens, and quota denials. Compare the
+answer with the case's `lookFor` criteria and score each as met, partial or
+missed. Record any unsupported claims separately. Report reasoning tokens
+only if separately measured and verify any charges in the organization usage
+and billing views. Continue through the remaining cases one at a time within
+the shared quota. Use disposable Redis tests for quota denial and concurrency
+coverage so the evaluation does not spend provider capacity testing limits.
+
 The default model is `openai/gpt-oss-20b` with low reasoning. Set
 `FL_GROQ_FREE_MODEL=openai/gpt-oss-120b` or
 `FL_GROQ_FREE_REASONING=medium` for comparison. The request uses the strict

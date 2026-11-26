@@ -53,3 +53,27 @@ Each publication atomically replaces the complete pair with a newer pair, after 
 After activation, use the designated Clerk account on the authenticated workspace and verify that the signed-in ideas request succeeds, including an empty result. Separately verify denial for an unbound account and access to foreign records using approved existing test identities and data. Do not put a user's token or account password in CI. Automated positive browser checks require a separately approved test identity and credential flow.
 
 Check the GitHub Actions release job and the corresponding Render Events entry by deploy ID. Readiness failures can mean the mailbox is absent, the signer is late, the target evidence changed, or the API cannot reach its database. Check signer events before retrying. Keep staging release artifacts and approved digests. Prefer reverting through a PR and allowing CI to promote the verified revert. For a supervised immediate rollback, deploy only a previously approved image digest through the API service and repeat the same health and authorization checks. A digest that requires static decisions needs its own fresh authorization window.
+
+## Hosted idea write readiness
+
+The first proposed write window covers creating an idea and editing its title
+or summary for one designated Clerk account using synthetic data. Conversation
+writes, generation and external inference require separate review. Staging
+currently mounts read routes. The local write decisions and database fixtures
+are scoped to loopback and carry no hosted authority.
+
+1. Review a staging composition change that mounts only idea creation and editing
+   under separate, short-lived, account-bound write decisions. Bind each decision
+   to the verified staging primary, authority identity, epoch and purpose. Retain
+   live ownership, suppression and expiry checks before the transaction and
+   freshness checks at commit. Leave the signed read pair independent.
+2. Review exact column grants for restricted staging writer credentials against
+   the existing transactions. Keep the runtime read roles separate. Confirm
+   idempotency receipts, optimistic version checks, rollback and foreign-account
+   denial with disposable PostgreSQL before proposing hosted grants.
+3. Obtain explicit approval for the account, reviewed digest, role changes and
+   supervised activation window. Verify create, edit, replay, stale `If-Match`,
+   foreign-account denial and expiry with approved synthetic data. Close the
+   window by withdrawing write admission and restoring the approved read-only
+   digest. Verify denied writes, working reads and unchanged public-demo access.
+   Handle any retained test data through the existing privacy procedure.
