@@ -68,7 +68,7 @@ try {
     ...await signP6Clearance(context, ...keys, 'approve-p6-genesis-read-only'),
     ...await signP6Clearance(context, ...keys, 'approve-p7-create-idea', true),
     ...await signIdeaEditClearance(context, ...keys, 'approve-local-idea-edit'),
-    ...await signP8Clearances(context, ...keys, 'approve-p8-conversations') };
+    ...await signP8Clearances(context, keys[0], keys[1], 'approve-p8-conversations') };
   // An acceptance message must enter the transactional generation route. The
   // separate save-only capability would let a message bypass that journey.
   delete api.FL_P8_SAVE_DECISION;

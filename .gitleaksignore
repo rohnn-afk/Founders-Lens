@@ -1,0 +1,2 @@
+# Historical local approval phrase, not a credential. Keep the exception tied to the original commit and line.
+48e85d03f1662139b6205eddd97ba5cd5da06cf0:scripts/p9-offline-acceptance.mjs:generic-api-key:43
