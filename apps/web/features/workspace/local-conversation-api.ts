@@ -1,6 +1,6 @@
 // Browser transport for the opted-in local workspace. Clerk credentials exist
 // only in the request, and uncertain saves retain their original in-memory intent.
-import type { Acceptance, Conversation, Generation, Idea, Message, MessageApi, MessageBody, Page, Reply, SavedMessageApi, WorkspaceApi } from './contracts';
+import type { Acceptance, Conversation, Generation, Idea, IdeaEdit, Message, MessageApi, MessageBody, Page, Reply, SavedMessageApi, WorkspaceApi } from './contracts';
 
 import { workspaceEndpoints } from './endpoints';
 
@@ -39,20 +39,22 @@ const message = (value: Message, id: string) => typeof value?.id === 'string' &&
 /** Construct session-scoped P8 and opt-in generation transports. */
 export function createLocalConversationApi(getToken: () => Promise<string | null>, makeKey = () => crypto.randomUUID()) {
   async function request<T>(path: string, signal: AbortSignal, decode: (value: T) => T,
-    command?: { body: unknown; key?: string; accepted?: boolean }, headers?: (headers: Headers) => void): Promise<Reply<T>> {
+    command?: { body: unknown; key?: string; accepted?: boolean; version?: number }, headers?: (headers: Headers) => void): Promise<Reply<T>> {
     if (window.location.origin !== origin) return { status: 403 };
     const token = await getToken();
     signal.throwIfAborted();
     if (!token) return { status: 401 };
-    const response = await fetch(endpoint + path, { method: command ? 'POST' : 'GET',
+    const editing = command?.version !== undefined;
+    const response = await fetch(endpoint + path, { method: editing ? 'PATCH' : command ? 'POST' : 'GET',
       headers: { Authorization: `Bearer ${token}`, ...(command && { 'Content-Type': 'application/json' }),
+        ...(editing && { 'If-Match': `"v${command.version}"` }),
         ...(command?.key && { 'Idempotency-Key': command.key }) }, ...(command && { body: JSON.stringify(command.body) }),
       credentials: 'omit', redirect: 'error', cache: 'no-store', signal: AbortSignal.any([signal, AbortSignal.timeout(12_000)]) });
-    if (response.status === (command ? command.accepted ? 202 : 201 : 200)) {
+    if (response.status === (command && !editing ? command.accepted ? 202 : 201 : 200)) {
       const data = decode(await response.json());
       if (signal.aborted) return { status: 503 };
       headers?.(response.headers);
-      return { status: command ? 201 : 200, data };
+      return { status: command && !editing ? 201 : 200, data };
     }
     const id = response.headers.get('X-Request-Id');
     const correlation = id && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
@@ -62,7 +64,8 @@ export function createLocalConversationApi(getToken: () => Promise<string | null
       return { status: 503, ...correlation };
     }
     switch (response.status) {
-      case 400: case 401: case 403: case 404: case 409: case 413: case 415: case 429: return { status: response.status, ...correlation };
+      case 400: case 401: case 403: case 404: case 409: case 412: case 413: case 415: case 428: case 429:
+        return { status: response.status, ...correlation };
       default: return { status: 503, ...correlation };
     }
   }
@@ -132,14 +135,22 @@ export function createLocalConversationApi(getToken: () => Promise<string | null
       return reply;
     } }
   };
-  return { api, savedMessages, messageApi, async listOwnedIdeas(cursor: string | null, signal: AbortSignal) {
+  return { api, savedMessages, messageApi,
+    async editIdea(id: string, version: number, body: IdeaEdit, signal: AbortSignal): Promise<Reply<Idea>> {
+      if (origin.startsWith('https://')) return { status: 403 };
+      return request<Idea>(ideaPath(id), signal, verify(v => projectedIdea(v) && v.id === id && v.version === version + 1),
+        { body, version });
+    },
+    async listOwnedIdeas(cursor: string | null, signal: AbortSignal) {
     let canCreate = false;
+    let canEdit = false;
     let conversations = false;
     const reply = await request<Page<Idea>>(withCursor('/ideas', cursor), signal, value => page(value, projectedIdea), undefined, headers => {
       canCreate = !origin.startsWith('https://') && headers.get('X-Workspace-Idea-Creation') === 'enabled';
+      canEdit = !origin.startsWith('https://') && headers.get('X-Workspace-Idea-Editing') === 'enabled';
       conversations = headers.get('X-Workspace-Conversations') === 'enabled';
     });
-    return { reply, canCreate, conversations };
+    return { reply, canCreate, canEdit, conversations };
   }, async generationEnabled(id: string, signal: AbortSignal) {
     let enabled = false;
     const reply = await request<Conversation>(conversationPath(id), signal, verify(value => conversation(value) && value.id === id), undefined,

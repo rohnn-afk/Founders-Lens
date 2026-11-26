@@ -20,7 +20,10 @@ const p6Bind = process.argv.includes('--p6-bind-account');
 const p6Sign = process.argv.includes('--p6-sign-clearance');
 const p7Sign = process.argv.includes('--p7-sign-create');
 const p7Prepare = process.argv.includes('--p7-prepare-writer');
-const workspaceCreateLive = process.argv.includes('--p7-create-browser-live');
+const ideaEditPrepare = process.argv.includes('--prepare-idea-editor');
+const ideaEditSign = process.argv.includes('--sign-idea-edit');
+const ideaManagementLive = process.argv.includes('--idea-management-browser-live');
+const workspaceCreateLive = process.argv.includes('--p7-create-browser-live') || ideaManagementLive;
 const p8Prepare = process.argv.includes('--p8-prepare-role');
 const p8Sign = process.argv.includes('--p8-sign-conversations');
 const p8Live = process.argv.includes('--p8-conversations-browser-live');
@@ -30,10 +33,24 @@ const p9SecondBind = process.argv.includes('--p9-bind-second-isolated');
 const p9CedarBind = process.argv.includes('--p9-bind-cedar-isolated');
 const p9CedarReadiness = process.argv.includes('--p9-cedar-readiness');
 const p9Diagnose = process.argv.includes('--p9-diagnose-harbor');
-const modes = [browserLive, reverificationLive, p6Bind, p6Sign, p7Sign, p7Prepare, workspaceCreateLive,
+const modes = [browserLive, reverificationLive, p6Bind, p6Sign, p7Sign, p7Prepare, ideaEditPrepare, ideaEditSign, workspaceCreateLive,
   p8Prepare, p8Sign, p8Live, p9Sign, p9Bind, p9SecondBind, p9CedarBind, p9CedarReadiness, p9Diagnose];
 const interactiveMode = modes.some(Boolean);
 if (modes.filter(Boolean).length > 1) throw new Error('Select exactly one Clerk test mode.');
+
+test('local operator prepares and signs idea edit admission', {
+  skip: !ideaEditPrepare && !ideaEditSign, timeout: 25_000
+}, async t => {
+  const { p6Operator, prepareIdeaEditor, signIdeaEditClearance } = await import('./fixtures/p6-local-operator.mjs');
+  const context = await p6Operator(t);
+  if (ideaEditPrepare) {
+    await prepareIdeaEditor(context, process.env.P6_OPERATOR_CONFIRM);
+    return;
+  }
+  const { FL_IDEA_EDIT_DECISION } = await signIdeaEditClearance(context, process.env.P6_OPERATOR_PRIVATE_KEY_FILE,
+    process.env.P6_OPERATOR_PUBLIC_KEY_FILE, process.env.P6_OPERATOR_CONFIRM);
+  await writeFile('.env.idea-edit.decision.local', `FL_IDEA_EDIT_DECISION='${FL_IDEA_EDIT_DECISION}'\n`, { flag: 'wx', mode: 0o600 });
+});
 
 test('P9 operator signs isolated runtime permissions', { skip: !p9Sign, timeout: 25_000 }, async t => {
   assert.equal(process.env.P6_OPERATOR_CONFIRM, 'approve-p9-isolated-runtime');
@@ -126,7 +143,7 @@ test('P7 operator prepares restricted idea writer', { skip: !p7Prepare, timeout:
 });
 
 /** Capture only the approved POST's idempotency key and body, never its bearer header. */
-test('P7 interactive Clerk creates and replays one idea', { skip: !workspaceCreateLive, timeout: 420_000 }, async t => {
+test('Approved Clerk session exercises the local idea workspace', { skip: !workspaceCreateLive, timeout: 420_000 }, async t => {
   const { p6Operator } = await import('./fixtures/p6-local-operator.mjs');
   const { clerkConfig } = await import('../apps/api/dist/security/config.js');
   const { createClerkBoundary } = await import('../apps/api/dist/security/clerk.js');
@@ -142,7 +159,9 @@ test('P7 interactive Clerk creates and replays one idea', { skip: !workspaceCrea
   const evaluate = await openEdge(t, origin + '/app', true);
   const shell = `location.origin === ${JSON.stringify(origin)} && location.pathname === '/app' &&
     window.Clerk?.session?.status === 'active' && !!document.querySelector('#idea-title')`;
-  console.info('Sign in with the approved P7 development account. Wait for the prompt before saving.');
+  console.info(ideaManagementLive
+    ? 'Sign in with the approved development account. The test will create and edit one synthetic local idea.'
+    : 'Sign in with the approved P7 development account. Wait for the prompt before saving.');
   await waitForBrowser(async () => await evaluate(shell) === true, manualSignInTimeout);
   const bearer = async () => {
     const token = await evaluate(`(${shell}) ? window.Clerk.session.getToken({ skipCache: true }) : null`, 10_000);
@@ -165,18 +184,26 @@ test('P7 interactive Clerk creates and replays one idea', { skip: !workspaceCrea
       const response = await original(input, init);
       if (String(input) === ${JSON.stringify(endpoint)} && init?.method === 'POST' && response.status === 201) {
         const idea = await response.clone().json();
-        window.p7Accepted = { id: idea.id, key: new Headers(init.headers).get('Idempotency-Key'), body: init.body };
+        window.p7Accepted = { id: idea.id, version: idea.version, key: new Headers(init.headers).get('Idempotency-Key'), body: init.body };
         window.fetch = original;
       }
       return response;
     };
   })()`);
-  console.info('Save one approved development idea in Edge now. The harness will replay that exact request.');
+  if (ideaManagementLive) {
+    await evaluate(`(() => {
+      const input = document.querySelector('#idea-title');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'Local idea verification ' + Date.now());
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`);
+    await evaluate('document.querySelector("#idea-title").form.requestSubmit()');
+  } else console.info('Save one approved development idea in Edge now. The harness will replay that exact request.');
   const accepted = await waitForBrowser(() => evaluate('window.p7Accepted ?? null'), manualSignInTimeout);
   assert.ok(typeof accepted.key === 'string' && typeof accepted.body === 'string' && typeof accepted.id === 'string');
   const title = JSON.parse(accepted.body).title;
-  await waitForBrowser(async () => await evaluate(`(${shell}) && [...document.querySelectorAll('#owned-ideas ~ ul strong')]
-    .some(item => item.textContent === ${JSON.stringify(title)})`) === true);
+  const visibleIdea = value => `[...document.querySelectorAll('section[aria-label="Owned ideas"] h2')]
+    .some(item => item.textContent === ${JSON.stringify(value)})`;
+  await waitForBrowser(() => evaluate(visibleIdea(title)));
   const active = await bearer();
   const read = await fetch(endpoint, { headers: { Authorization: active }, signal: AbortSignal.timeout(10_000) });
   assert.equal(read.status, 200);
@@ -186,6 +213,27 @@ test('P7 interactive Clerk creates and replays one idea', { skip: !workspaceCrea
   assert.equal(replay.status, 201);
   assert.ok((await replay.json()).id === accepted.id, 'Replay did not return the original idea');
   assert.equal(await count(), before + 1);
+  if (ideaManagementLive) {
+    const updatedTitle = title + ' (edited)';
+    const edit = `[...document.querySelectorAll('button')].find(button => button.textContent === ${JSON.stringify('Edit ' + title)})`;
+    await waitForBrowser(() => evaluate(`Boolean(${edit})`));
+    await evaluate(edit + '.click()');
+    await waitForBrowser(() => evaluate('Boolean(document.querySelector("#edit-idea-title"))'));
+    await evaluate(`(() => {
+      const input = document.querySelector('#edit-idea-title');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(updatedTitle)});
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`);
+    await evaluate('document.querySelector("#edit-idea-title").form.requestSubmit()');
+    await waitForBrowser(() => evaluate(visibleIdea(updatedTitle)));
+    const stale = await fetch(endpoint + '/' + encodeURIComponent(accepted.id), { method: 'PATCH',
+      headers: { Authorization: await bearer(), 'Content-Type': 'application/json', 'If-Match': `"v${accepted.version}"` },
+      body: JSON.stringify({ title: 'Rejected stale update' }), signal: AbortSignal.timeout(10_000) });
+    assert.equal(stale.status, 412);
+    await evaluate('location.reload()');
+    await waitForBrowser(() => evaluate(visibleIdea(updatedTitle)));
+    assert.equal(await count(), before + 1);
+  }
   await evaluate(`window.Clerk.signOut({ redirectUrl: '/sign-in' })`);
   await waitForBrowser(async () => await evaluate(`location.origin === ${JSON.stringify(origin)} && location.pathname.startsWith('/sign-in')`) === true);
   assert.equal((await fetch(endpoint, { headers: { Authorization: active }, signal: AbortSignal.timeout(10_000) })).status, 401);

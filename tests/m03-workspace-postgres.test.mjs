@@ -9,7 +9,8 @@ import { suppressionScopeKey } from '../apps/api/dist/security/suppression-autho
 import { WorkspaceCursor } from '../apps/api/dist/workspace/contracts.js';
 import { WorkspaceRepository } from '../apps/api/dist/workspace/repository.js';
 import { WorkspaceService } from '../apps/api/dist/workspace/service.js';
-import { workspaceRoutes } from '../apps/api/dist/workspace/routes.js';
+import { workspaceIdeaListRoutes, workspaceRoutes } from '../apps/api/dist/workspace/routes.js';
+import { workspaceIdeasCors } from '../apps/api/dist/workspace/read-only-composition.js';
 
 test('workspace HTTP and PostgreSQL behavior', { skip: !process.argv.includes('--live'), timeout: 60_000 }, async t => {
   const values = await settings();
@@ -79,6 +80,49 @@ test('workspace HTTP and PostgreSQL behavior', { skip: !process.argv.includes('-
   assert.equal(first.status, 201);
   for (const result of concurrent) { assert.equal(result.status, 201); assert.deepEqual(result.body, first.body); }
   const ideaId = first.body.id, path = '/ideas/' + ideaId;
+  await t.test('admitted idea edits check ownership, validation, version and clearance', async t => {
+    const key = 'edit-' + randomUUID();
+    const draft = await send('/ideas', 'POST', { title: 'Before edit' }, { 'Idempotency-Key': key });
+    assert.equal(draft.status, 201);
+    let deadline = Infinity;
+    const local = express();
+    const router = express.Router();
+    router.use(workspaceIdeasCors(false, undefined, undefined, undefined, true));
+    router.use(workspaceIdeaListRoutes(service, async req => req.get('Authorization') === 'Bearer bob' ? principals[1] :
+      req.get('Authorization') === 'Bearer alice' ? principals[0] : undefined, undefined,
+    { patchIdea: (principal, id, match, body) => service.patchIdea(principal, id, match, body, async () => deadline) }));
+    local.use('/api/v1', router);
+    const listener = local.listen(0, '127.0.0.1');
+    await new Promise(resolve => listener.once('listening', resolve));
+    t.after(() => new Promise(resolve => listener.close(resolve)));
+    const url = 'http://127.0.0.1:' + listener.address().port + '/api/v1/ideas/' + draft.body.id;
+    const call = (body, version = '"v1"', actor = 'alice') => fetch(url, { method: 'PATCH',
+      headers: { Origin: 'http://127.0.0.1:3000', Authorization: 'Bearer ' + actor,
+        'Content-Type': 'application/json', ...(version && { 'If-Match': version }) }, body: JSON.stringify(body) });
+    const options = { method: 'OPTIONS', headers: { Origin: 'http://127.0.0.1:3000',
+      'Access-Control-Request-Method': 'PATCH', 'Access-Control-Request-Headers': 'if-match,content-type,authorization' } };
+    assert.equal((await fetch(url, options)).status, 204);
+    assert.equal((await fetch(url, { ...options, headers: { ...options.headers, Origin: 'https://foreign.example' } })).status, 403);
+    assert.equal((await call({ title: 'Foreign' }, '"v1"', 'bob')).status, 404);
+    assert.equal((await call({ title: 'Unknown' }, '"v1"', 'unknown')).status, 401);
+    assert.equal((await call({ title: 'Missing version' }, '')).status, 428);
+    for (const invalid of [{}, { status: 'ARCHIVED' }, { title: '  ' }, { summary: 'x'.repeat(5001) }]) {
+      assert.equal((await call(invalid)).status, 400);
+    }
+    deadline = Date.now() - 1;
+    assert.equal((await call({ title: 'Expired' })).status, 503);
+    deadline = Infinity;
+    const responses = await Promise.all([call({ title: 'First' }), call({ title: 'Second' })]);
+    assert.deepEqual(responses.map(response => response.status).sort(), [200, 412]);
+    const winner = responses.find(response => response.status === 200);
+    assert.equal(winner.headers.get('etag'), '"v2"');
+    const edited = await winner.json();
+    const persisted = await runtime.idea.findUnique({ where: { id: edited.id } });
+    assert.equal(persisted.title, edited.title);
+    assert.equal(persisted.version, 2);
+    await owner.query('DELETE FROM "IdempotencyRecord" WHERE "accountId"=$1 AND key=$2', [fixtureIds[0], key]);
+    await owner.query('DELETE FROM "Idea" WHERE id=$1 AND "ownerId"=$2', [edited.id, fixtureIds[0]]);
+  });
   assert.equal(first.headers.get('etag'), '"v1"');
   assert.equal(first.headers.get('location'), '/api/v1' + path);
   assert.deepEqual(Object.keys(first.body).sort(), ['createdAt', 'id', 'status', 'summary', 'title', 'updatedAt', 'version']);

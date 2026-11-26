@@ -15,6 +15,7 @@ const hostedPurposes = ['founders-lens:staging-workspace:read-only', 'founders-l
 const decisionSchema = z.strictObject({
   version: z.literal(1),
   purpose: z.enum([...hostedPurposes, 'founders-lens:local-workspace:read-only', 'founders-lens:local-workspace:create-idea',
+    'founders-lens:local-workspace:edit-idea',
     'founders-lens:local-workspace:read-conversations', 'founders-lens:local-workspace:create-conversation',
     'founders-lens:local-workspace:save-user-message',
     'founders-lens:local-generation:submit', 'founders-lens:local-generation:dispatch',

@@ -1,0 +1,11 @@
+# Founder's Lens engineering
+
+Follow the branch, review and release workflow in [CONTRIBUTING.md](https://github.com/rohnn-afk/Founders-Lens/blob/main/CONTRIBUTING.md). Use one checkout, permanent `main` and `staging` branches, and short-lived conventional topic branches. Preserve local work. Use focused commits and required CI, and keep the public demo separate.
+
+- Before a milestone, inspect the relevant code, tests and design contracts. State the user outcome, existing behavior, gaps, affected boundaries, security constraints, tests and acceptance criteria briefly. Then implement within scope.
+- Keep the modular monolith. Separate React presentation, HTTP transport, business logic, persistence and asynchronous work. Prefer composition and small cohesive modules. Apply SOLID, KISS, YAGNI and DRY where they improve correctness or clarity. Reuse existing utilities and schemas before adding dependencies, abstractions or infrastructure.
+- Use strict TypeScript, descriptive names, explicit validation and errors. Document business rules and security assumptions. Keep sensitive decisions on the server. Build accessible, responsive user journeys with loading, empty, success and error states.
+- Follow the existing PostgreSQL and Prisma contracts. Preserve ownership, constraints and transaction boundaries. Use idempotency for duplicate-prone operations and optimistic concurrency for edits. Review schema changes and preserve hosted data.
+- Preserve Clerk, live authority and privacy checks, signed decision expiry and fail-closed behavior. Keep secrets outside Git and retain the container security gates. Hosted sensitive capabilities, destructive data changes and new paid infrastructure require explicit approval.
+- Keep REST status codes and OpenAPI aligned with mounted capabilities. Test meaningful logic, API and persistence boundaries, authorization failures and critical browser journeys using disposable fixtures. Report only tests actually run.
+- A milestone is done when the user journey works, contracts and security rules hold, relevant tests pass, limitations are recorded, and required CI and authorized hosted verification pass. Resolve independent work before reporting a concrete blocker.

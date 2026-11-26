@@ -12,7 +12,7 @@ import { generationRoutes } from '../apps/api/dist/generation/routes.js';
 import { SecurityError } from '../apps/api/dist/security/errors.js';
 import { messageCreate, messageDto } from '../apps/api/dist/submission/contracts.js';
 import { submissionRoutes } from '../apps/api/dist/submission/routes.js';
-import { ideaCreate, ideaDto, conversationCreate, conversationDto } from '../apps/api/dist/workspace/contracts.js';
+import { ideaCreate, ideaDetailsPatch, ideaDto, conversationCreate, conversationDto } from '../apps/api/dist/workspace/contracts.js';
 import { localConversationRoutes, workspaceIdeaListRoutes } from '../apps/api/dist/workspace/routes.js';
 import { stagingReadRoutes } from '../apps/api/dist/workspace/staging-composition.js';
 
@@ -156,7 +156,7 @@ test('staging Swagger is reference-only and documents the actual read surface', 
 test('locally admitted operations include accurate request and response contracts', async t => {
   const router = Router();
   const unused = async () => assert.fail('fixture route called unexpectedly');
-  mountDocumentedRouter(router, workspaceIdeaListRoutes(ideas, authenticate, { createIdea: unused }));
+  mountDocumentedRouter(router, workspaceIdeaListRoutes(ideas, authenticate, { createIdea: unused }, { patchIdea: unused }));
   mountDocumentedRouter(router, submissionRoutes({}, authenticate, { readConversation: scopedId }));
   mountDocumentedRouter(router, generationRoutes({}, authenticate, { statusOnly: true }));
   mountDocumentedRouter(router, localConversationRoutes({ ...reads, create: unused, save: unused }, authenticate));
@@ -167,6 +167,7 @@ test('locally admitted operations include accurate request and response contract
   const paths = spec.paths;
   const operations = [
     [paths['/api/v1/ideas'].post, ideaCreate, ideaDto, 201],
+    [paths['/api/v1/ideas/{ideaId}'].patch, ideaDetailsPatch, ideaDto, 200],
     [paths['/api/v1/ideas/{ideaId}/conversations'].post, conversationCreate, conversationDto, 201],
     [paths['/api/v1/conversations/{conversationId}/messages/save'].post, messageCreate, messageDto, 201],
     [paths['/api/v1/conversations/{conversationId}/messages'].post, messageCreate, null, 202],
@@ -190,6 +191,9 @@ test('locally admitted operations include accurate request and response contract
   assert.equal(create.requestBody.content['application/json'].schema.properties.summary.maxLength, 5000);
   assert.ok(create.responses[201].headers.ETag);
   assert.ok(create.responses[201].headers.Location);
+  const edit = paths['/api/v1/ideas/{ideaId}'].patch;
+  assert.ok(edit.parameters.some(param => param.name === 'If-Match' && param.required));
+  assert.ok(edit.responses[412] && edit.responses[428] && edit.responses[200].headers.ETag);
   const messages = paths['/api/v1/conversations/{conversationId}/messages'];
   assert.equal(messages.post.requestBody.content['application/json'].schema.properties.content.maxLength, 10000);
   assert.deepEqual(messages.get.parameters.find(param => param.name === 'assistantResponseVersion').schema.enum, ['1', '2']);

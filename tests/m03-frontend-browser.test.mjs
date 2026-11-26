@@ -206,6 +206,32 @@ test('Edge synthetic navigation, history, accessibility and identity isolation',
   }
   await symlink(path.join(root, 'node_modules'), path.join(isolated, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
   await writeFile(path.join(web, 'app/app/layout.tsx'), fixture);
+  await mkdir(path.join(web, 'app/idea-edit-fixture'));
+  await writeFile(path.join(web, 'app/idea-edit-fixture/page.tsx'), `
+'use client';
+import { useState } from 'react';
+import { IdeaEditForm } from '../../features/workspace/idea-edit-form';
+import type { Idea } from '../../features/workspace/contracts';
+export default function Page() {
+  const [idea, setIdea] = useState<Idea>({ id: 'fixture', title: 'Original idea', summary: 'Old summary',
+    status: 'ACTIVE', version: 1, createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' });
+  const [version, setVersion] = useState(2);
+  const [saved, setSaved] = useState(false);
+  return <main><h1>{idea.title}</h1>{saved ? <p role="status">Idea updated.</p> :
+    <IdeaEditForm key={idea.version} idea={idea}
+      edit={async (id, expected, patch) => {
+        if (id !== idea.id || expected !== version) return { status: 412 };
+        const updated = { ...idea, ...patch, version: version + 1 };
+        setVersion(updated.version);
+        return { status: 200, data: updated };
+      }}
+      denied={() => {}}
+      close={() => setSaved(true)}
+      reload={() => setIdea({ ...idea, version })}
+      saved={updated => { setIdea(updated); setSaved(true); }} />}
+  </main>;
+}
+`);
   const env = { ...process.env, NEXT_TELEMETRY_DISABLED: '1' };
   await run(process.execPath, [next, 'build', '--webpack'], { cwd: web, env, timeout: 120_000 });
   const port = await freePort();
@@ -480,4 +506,20 @@ test('Edge synthetic navigation, history, accessibility and identity isolation',
   await text('This workspace item is unavailable.');
   assert.equal(await evaluate('document.querySelector("main").innerText.includes("Synthetic message")'), false);
   assert.equal(await evaluate('sessionStorage.getItem(' + JSON.stringify(key) + ')'), null);
+  await open('/idea-edit-fixture');
+  await text('Original idea');
+  const rename = value => evaluate(`(() => {
+    const input = document.querySelector('#edit-idea-title');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(value)});
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  await rename('Stale title');
+  await click('Save changes');
+  await text('This idea changed since you opened it.');
+  assert.equal(await evaluate('document.querySelector("#edit-idea-title").value'), 'Stale title');
+  await click('Reload ideas and discard draft');
+  await rename('Updated idea');
+  await click('Save changes');
+  await text('Idea updated.');
+  await text('Updated idea');
 });
