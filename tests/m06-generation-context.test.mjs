@@ -12,6 +12,9 @@ test('offline structured metadata changes for an authorized follow-up without cl
   assert.equal(first.primaryStrategy, 'CHALLENGE');
   assert.equal(later.primaryStrategy, 'REFLECT');
   assert.notEqual(later.nextQuestion, first.nextQuestion);
+  assert.equal(first.card, undefined);
+  assert.equal(later.card.type, 'experiment');
+  assert.match(later.card.plan, /baseline/);
   for (const reply of [first, later]) {
     assert.deepEqual([reply.citationRefs, reply.proposalIds, reply.actions], [[], [], []]);
   }

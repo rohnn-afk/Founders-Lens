@@ -62,6 +62,13 @@ export function Transcript({ conversationId, page, pageIndex, archived }: {
           {item.role === 'USER' ? <p className={styles['founderText']}>{item.content}</p> :
             <div className={styles['assistantText']}>
               <AssistantText content={item.content} />
+              {item.assistantContent?.card && <div>
+                <p><strong>Suggested experiment</strong></p>
+                <p>{item.assistantContent.card.hypothesis}</p>
+                <p>{item.assistantContent.card.plan}</p>
+                <ul>{item.assistantContent.card.successSignals.map((signal, index) => <li key={index}>{signal}</li>)}</ul>
+                <p>{item.assistantContent.card.timebox}</p>
+              </div>}
               {item.assistantContent?.nextQuestion && <p>{item.assistantContent.nextQuestion}</p>}
             </div>}
         </li>)}

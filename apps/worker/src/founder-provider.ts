@@ -59,15 +59,36 @@ export function founderPrompt(context: GenerationContext): FounderPrompt {
 }
 
 /** An offline adapter for exercising the orchestration, independent of claim quality. */
-export function deterministicFounderProvider(): FounderProvider {
+export function deterministicFounderProvider({ contextual = false } = {}): FounderProvider {
   return {
     async generate(prompt, signal) {
       signal.throwIfAborted();
       validatePrompt(prompt);
-      return { text: 'Identify the assumption that would change your decision. Test it with a small segment and set a pass threshold before reviewing results.',
+      return { text: contextual ? offlineContextReply(prompt) :
+        'Identify the assumption that would change your decision. Test it with a small segment and set a pass threshold before reviewing results.',
         usage: null, responseId: null };
     }
   };
+}
+
+function offlineContextReply(prompt: FounderPrompt): string {
+  const parsed: unknown = JSON.parse(prompt.data);
+  if (!parsed || typeof parsed !== 'object' || !('current' in parsed) || typeof parsed.current !== 'string' ||
+    !('recent' in parsed) || !Array.isArray(parsed.recent) || parsed.recent.length > 3) {
+    throw new Error('Invalid offline context');
+  }
+  const excerpt = (text: string) => {
+    const characters = Array.from(text.replace(/\s+/g, ' ').trim());
+    return '“' + characters.slice(0, 160).join('') + (characters.length > 160 ? '…' : '') + '”';
+  };
+  const prior: unknown = parsed.recent.at(-1);
+  if (prior !== undefined) {
+    if (!prior || typeof prior !== 'object' || !('user' in prior) || typeof prior.user !== 'string') {
+      throw new Error('Invalid prior offline turn');
+    }
+    return `Earlier you wrote ${excerpt(prior.user)}. Your follow-up is ${excerpt(parsed.current)}. Keep the original test as a baseline, change one condition, and compare the same outcome for both groups. Decide what difference would justify changing course before collecting results.`;
+  }
+  return `Start with ${excerpt(parsed.current)}. Pick one assumption whose failure would change your decision. Test it with a small group and record the observable result that would make you revise the idea.`;
 }
 
 export function validatePrompt(prompt: FounderPrompt) {

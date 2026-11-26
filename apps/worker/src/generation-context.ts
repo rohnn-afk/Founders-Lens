@@ -7,6 +7,7 @@ export type GenerationContext = { current: Source; previous: Turn[]; memory: Mem
 export type OfflineAssistantContent = {
   schemaVersion: 1; primaryStrategy: 'CHALLENGE' | 'REFLECT'; nextQuestion: string;
   citationRefs: []; proposalIds: []; actions: [];
+  card?: { type: 'experiment'; hypothesis: string; plan: string; successSignals: string[]; timebox: string };
 };
 
 /** Only server-controlled metadata is derived from authorized context. */
@@ -14,6 +15,11 @@ export function offlineAssistantContent(context: GenerationContext): OfflineAssi
   const priorTurn = context.previous.length > 0;
   return { schemaVersion: 1, primaryStrategy: priorTurn ? 'REFLECT' : 'CHALLENGE',
     nextQuestion: priorTurn ? 'What changed since your previous test?' : 'What result would disprove this assumption?',
+    ...(priorTurn && { card: { type: 'experiment' as const,
+      hypothesis: 'Changing one condition will improve the outcome compared with the original test.',
+      plan: 'Keep the original test as a baseline. Change one condition and record the same outcome in both groups.',
+      successSignals: ['The difference meets a threshold chosen before collecting results.'],
+      timebox: 'One test round' } }),
     citationRefs: [], proposalIds: [], actions: [] };
 }
 

@@ -17,6 +17,10 @@ authorization, live authority and the five-minute signed window. Start a new
 window with the same command. The mode rejects hosted configuration and paid
 providers before it opens its database or queue.
 
+The development adapter quotes brief excerpts from the current and previous
+authorized turns. A follow-up can include a suggested experiment in transcript
+version 2. That card is guidance and does not create or approve an experiment.
+
 ## Designated Clerk offline acceptance
 
 Build API, dispatcher and worker, then create the dedicated loopback stores

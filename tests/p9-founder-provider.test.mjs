@@ -9,6 +9,22 @@ import { deterministicFounderProvider, founderInstructions, founderPrompt, found
 
 const source = (text, truncated = false) => ({ id: 'fixture', text, truncated });
 const input = text => founderPrompt({ current: source(text), previous: [], memory: [] });
+
+test('contextual offline replies use bounded authorized turns and distinguish follow-ups', async () => {
+  const provider = deterministicFounderProvider({ contextual: true });
+  const signal = new AbortController().signal;
+  const first = await provider.generate(input('Will tenants pay for reusable kits?'), signal);
+  const followUp = await provider.generate(founderPrompt({
+    current: source('What would change the test?'),
+    previous: [{ user: source('Will tenants pay for reusable kits?') }], memory: []
+  }), signal);
+  assert.notEqual(followUp.text, first.text);
+  assert.match(followUp.text, /Will tenants pay for reusable kits/);
+  assert.match(followUp.text, /What would change the test/);
+  assert.match(followUp.text, /same outcome for both groups/);
+  assert.equal(followUp.usage, null);
+  assert.equal(followUp.responseId, null);
+});
 const standardKey = 'AIza' + 'synthetic_fixture'.padEnd(35, '_');
 const authorizationKey = 'AQ.synthetic_authorization_fixture';
 const env = { P9_GEMINI_API_KEY: standardKey, P9_GEMINI_MODEL: 'gemini-3.1-flash-lite' };

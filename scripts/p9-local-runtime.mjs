@@ -84,7 +84,7 @@ export async function startLocalGeneration(env, report = () => {}, { determinist
   const groqKey = groq ? parseEnv(await readFile(new URL('../.env.p9-groq-worker.local', import.meta.url), 'utf8')).GROQ_API_KEY : undefined;
   const provider = textHash ? syntheticOnlyProvider(gemini ? geminiFounderProvider(env, undefined, report)
     : groq ? groqFounderProvider(groqKey, undefined, report) : deterministicProvider ?? deterministicFounderProvider(), textHash)
-    : deterministicFounderProvider();
+    : deterministicFounderProvider({ contextual: true });
   const redis = localUrl(required('FL_P9_REDIS_URL'), 'redis:', dedicated ? String(target.redisPort) : test ? '56382' : '56381');
   if (redis.pathname !== '/0' || redis.username || !/^[a-f0-9]{64}$/.test(redis.password)) throw new Error('Invalid local broker');
   const prefix = 'founders-lens-p9-local-' + run;

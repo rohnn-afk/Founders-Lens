@@ -38,9 +38,14 @@ const message = (value: Message, id: string) => typeof value?.id === 'string' &&
   typeof value.content === 'string' && timestamp(value.createdAt) &&
   (value.assistantContent === undefined || (value.role === 'ASSISTANT' && structuredAssistant(value.assistantContent)));
 function structuredAssistant(value: NonNullable<Message['assistantContent']>) {
+  const card = value?.card;
+  const text = (item: unknown, limit: number) => typeof item === 'string' && item.length > 0 && item.length <= limit;
   return value?.schemaVersion === 1 && ['EXPLORE', 'CHALLENGE', 'INFORM', 'COMPARE', 'ACT', 'REFLECT'].includes(value.primaryStrategy) &&
     [value.citationRefs, value.proposalIds, value.actions].every(items => Array.isArray(items) && items.length === 0) &&
-    (value.nextQuestion === undefined || typeof value.nextQuestion === 'string' && value.nextQuestion.length > 0 && value.nextQuestion.length <= 2000);
+    (value.nextQuestion === undefined || text(value.nextQuestion, 2000)) &&
+    (card === undefined || (card?.type === 'experiment' && text(card.hypothesis, 2000) && text(card.plan, 3000) &&
+      text(card.timebox, 200) && Array.isArray(card.successSignals) && card.successSignals.length >= 1 &&
+      card.successSignals.length <= 6 && card.successSignals.every(signal => text(signal, 1000))));
 }
 
 /** Construct session-scoped P8 and opt-in generation transports. */

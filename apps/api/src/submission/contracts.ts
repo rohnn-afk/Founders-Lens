@@ -55,6 +55,9 @@ export const storedMessageText = z.object({ text: z.string() });
 export const assistantContent = z.strictObject({
   schemaVersion: z.literal(1), primaryStrategy: z.enum(['EXPLORE', 'CHALLENGE', 'INFORM', 'COMPARE', 'ACT', 'REFLECT']),
   citationRefs: z.tuple([]), proposalIds: z.tuple([]), actions: z.tuple([]),
+  card: z.strictObject({ type: z.literal('experiment'), hypothesis: z.string().min(1).max(2000),
+    plan: z.string().min(1).max(3000), successSignals: z.array(z.string().min(1).max(1000)).min(1).max(6),
+    timebox: z.string().min(1).max(200) }).optional(),
   nextQuestion: z.string().min(1).max(2000).optional()
 });
 export const structuredMessageDto = z.union([messageDto,

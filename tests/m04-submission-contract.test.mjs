@@ -179,7 +179,9 @@ test('isolated recovery projects the original IDs and negotiates legacy transcri
 
 test('structured history rejects unsupported claims and binds cursors to the response version', async t => {
   const content = { text: 'Offline response', assistantContent: { schemaVersion: 1, primaryStrategy: 'REFLECT',
-    citationRefs: [], proposalIds: [], actions: [], nextQuestion: 'What changed?' } };
+    citationRefs: [], proposalIds: [], actions: [], nextQuestion: 'What changed?',
+    card: { type: 'experiment', hypothesis: 'The second condition will improve the outcome.',
+      plan: 'Compare both conditions.', successSignals: ['The improvement meets the threshold.'], timebox: 'One round' } } };
   const assistant = { id: randomUUID(), conversationId, sequence: 2, role: 'ASSISTANT', turn: 1, slot: 1,
     contentSchemaVersion: 2, content, createdAt: new Date() };
   const repo = {
