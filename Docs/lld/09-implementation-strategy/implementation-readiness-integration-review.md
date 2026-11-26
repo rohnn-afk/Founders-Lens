@@ -54,6 +54,26 @@ flowchart TD
 
 This is an **overall sequencing outline**, not a claim that security begins at M10. The P5-AM01 fail-closed access boundary, authorization and no-paid-call policy must be present from the earliest applicable implementation tasks. The complete independent restore fault proof is M10 and remains a release blocker until actually executed.
 
+## Local implementation acceptance — 2026-11-26
+
+**P6 closed for the local authenticated workspace.** The designated Clerk
+account created and edited an idea, created a conversation, submitted a message,
+and reloaded its committed history. The local database and worker verified
+transactional submission, a published outbox event, BullMQ processing, and a
+selected assistant reply. The authenticated browser observed
+`generation.completed` for attempt `862ed3f9-f59d-4019-82ff-2630013998e9`
+and output message `1ca29a8a-abd5-46e2-8e0e-a4e1758e108f`. Disposable
+integration tests cover retry, duplicate submission, ownership denial, SSE
+reconnect, and worker recovery.
+
+**M06 is in progress.** The offline workspace has verified live SSE, bounded
+conversation context, and a persisted v2 assistant projection with a strategy
+and follow-up question. The local follow-up implementation adds contextual
+offline text and an optional experiment card. Version 1 remains text-only.
+Approved memory lineage, additional card types and resource references, and external-provider quality
+evaluation remain open. Staging image approval and hosted capability activation
+are tracked separately from local acceptance.
+
 ## 4. Milestone dependency and authority audit
 
 | Milestone | Dependency / founder result | Phase 7C task coverage | Mandatory proof emphasis | Gate / exception |
