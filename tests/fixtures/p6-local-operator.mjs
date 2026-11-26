@@ -6,7 +6,7 @@ import { parseEnv } from 'node:util';
 import pg from 'pg';
 import { createSuppressionLedger } from '../../apps/api/dist/security/suppression-ledger.js';
 import { SubjectKeys } from '../../apps/api/dist/security/subject-key.js';
-import { cedarAcceptanceTarget, cedarRecheckTarget } from '../../apps/api/dist/generation/cedar-acceptance-target.js';
+import { cedarAcceptanceTarget, cedarRecheckTarget, offlineAcceptanceTarget } from '../../apps/api/dist/generation/cedar-acceptance-target.js';
 
 /** Verify the isolated role inventory before altering any login. Administrators are trusted. */
 async function audit(pool, expected) {
@@ -61,7 +61,8 @@ export async function withP6Provisioning(context, bind) {
   const { primary, authority } = context;
   await context.verify();
   const runtimeRoles = ['fl_p6_workspace', ...(context.isolated
-    ? ['fl_p8_conversations', 'fl_p9_submit', 'fl_p9_dispatch', 'fl_p9_worker', 'fl_p9_context_verifier'] : [])];
+    ? ['fl_p8_conversations', 'fl_p9_submit', 'fl_p9_dispatch', 'fl_p9_worker', 'fl_p9_context_verifier'] : []),
+    ...(context.offline ? ['fl_p7_idea_create', 'fl_idea_edit'] : [])];
   await audit(primary, ['postgres', 'fl_p6_provision', ...runtimeRoles]);
   await audit(authority, ['postgres', 'ledger_reader', 'ledger_writer']);
   const login = async (pool, role) => (await pool.query('SELECT rolcanlogin FROM pg_roles WHERE rolname = $1', [role])).rows[0]?.rolcanlogin;
@@ -185,11 +186,13 @@ async function prepareWorkspaceRole(context, role, grantFile, environmentFile, p
   }
 }
 
-export async function p6Operator(t, { isolated = false, cedar = false, recheck = false } = {}) {
+export async function p6Operator(t, { isolated = false, cedar = false, recheck = false, offline = false } = {}) {
   assert.ok(!cedar || isolated, 'Isolated Cedar operator target required');
   assert.ok(!recheck || cedar, 'Cedar profile required for recheck target');
-  const target = recheck ? cedarRecheckTarget : cedarAcceptanceTarget;
-  const envPrefix = recheck ? '.env.p9-cedar-recheck-primary.' : cedar ? '.env.p9-cedar-primary.' : isolated ? '.env.p9-primary.' : '.env.p6.';
+  assert.ok(!offline || isolated && !cedar, 'Dedicated offline operator target required');
+  const target = offline ? offlineAcceptanceTarget : recheck ? cedarRecheckTarget : cedarAcceptanceTarget;
+  const envPrefix = offline ? '.env.p9-offline-primary.' : recheck ? '.env.p9-cedar-recheck-primary.' :
+    cedar ? '.env.p9-cedar-primary.' : isolated ? '.env.p9-primary.' : '.env.p6.';
   const local = parseEnv(await readFile(envPrefix + 'runtime.local', 'utf8'));
   const operator = parseEnv(await readFile(envPrefix + 'operator.local', 'utf8'));
   const { record, integrity } = JSON.parse(Buffer.from(local.FL_P6_GENESIS, 'base64url').toString('utf8'));
@@ -205,9 +208,9 @@ export async function p6Operator(t, { isolated = false, cedar = false, recheck =
     t.after(() => result.end());
     return result;
   };
-  const primaryPort = cedar ? target.primaryPort : isolated ? 55435 : 55437;
-  const authorityPort = cedar ? target.authorityPort : isolated ? 55438 : 55436;
-  const primaryDatabase = cedar ? target.database : isolated ? 'founders_lens_p9_local' : 'founders_lens_p6_local';
+  const primaryPort = cedar || offline ? target.primaryPort : isolated ? 55435 : 55437;
+  const authorityPort = cedar || offline ? target.authorityPort : isolated ? 55438 : 55436;
+  const primaryDatabase = cedar || offline ? target.database : isolated ? 'founders_lens_p9_local' : 'founders_lens_p6_local';
   const primary = pool(primaryPort, primaryDatabase, 'postgres', operator.FL_P6_PRIMARY_ADMIN_PASSWORD);
   const authority = pool(authorityPort, 'suppression_proof', 'postgres', operator.FL_SUPPRESSION_ADMIN_PASSWORD, 2);
   const reader = pool(authorityPort, 'suppression_proof', 'ledger_reader', local.FL_SUPPRESSION_READER_PASSWORD);
@@ -229,7 +232,7 @@ export async function p6Operator(t, { isolated = false, cedar = false, recheck =
     return { primaryTarget, snapshot };
   }
   await verify();
-  return { primary, authority, ledger, subjectKeys, verify, isolated, cedar, recheck,
+  return { primary, authority, ledger, subjectKeys, verify, isolated, cedar, recheck, offline,
     provision: password => pool(primaryPort, primaryDatabase, 'fl_p6_provision', password) };
 }
 

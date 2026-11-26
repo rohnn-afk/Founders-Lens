@@ -1,5 +1,55 @@
 ﻿# P9 local deterministic dispatcher and worker
 
+## Environment boundaries
+
+| Environment | Authentication and data | Generation |
+| --- | --- | --- |
+| Local offline acceptance | Designated Clerk Development account, dedicated loopback PostgreSQL primary and authority, authenticated local Redis | Deterministic worker with one pinned conversation and synthetic prompt |
+| Automated integration | Disposable PostgreSQL and Redis, controlled test principals and applied migrations | Deterministic provider and failure injection |
+| Hosted staging | Clerk account binding, restricted Neon roles, independent authority and release gates | Read-only workspace |
+| Production | Separate identities and infrastructure, reviewed deployment and capability approvals | Provider activation requires separate authorization |
+
+The one-shot scope used for acceptance and provider experiments is too narrow
+for routine offline feature development. A durable local developer profile
+should retain ownership and local authority checks, use dedicated loopback
+stores, and refuse paid-provider or hosted configuration. The offline acceptance
+launcher consolidates the existing signing steps without changing grant expiry.
+
+## Designated Clerk offline acceptance
+
+Build API, dispatcher and worker, then create the dedicated loopback stores
+once with `node scripts/p9-cedar-bootstrap.mjs --offline`. The command refuses
+existing resources. An interrupted run before coverage initialization can
+resume with `--offline --resume` against the same verified Docker project.
+
+Start the Clerk-enabled web at `http://127.0.0.1:3000`. Run
+`tests/clerk-session-browser.test.mjs --offline-bind-account` with the ignored
+Clerk development manifest and exact loopback authorized party. Sign in in the
+Edge window. The restricted provisioning role closes after binding.
+
+Set the existing `P6_OPERATOR_PRIVATE_KEY_FILE` and `P6_OPERATOR_PUBLIC_KEY_FILE`
+paths in the operator shell. With port 3001 clear, launch:
+
+```powershell
+node scripts/p9-offline-acceptance.mjs workspace
+```
+
+Create and edit a synthetic idea, then create an empty conversation. Copy the
+conversation ID from the browser URL. Stop the launcher and run:
+
+```powershell
+node scripts/p9-offline-acceptance.mjs generation <conversation-id>
+```
+
+Reload the conversation, submit the printed synthetic prompt exactly, and
+reload after completion to verify history. The operator keys and database
+admin credentials stay outside the API and background processes. Ctrl+C stops
+the launcher. Stop the three `fl-p9-offline-acceptance` project containers to
+retain state. A reset deletes only that project's volumes and its matching
+ignored manifests after verifying their identities and reviewing data retention.
+
+## Runtime configuration
+
 Run the launcher from the repository root after building the API, dispatcher,
 and worker. Feed it a dedicated ignored environment file. Keep the API process
 on its separate local P9 submit/status configuration.
@@ -56,6 +106,17 @@ the alternate primary/authority target pinning selected by
 Run the disposable proof with `node tests/m05-local-generation.test.mjs --live`.
 The standalone adapter in this command records a clearly labeled offline
 observation. No external model is used.
+
+## Local Clerk clock check
+
+The Express Clerk adapter verifies token timestamps with zero clock skew. If
+Clerk shows an active session but a fresh bearer receives HTTP 401, check the
+workstation's clock before changing authentication settings. On Windows, use
+`w32tm /stripchart /computer:time.windows.com /samples:3 /dataonly` and sync in
+**Settings → Time & language → Date & time** if needed. Reload the workspace
+after syncing. An expired signed local admission is a separate failure that
+returns HTTP 503 after token verification. Refresh it through the existing local
+operator procedure.
 
 ## Recovery proofs
 

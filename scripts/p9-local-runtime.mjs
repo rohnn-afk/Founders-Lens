@@ -9,7 +9,8 @@ import { createExecutionAuthorizer, createContextGrantIssuer } from '../apps/api
 import { createRuntimeRecoveryClearance } from '../apps/api/dist/privacy/runtime-recovery-clearance.js';
 import { createSuppressionLedger } from '../apps/api/dist/security/suppression-ledger.js';
 import { generationReservationTokens, localGenerationModel, localGenerationPolicy } from '../apps/api/dist/generation/local-policy.js';
-import { cedarAcceptanceEnabled, cedarAcceptanceTarget, cedarRecheckTarget } from '../apps/api/dist/generation/cedar-acceptance-target.js';
+import { cedarAcceptanceEnabled, cedarAcceptanceTarget, cedarRecheckTarget, offlineAcceptanceEnabled,
+  offlineAcceptanceTarget } from '../apps/api/dist/generation/cedar-acceptance-target.js';
 import { isUuid } from '../apps/dispatcher/dist/config.js';
 import { dispatcher } from '../apps/dispatcher/dist/dispatch.js';
 import { generationQueue } from '../apps/dispatcher/dist/generation-queue.js';
@@ -45,8 +46,11 @@ export async function startLocalGeneration(env, report = () => {}, { determinist
   const test = env.FL_P9_DISPOSABLE === '1';
   const isolated = env.FL_P9_ISOLATED === '1';
   const cedar = cedarAcceptanceEnabled(env);
+  const offline = offlineAcceptanceEnabled(env);
   const recheck = env.FL_P9_CEDAR_ACCEPTANCE === '2';
-  const target = recheck ? cedarRecheckTarget : cedarAcceptanceTarget;
+  const target = offline ? offlineAcceptanceTarget : recheck ? cedarRecheckTarget : cedarAcceptanceTarget;
+  const dedicated = cedar || offline;
+  const brokerProfile = offline ? 'offline' : recheck ? 'cedar-recheck' : cedar ? 'cedar' : test;
   if (env.NODE_ENV === 'production' || (!live && env.FL_P9_LOCAL_RUNTIME !== 'deterministic') ||
     env.GROQ_API_KEY || (cedar && !groq) ||
     (test && isolated) ||
@@ -79,12 +83,12 @@ export async function startLocalGeneration(env, report = () => {}, { determinist
   const groqKey = groq ? parseEnv(await readFile(new URL('../.env.p9-groq-worker.local', import.meta.url), 'utf8')).GROQ_API_KEY : undefined;
   const provider = syntheticOnlyProvider(gemini ? geminiFounderProvider(env, undefined, report)
     : groq ? groqFounderProvider(groqKey, undefined, report) : deterministicProvider ?? deterministicFounderProvider(), textHash);
-  const redis = localUrl(required('FL_P9_REDIS_URL'), 'redis:', cedar ? String(target.redisPort) : test ? '56382' : '56381');
+  const redis = localUrl(required('FL_P9_REDIS_URL'), 'redis:', dedicated ? String(target.redisPort) : test ? '56382' : '56381');
   if (redis.pathname !== '/0' || redis.username || !/^[a-f0-9]{64}$/.test(redis.password)) throw new Error('Invalid local broker');
   const prefix = 'founders-lens-p9-local-' + run;
-  const primaryPort = cedar ? String(target.primaryPort) : test ? '55439' : isolated ? '55435' : '55437';
-  const authorityPort = cedar ? String(target.authorityPort) : test ? '55440' : isolated ? '55438' : '55436';
-  const database = cedar ? '/' + target.database : test ? '/founders_lens_m05_e2e_test' : isolated ? '/founders_lens_p9_local' : '/founders_lens_p6_local';
+  const primaryPort = dedicated ? String(target.primaryPort) : test ? '55439' : isolated ? '55435' : '55437';
+  const authorityPort = dedicated ? String(target.authorityPort) : test ? '55440' : isolated ? '55438' : '55436';
+  const database = dedicated ? '/' + target.database : test ? '/founders_lens_m05_e2e_test' : isolated ? '/founders_lens_p9_local' : '/founders_lens_p6_local';
   const resources = [];
   function pool(url, path) {
     if (url.pathname !== path || !/^[a-z][a-z0-9_]{0,62}$/.test(url.username)) throw new Error('Invalid database login');
@@ -164,7 +168,7 @@ export async function startLocalGeneration(env, report = () => {}, { determinist
         readContext: leasedContextReader(workerPool,
           createContextGrantIssuer(verifier, ledger.authority, executionPermission, urls[2].username, approved))
       });
-    consumer = generationConsumer(redis, prefix, worker, recheck ? 'cedar-recheck' : cedar ? 'cedar' : test);
+    consumer = generationConsumer(redis, prefix, worker, brokerProfile);
     const brokerTimer = setTimeout(() => abort.abort(), 4000);
     const onAbort = () => consumer.close().catch(() => {});
     abort.signal.addEventListener('abort', onAbort, { once: true });
@@ -176,7 +180,7 @@ export async function startLocalGeneration(env, report = () => {}, { determinist
       abort.signal.removeEventListener('abort', onAbort);
     }
     const outbox = outboxRepository(dispatchPool, approved);
-    pump = dispatcher(outbox, generationQueue(redis, prefix, undefined, recheck ? 'cedar-recheck' : cedar ? 'cedar' : test),
+    pump = dispatcher(outbox, generationQueue(redis, prefix, undefined, brokerProfile),
       () => Promise.reject(new Error('Independent verification required')), outcome => report(outcome), {
         verifyExecution: createExecutionAuthorizer(verifier, ledger.authority, dispatchPermission, 'dispatch', approved)
       });

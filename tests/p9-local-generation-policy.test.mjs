@@ -2,7 +2,21 @@
 import { createHash, randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { localGenerationModel, localGenerationPolicy } from '../apps/api/dist/generation/local-policy.js';
-import { cedarAcceptanceEnabled, cedarAcceptanceTarget, cedarRecheckTarget } from '../apps/api/dist/generation/cedar-acceptance-target.js';
+import { cedarAcceptanceEnabled, cedarAcceptanceTarget, cedarRecheckTarget, offlineAcceptanceEnabled,
+  offlineAcceptanceTarget } from '../apps/api/dist/generation/cedar-acceptance-target.js';
+
+test('offline acceptance requires an explicit isolated deterministic local profile', () => {
+  const env = { FL_P9_OFFLINE_ACCEPTANCE: '1', FL_P9_ISOLATED: '1', FL_P9_LOCAL_RUNTIME: 'deterministic' };
+  assert.equal(offlineAcceptanceEnabled({}), false);
+  assert.equal(offlineAcceptanceEnabled(env), true);
+  assert.deepEqual(offlineAcceptanceTarget, { primaryPort: 55445, authorityPort: 55446, redisPort: 56385,
+    database: 'founders_lens_offline_acceptance' });
+  for (const invalid of [{ NODE_ENV: 'production' }, { FL_DEPLOYMENT: 'staging' }, { FL_P9_ISOLATED: '0' },
+    { FL_P9_LOCAL_RUNTIME: 'gemini' }, { FL_P9_PROVIDER: 'groq' }, { GROQ_API_KEY: 'fixture' },
+    { P9_GEMINI_API_KEY: 'fixture' }, { FL_P9_CEDAR_ACCEPTANCE: '1' }, { FL_P9_DISPOSABLE: '1' }]) {
+    assert.throws(() => offlineAcceptanceEnabled({ ...env, ...invalid }), /Offline acceptance profile unavailable/);
+  }
+});
 
 const content = 'Synthetic: a clinic booking exercise.';
 const config = { model: 'gemini-3.1-flash-lite', priceVersion: 'v1:offline-pricing-fixture',

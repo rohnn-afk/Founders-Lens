@@ -38,7 +38,8 @@ async function startApi(localPort: number) {
   const docs = documentationMode(process.env);
   const staging = deployment === 'staging' ? stagingConfig(process.env) : undefined;
   const hosted = staging && await stagingWorkspace(process.env, staging);
-  const local = hosted ?? await localReadOnlyWorkspace(process.env).catch(() => {
+  const local = hosted ?? await localReadOnlyWorkspace(process.env).catch(error => {
+    if (process.env['FL_P9_OFFLINE_ACCEPTANCE'] === '1') throw error;
     console.error('Local workspace clearance unavailable.');
     return undefined;
   });
