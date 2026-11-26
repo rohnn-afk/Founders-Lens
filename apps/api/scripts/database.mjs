@@ -17,7 +17,8 @@ export const sha256 = value => createHash('sha256').update(value).digest('hex');
 const approvedMigrations = [
   ['0001_approved_baseline', '19fcf7f5f144d1ff39a00a489193392e9deaa60617ebe2f42a8ee576e203032b'],
   ['0002_p9_context', 'e30c7f7003eb74fa715e3457d4ec220f08bc33f9b66287dab2d3979a1c212fff'],
-  ['0003_p9_provider_receipt', 'a0a3a093f734c1f55440cd5b5a74f386191bb1a6e5403a78d7248511ecf03058']
+  ['0003_p9_provider_receipt', 'a0a3a093f734c1f55440cd5b5a74f386191bb1a6e5403a78d7248511ecf03058'],
+  ['0004_m06_selected_context', '7533b2e2afdabf85653f100fce9abb7cf24d9a81f885dc740cd51fc975770194']
 ];
 
 export async function settings(readSettingsFile = readFile) {

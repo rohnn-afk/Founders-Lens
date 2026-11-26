@@ -16,11 +16,12 @@ test('contextual offline replies use bounded authorized turns and distinguish fo
   const first = await provider.generate(input('Will tenants pay for reusable kits?'), signal);
   const followUp = await provider.generate(founderPrompt({
     current: source('What would change the test?'),
-    previous: [{ user: source('Will tenants pay for reusable kits?') }], memory: []
+    previous: [{ user: source('Will tenants pay for reusable kits?'), assistant: source('Measure actual reservations.') }], memory: []
   }), signal);
   assert.notEqual(followUp.text, first.text);
   assert.match(followUp.text, /Will tenants pay for reusable kits/);
   assert.match(followUp.text, /What would change the test/);
+  assert.match(followUp.text, /The previous reply suggested “Measure actual reservations\.”/);
   assert.match(followUp.text, /same outcome for both groups/);
   assert.equal(followUp.usage, null);
   assert.equal(followUp.responseId, null);

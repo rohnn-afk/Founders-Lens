@@ -20,6 +20,9 @@ providers before it opens its database or queue.
 The development adapter quotes brief excerpts from the current and previous
 authorized turns. A follow-up can include a suggested experiment in transcript
 version 2. That card is guidance and does not create or approve an experiment.
+The local development projection requires migration `0004_m06_selected_context`
+to include selected assistant replies. It never uses an answer from another
+conversation, a different context epoch or a superseded generation.
 
 ## Designated Clerk offline acceptance
 

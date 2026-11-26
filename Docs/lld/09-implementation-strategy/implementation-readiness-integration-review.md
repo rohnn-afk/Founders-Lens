@@ -69,7 +69,10 @@ reconnect, and worker recovery.
 **M06 is in progress.** The offline workspace has verified live SSE, bounded
 conversation context, and a persisted v2 assistant projection with a strategy
 and follow-up question. The local follow-up implementation adds contextual
-offline text and an optional experiment card. Version 1 remains text-only.
+offline text and an optional experiment card. The local context reader includes
+only the selected earlier answer in the same conversation, idea and context
+epoch. Revised or removed memory closes the historical context window until
+lineage-aware revalidation is available. Version 1 remains text-only.
 Approved memory lineage, additional card types and resource references, and external-provider quality
 evaluation remain open. Staging image approval and hosted capability activation
 are tracked separately from local acceptance.

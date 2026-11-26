@@ -400,6 +400,7 @@ async function postgres(id, run, credentials) {
       if (!browserMode) {
         await admin.query((await readFile('apps/api/prisma/migrations/0002_p9_context/migration.sql')).toString());
         await admin.query((await readFile('apps/api/prisma/migrations/0003_p9_provider_receipt/migration.sql')).toString());
+        await admin.query((await readFile('apps/api/prisma/migrations/0004_m06_selected_context/migration.sql')).toString());
         await admin.query(`CREATE ROLE fl_p9_context LOGIN NOINHERIT PASSWORD '${credentials.context}';
           CREATE ROLE fl_p9_context_verifier LOGIN NOINHERIT PASSWORD '${credentials.contextVerifier}';
           CREATE ROLE fl_p9_submit LOGIN NOINHERIT PASSWORD '${credentials.standaloneSubmit}';
@@ -481,7 +482,7 @@ async function verify(pool, name, run) {
 }
 
 /** Exercise the new function through separate authenticated PostgreSQL logins. */
-async function verifyContextProjection(credentials, attempt, lease, epoch) {
+async function verifyContextProjection(credentials, attempt, lease, epoch, selectedOutput) {
   const connect = (user, password) => new Pool({ host: '127.0.0.1', port: 55439, database, user, password, max: 1 });
   const reader = connect('fl_p9_context', credentials.context);
   const wrong = connect('fl_p9_other_context', credentials.context);
@@ -504,6 +505,7 @@ async function verifyContextProjection(credentials, attempt, lease, epoch) {
     assert.ok(projection?.current.text);
     assert.deepEqual(projection.memory, []);
     assert.ok(projection.previous.length <= 3);
+    if (selectedOutput) assert.deepEqual(projection.previous.map(turn => turn.assistant?.id), [selectedOutput]);
     assert.equal(await read(reader), null);
     await issuer.query(`INSERT INTO p9_context.context_grant VALUES ($1,$2,$3,clock_timestamp()-interval '1 second')`,
       [attempt, lease, epoch]);
@@ -976,10 +978,26 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, submissionPris
   await seedMemory(foreignIdea, 'Foreign account confidential marker', 'ACTIVE', foreign);
   await fixture.query(`INSERT INTO "MemoryProposal" (id,"ideaId",kind,candidate)
     VALUES ($1,$2,'FACT',$3)`, [randomUUID(), idea, { text: 'Pending confidential marker' }]);
-  fake = undefined;
+  let contextReady, finishFollowUp;
+  const followUpContext = new Promise(resolve => { contextReady = resolve; });
+  const followUpGate = new Promise(resolve => { finishFollowUp = resolve; });
+  fake = async () => {
+    contextReady();
+    await followUpGate;
+    return syntheticContextResponse(lastContext);
+  };
   const followUp = await submit(first, 202, randomUUID(),
     { clientSubmissionId: randomUUID(), content: correctionMessage });
   await delivered(followUp.generationId);
+  try {
+    await Promise.race([followUpContext, sleep(4000).then(() => { throw new Error('Follow-up did not enter the worker'); })]);
+    const active = await work.scope(followUp.generationId);
+    const { rows: [{ leaseEpoch }] } = await fixture.query('SELECT "leaseEpoch" FROM "GenerationAttempt" WHERE id=$1', [active.id]);
+    await verifyContextProjection(credentials, active.id, leaseEpoch, active.contextEpoch, replacement.outputMessageId);
+  } finally {
+    finishFollowUp();
+    fake = undefined;
+  }
   await terminal(followUp.generationId, 'COMPLETED');
   assert.equal(lastContext.current.id, followUp.messageId);
   assert.equal(lastContext.current.text.length, 1200);
