@@ -67,8 +67,10 @@ try {
     const scope = { FL_P9_SYNTHETIC_ACCOUNT: account, FL_P9_SYNTHETIC_CONVERSATION: rows[0].id,
       ...(!development && { FL_P9_SYNTHETIC_TEXT_SHA256: createHash('sha256').update(fixturePrompt).digest('hex') }) };
     await context.primary.query('GRANT INSERT ("contentSchemaVersion") ON public."Message" TO fl_p9_worker');
-    if (development) await context.primary.query(
-      'GRANT EXECUTE ON FUNCTION p9_context.read_with_approved_memory(uuid,integer,integer) TO fl_p9_worker');
+    if (development) await context.primary.query(`
+      GRANT EXECUTE ON FUNCTION p9_context.read_with_approved_memory(uuid,integer,integer) TO fl_p9_worker;
+      GRANT SELECT (id,"ideaId",origin,trust,finding,"sourceTitle","sourceLocator","retrievedAt",limitations)
+        ON public."EvidenceRecord" TO fl_p9_submit`);
     const decisions = await signP9Clearances(context, ...keys, 'approve-p9-isolated-runtime');
     const { FL_P9_DISPATCH_DECISION, FL_P9_EXECUTE_DECISION, ...apiDecisions } = decisions;
     Object.assign(api, scope, apiDecisions, { FL_P9_SUBMIT: '1' });

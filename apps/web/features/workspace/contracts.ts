@@ -23,7 +23,7 @@ export type Reply<T> = { status: 200 | 201; data: T } | ReplyFailure;
 export type Message = {
   id: string; conversationId: string; sequence: number; role: 'USER' | 'ASSISTANT'; content: string; createdAt: string;
   assistantContent?: { schemaVersion: 1; primaryStrategy: string; nextQuestion?: string;
-    citationRefs: []; proposalIds: []; actions: [];
+    citationRefs: { claimText: string; evidenceId: string; qualification?: string }[]; proposalIds: []; actions: [];
     card?: { type: 'experiment'; hypothesis: string; plan: string; successSignals: string[]; timebox: string } };
 };
 export type Acceptance = { messageId: string; generationId: string; statusUrl: string; eventsUrl: string };

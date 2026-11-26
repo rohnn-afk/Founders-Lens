@@ -199,6 +199,13 @@ test('structured history rejects unsupported claims and binds cursors to the res
   content.assistantContent.citationRefs.push({ evidenceId: randomUUID() });
   const rejected = await get({ method: 'GET', path: '/messages?assistantResponseVersion=2' });
   assert.equal(rejected.status, 503);
+  content.assistantContent.citationRefs[0].claimText = 'An exact checked finding.';
+  content.assistantContent.citationRefs[0].qualification = 'A single synthetic sample.';
+  assert.equal((await get({ method: 'GET', path: '/messages?assistantResponseVersion=2' })).status, 503);
+  assistant.citationsVerified = true;
+  const verified = await get({ method: 'GET', path: '/messages?assistantResponseVersion=2' });
+  assert.equal(verified.status, 200);
+  assert.deepEqual(verified.body.items[0].assistantContent.citationRefs, content.assistantContent.citationRefs);
   const legacy = await get({ method: 'GET', path: '/messages' });
   assert.equal(legacy.status, 200);
   assert.equal(legacy.body.items[0].assistantContent, undefined);

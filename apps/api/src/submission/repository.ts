@@ -5,7 +5,7 @@ import { Prisma, type PrismaClient } from '../generated/prisma/client.js';
 import { lockWorkspaceAccount } from '../persistence/workspace-transaction.js';
 import { SecurityError } from '../security/errors.js';
 import type { Principal } from '../security/principal.js';
-import { acceptanceRef, fingerprintVersion, submissionOperation, SubmissionError, type AcceptanceRef } from './contracts.js';
+import { acceptanceRef, fingerprintVersion, storedStructuredMessage, submissionOperation, SubmissionError, type AcceptanceRef } from './contracts.js';
 import type { AdmissionPolicy, SubmissionCommand, SubmissionRepository, SubmissionScope, TranscriptRow } from './service.js';
 
 type Tx = Prisma.TransactionClient;
@@ -181,7 +181,7 @@ async function persistAcceptance(tx: Tx, scope: ReceiptKey, command: SubmissionC
   return ref;
 }
 
-export function createSubmissionRepository(client: PrismaClient): SubmissionRepository {
+export function createSubmissionRepository(client: PrismaClient, verifyLocalCitations = false): SubmissionRepository {
   async function read<T>(principal: Principal, scope: SubmissionScope, activeOnly: boolean,
     select: (tx: Tx) => Promise<T>, localReadGuard?: () => void): Promise<T> {
     try {
@@ -234,12 +234,12 @@ export function createSubmissionRepository(client: PrismaClient): SubmissionRepo
         return result.data;
       });
     },
-    history(principal, scope, limit, after, localReadGuard) {
-      return read(principal, scope, Boolean(localReadGuard), tx => {
+    history(principal, scope, limit, after, localReadGuard, structured) {
+      return read(principal, scope, Boolean(localReadGuard), async tx => {
         const [turn, slot] = after ?? [0, 0];
         // Regenerated answers may be appended much later. Place the selected
         // answer immediately after its own USER turn, including across pages.
-        return tx.$queryRaw<TranscriptRow[]>`
+        const rows = await tx.$queryRaw<TranscriptRow[]>`
           SELECT m.id, m."conversationId", m.sequence, m.role::text AS role, m.content,
             m."contentSchemaVersion", m."createdAt", u.sequence AS turn, slots.slot
           FROM "Message" u
@@ -252,6 +252,35 @@ export function createSubmissionRepository(client: PrismaClient): SubmissionRepo
           WHERE u."conversationId" = ${scope.id}::uuid AND u."ideaId" = ${scope.ideaId}::uuid AND u.role = 'USER'
             AND (u.sequence, slots.slot) > (${turn}::int, ${slot}::int)
           ORDER BY u.sequence, slots.slot LIMIT ${limit}`;
+        if (!structured || !verifyLocalCitations) return rows;
+        const cited = rows.slice(0, limit - 1).flatMap(row => {
+          if (row.role !== 'ASSISTANT' || row.contentSchemaVersion !== 2) return [];
+          const payload = storedStructuredMessage.safeParse(row.content);
+          if (!payload.success || !payload.data.assistantContent.citationRefs.length) return [];
+          const citations = payload.data.assistantContent.citationRefs;
+          return [{ row, citations }];
+        });
+        if (!cited.length) return rows;
+        const evidence = await tx.evidenceRecord.findMany({
+          where: { id: { in: [...new Set(cited.flatMap(entry => entry.citations.map(citation => citation.evidenceId)))] },
+            ideaId: scope.ideaId, origin: 'EXTERNAL_SOURCE', trust: 'SOURCE_CHECKED' },
+          select: { id: true, finding: true, sourceTitle: true, sourceLocator: true, retrievedAt: true, limitations: true }
+        });
+        const sources = new Map(evidence.map(source => [source.id, source]));
+        for (const { row, citations } of cited) {
+          // Verbatim support only. A source check does not support a model paraphrase.
+          row.citationsVerified = citations.every(citation => {
+            const source = sources.get(citation.evidenceId);
+            if (!source || source.finding !== citation.claimText || !source.sourceTitle?.trim() ||
+              !source.sourceLocator || !source.retrievedAt || source.retrievedAt.getTime() > Date.now() ||
+              (source.limitations ?? undefined) !== citation.qualification) return false;
+            try {
+              const url = new URL(source.sourceLocator);
+              return url.protocol === 'https:' && !url.username && !url.password;
+            } catch { return false; }
+          });
+        }
+        return rows;
       }, localReadGuard);
     },
     async accept(principal, command, clock, policy, requireFresh) {

@@ -51,10 +51,12 @@ export const messageDto = z.strictObject({
   role: z.enum(['USER', 'ASSISTANT']), content: z.string(), createdAt: z.iso.datetime()
 });
 export const storedMessageText = z.object({ text: z.string() });
-// The offline slice has no authorized citation, proposal or action sources.
+export const assistantCitation = z.strictObject({
+  claimText: z.string().min(1).max(1000), evidenceId: uuid, qualification: z.string().min(1).max(1000).optional()
+});
 export const assistantContent = z.strictObject({
   schemaVersion: z.literal(1), primaryStrategy: z.enum(['EXPLORE', 'CHALLENGE', 'INFORM', 'COMPARE', 'ACT', 'REFLECT']),
-  citationRefs: z.tuple([]), proposalIds: z.tuple([]), actions: z.tuple([]),
+  citationRefs: z.array(assistantCitation).max(20), proposalIds: z.tuple([]), actions: z.tuple([]),
   card: z.strictObject({ type: z.literal('experiment'), hypothesis: z.string().min(1).max(2000),
     plan: z.string().min(1).max(3000), successSignals: z.array(z.string().min(1).max(1000)).min(1).max(6),
     timebox: z.string().min(1).max(200) }).optional(),

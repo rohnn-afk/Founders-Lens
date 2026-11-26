@@ -420,6 +420,9 @@ async function postgres(id, run, credentials) {
         await admin.query(`GRANT INSERT (provenance) ON public."MemoryRevision" TO ${roles.fixture};
           GRANT INSERT (id,"ideaId","sourceMessageId","resultMemoryId",kind,candidate,status,"reviewedById","reviewedAt")
             ON public."MemoryProposal" TO ${roles.fixture};
+          GRANT INSERT (id,"ideaId",origin,trust,finding,"sourceTitle","sourceLocator","retrievedAt",limitations)
+            ON public."EvidenceRecord" TO ${roles.fixture};
+          GRANT UPDATE (content) ON public."Message" TO ${roles.fixture};
           GRANT EXECUTE ON FUNCTION p9_context.read_with_approved_memory(uuid,integer,integer) TO fl_p9_context`);
         await admin.query(`GRANT USAGE ON SCHEMA p9_context TO fl_p9_other_context;
           GRANT EXECUTE ON FUNCTION p9_context.read_attempt(uuid,integer,integer) TO fl_p9_other_context`);
@@ -955,6 +958,42 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, submissionPris
       schemaVersion: 1, primaryStrategy: 'CHALLENGE', nextQuestion: 'What result would disprove this assumption?',
       citationRefs: [], proposalIds: [], actions: []
     } });
+    const claimText = 'The fixture recorded three trials.', qualification = 'Synthetic sample only.';
+    const unrelatedIdea = randomUUID();
+    await fixture.query('INSERT INTO "Idea" (id,"ownerId",title,"updatedAt") VALUES ($1,$2,$3,now())',
+      [unrelatedIdea, account, 'Separate citation fixture']);
+    const seedEvidence = async (ideaId, trust) => {
+      const id = randomUUID();
+      await fixture.query(`INSERT INTO "EvidenceRecord"
+      (id,"ideaId",origin,trust,finding,"sourceTitle","sourceLocator","retrievedAt",limitations)
+      VALUES ($1,$2,'EXTERNAL_SOURCE',$3,$4,'Fixture source','https://example.invalid/evidence',now(),$5)`,
+      [id, ideaId, trust, claimText, qualification]);
+      return id;
+    };
+    const evidenceId = await seedEvidence(idea, 'SOURCE_CHECKED');
+    const unrelatedEvidence = await seedEvidence(unrelatedIdea, 'SOURCE_CHECKED');
+    const staleEvidence = await seedEvidence(idea, 'STALE');
+    const reply = structured.items[1];
+    const original = { text: reply.content, assistantContent: reply.assistantContent };
+    const setCitation = citationRefs => fixture.query('UPDATE "Message" SET content=$2 WHERE id=$1',
+      [reply.id, { ...original, assistantContent: { ...reply.assistantContent, citationRefs } }]);
+    const citedHistory = createSubmissionService(createSubmissionRepository(submissionPrisma, true),
+      trusted.ledger.authority, { clock: () => new Date(), cursorSecret: randomBytes(32) });
+    const citation = { evidenceId, claimText, qualification };
+    try {
+      await setCitation([citation]);
+      const accepted = await citedHistory.history(principal, first, { assistantResponseVersion: '2' });
+      assert.deepEqual(accepted.items.at(-1).assistantContent.citationRefs, [citation]);
+      for (const unsupported of [{ ...citation, claimText: 'The fixture proved market demand.' },
+        { ...citation, evidenceId: unrelatedEvidence }, { ...citation, evidenceId: staleEvidence },
+        { ...citation, qualification: undefined }]) {
+        await setCitation([unsupported]);
+        await assert.rejects(citedHistory.history(principal, first, { assistantResponseVersion: '2' }),
+          error => error.failure('fixture').body.error.code === 'PROJECTION_UNAVAILABLE');
+      }
+    } finally {
+      await fixture.query('UPDATE "Message" SET content=$2 WHERE id=$1', [reply.id, original]);
+    }
   }
 
   fake = async () => 'Regenerated synthetic assistant';

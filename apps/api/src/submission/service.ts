@@ -32,12 +32,13 @@ export interface SubmissionRepository {
     requireFresh?: () => void): Promise<AcceptanceRef>;
   correlate(principal: Principal, scope: SubmissionScope, submissionId: string): Promise<AcceptanceRef | null>;
   history(principal: Principal, scope: SubmissionScope, limit: number, after?: TurnAnchor,
-    localReadGuard?: () => void): Promise<TranscriptRow[]>;
+    localReadGuard?: () => void, structured?: boolean): Promise<TranscriptRow[]>;
 }
 
 export type TranscriptRow = {
   id: string; conversationId: string; sequence: number; role: string; content: unknown;
   contentSchemaVersion: number; createdAt: Date; turn: number; slot: 0 | 1;
+  citationsVerified?: boolean;
 };
 
 export function createSubmissionService(repository: SubmissionRepository, authority: SuppressionAuthority,
@@ -83,7 +84,7 @@ export function createSubmissionService(repository: SubmissionRepository, author
       const scopeParts = [principal.localUserId, scope.ideaId, conversationId, limit];
       const cursorScope = JSON.stringify(structured ? [...scopeParts, '2'] : scopeParts);
       const after = query.cursor === undefined ? undefined : cursors.decode(cursorScope, query.cursor);
-      const rows = await repository.history(principal, scope, limit + 1, after, localReadGuard);
+      const rows = await repository.history(principal, scope, limit + 1, after, localReadGuard, structured);
       window.requireFresh();
       const pageRows = rows.slice(0, limit);
       const items = pageRows.map(row => {
@@ -97,7 +98,9 @@ export function createSubmissionService(repository: SubmissionRepository, author
         if (!dto.success) throw new SubmissionError('PROJECTION_UNAVAILABLE');
         if (!structured || row.contentSchemaVersion === 1) return dto.data;
         const enriched = storedStructuredMessage.safeParse(row.content);
-        if (!enriched.success) throw new SubmissionError('PROJECTION_UNAVAILABLE');
+        if (!enriched.success || (enriched.data.assistantContent.citationRefs.length && row.citationsVerified !== true)) {
+          throw new SubmissionError('PROJECTION_UNAVAILABLE');
+        }
         return { ...dto.data, assistantContent: enriched.data.assistantContent };
       });
       if (Buffer.byteLength(JSON.stringify(items)) > 8 * 1024 * 1024) throw new SubmissionError('PROJECTION_UNAVAILABLE');

@@ -251,7 +251,7 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
           authority.authority, status.verifiedDeadline, approvedConversation);
         generationReadDeadline = status.verifiedDeadline;
         generationConversation = approvedConversation;
-        submission = createSubmissionService(createSubmissionRepository(submissionClient), authority.authority, {
+        submission = createSubmissionService(createSubmissionRepository(submissionClient, offlineDevelopment), authority.authority, {
           executionAdmission: admission.verifiedDecision, clock: () => new Date(), policy, cursorSecret: cursorKey,
           allowSubmission: (principal, conversationId, content) => allows(principal.localUserId, conversationId, content)
         });

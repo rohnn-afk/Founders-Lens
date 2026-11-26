@@ -41,7 +41,11 @@ function structuredAssistant(value: NonNullable<Message['assistantContent']>) {
   const card = value?.card;
   const text = (item: unknown, limit: number) => typeof item === 'string' && item.length > 0 && item.length <= limit;
   return value?.schemaVersion === 1 && ['EXPLORE', 'CHALLENGE', 'INFORM', 'COMPARE', 'ACT', 'REFLECT'].includes(value.primaryStrategy) &&
-    [value.citationRefs, value.proposalIds, value.actions].every(items => Array.isArray(items) && items.length === 0) &&
+    Array.isArray(value.citationRefs) && value.citationRefs.length <= 20 &&
+    value.citationRefs.every(ref => ref && text(ref.claimText, 1000) &&
+      typeof ref.evidenceId === 'string' && /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i.test(ref.evidenceId) &&
+      (ref.qualification === undefined || text(ref.qualification, 1000))) &&
+    [value.proposalIds, value.actions].every(items => Array.isArray(items) && items.length === 0) &&
     (value.nextQuestion === undefined || text(value.nextQuestion, 2000)) &&
     (card === undefined || (card?.type === 'experiment' && text(card.hypothesis, 2000) && text(card.plan, 3000) &&
       text(card.timebox, 200) && Array.isArray(card.successSignals) && card.successSignals.length >= 1 &&

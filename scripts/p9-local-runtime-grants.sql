@@ -80,6 +80,8 @@ GRANT EXECUTE ON FUNCTION p9_context.read_attempt(uuid,integer,integer) TO fl_p9
 DO $$ BEGIN
   IF current_database() IN ('founders_lens_offline_acceptance', 'founders_lens_m05_e2e_test') THEN
     GRANT EXECUTE ON FUNCTION p9_context.read_with_approved_memory(uuid,integer,integer) TO fl_p9_worker;
+    GRANT SELECT (id,"ideaId",origin,trust,finding,"sourceTitle","sourceLocator","retrievedAt",limitations)
+      ON public."EvidenceRecord" TO fl_p9_submit;
   END IF;
 END $$;
 GRANT SELECT, INSERT, UPDATE ON p9_context.context_grant TO fl_p9_context_verifier;

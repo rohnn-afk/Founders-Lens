@@ -28,8 +28,11 @@ active revisions tied to an accepted proposal, matching owner, and an
 available same-idea founder message. The approval writer must record
 `provenance.proposalId` on the revision. The attempt records only lineage IDs
 and versions. This slice has no founder-facing approval UI, does not send
-memory to external providers, and keeps citations disabled until their
-evidence authorization and support checks are implemented.
+memory to external providers. The offline v2 transcript revalidates stored
+citations against current, same-idea, source-checked external evidence. It
+allows exact findings with matching limitations and HTTPS provenance. A
+provider cannot publish citations through this local slice. Research and
+source creation stay outside it.
 
 ## Designated Clerk offline acceptance
 

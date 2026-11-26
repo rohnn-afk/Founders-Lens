@@ -78,7 +78,9 @@ only the selected earlier answer in the same conversation, idea and context
 epoch. Revised or removed memory closes the historical context window until
 lineage-aware revalidation is available. Version 1 remains text-only.
 The offline memory reader records bounded revision and approval provenance under
-the same one-use lease grant. Evidence references, the founder-facing memory
+the same one-use lease grant. The offline transcript validates stored
+references against same-idea source-checked evidence and exact support.
+Evidence creation, provider citation finalization, the founder-facing memory
 approval journey, and external-provider quality evaluation remain open. Staging image approval and hosted capability activation
 are tracked separately from local acceptance.
 
