@@ -78,11 +78,15 @@ export function localConversationRoutes(operations: LocalConversationOperations,
     sendReadDto(res, await operations.idea(principal, routeId(req, 'ideaId')));
   }));
   documentedRoute(router, 'get', '/ideas/:ideaId/conversations', handle(async (req, res, principal) => {
-    sendReadDto(res, await operations.conversations(principal, routeId(req, 'ideaId'), input(listQuery, req.query)));
+    const page = await operations.conversations(principal, routeId(req, 'ideaId'), input(listQuery, req.query));
+    if (operations.create) res.set('X-Workspace-Conversation-Creation', 'enabled');
+    sendReadDto(res, page);
   }));
   documentedRoute(router, 'get', '/conversations/:conversationId', handle(async (req, res, principal) => {
     input(emptyQuery, req.query);
-    sendReadDto(res, await operations.conversation(principal, routeId(req, 'conversationId')));
+    const conversation = await operations.conversation(principal, routeId(req, 'conversationId'));
+    if (operations.save) res.set('X-Workspace-Message-Save', 'enabled');
+    sendReadDto(res, conversation);
   }));
   documentedRoute(router, 'get', '/conversations/:conversationId/messages', handle(async (req, res, principal) => {
     sendReadDto(res, await operations.history(principal, routeId(req, 'conversationId'), input(transcriptQuery, req.query)));

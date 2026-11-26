@@ -11,6 +11,7 @@ export type Conversation = {
   proactiveResearch: boolean; version: number; createdAt?: string;
 };
 export type Page<T> = { items: T[]; page: { nextCursor: string | null; hasMore: boolean } };
+export type ConversationPage = Page<Conversation> & { canCreate?: boolean };
 export type IdeaCreate = { title: string; summary?: string };
 export type IdeaEdit = { title?: string; summary?: string | null };
 export type ConversationCreate = { title?: string; proactiveResearch?: boolean };
@@ -55,7 +56,7 @@ export type GenerationApi = {
 export interface WorkspaceApi {
   ideas(cursor: string | null, signal: AbortSignal): Promise<Reply<Page<Idea>>>;
   idea(id: string, signal: AbortSignal): Promise<Reply<Idea>>;
-  conversations(id: string, cursor: string | null, signal: AbortSignal): Promise<Reply<Page<Conversation>>>;
+  conversations(id: string, cursor: string | null, signal: AbortSignal): Promise<Reply<ConversationPage>>;
   conversation(id: string, signal: AbortSignal): Promise<Reply<Conversation>>;
   createIdea(body: Readonly<IdeaCreate>, key: string, signal: AbortSignal): Promise<Reply<Idea>>;
   createConversation(id: string, body: Readonly<ConversationCreate>, signal: AbortSignal): Promise<Reply<Conversation>>;

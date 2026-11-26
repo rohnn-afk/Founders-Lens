@@ -64,7 +64,7 @@ export function workspaceIdeasCors(allowCreate: boolean, conversations?: { creat
     const caller = request.get('Origin');
     if (caller && caller !== origin) { rejectRoute(403); return; }
     if (caller === origin) response.set({ 'Access-Control-Allow-Origin': origin,
-      'Access-Control-Expose-Headers': 'X-Request-Id, X-Workspace-Idea-Creation, X-Workspace-Conversations, X-Workspace-Generation' +
+      'Access-Control-Expose-Headers': 'X-Request-Id, X-Workspace-Idea-Creation, X-Workspace-Conversations, X-Workspace-Generation, X-Workspace-Conversation-Creation, X-Workspace-Message-Save' +
         (editEnabled ? ', X-Workspace-Idea-Editing, ETag' : '') });
     if (request.method === 'GET' && ideas && editEnabled) response.set('X-Workspace-Idea-Editing', 'enabled');
     if (request.method === 'GET' && generationConversation && path === '/conversations/' + generationConversation) {

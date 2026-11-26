@@ -67,21 +67,21 @@ function LocalConversationSession({ account, sessionId, getToken, children }: {
   const readOnly = origin.startsWith('https://');
   const pathname = usePathname();
   const conversationId = readOnly ? undefined : /\/conversations\/([a-f0-9-]+)$/.exec(pathname)?.[1];
-  const [capability, setCapability] = useState<{ id: string; generation: boolean | null }>();
+  const [capability, setCapability] = useState<{ id: string; permissions: { generation: boolean; save: boolean } | null }>();
   const [revision, retryCapability] = useState(0);
   useEffect(() => {
     if (!conversationId) return;
     const controller = new AbortController();
-    void adapters.generationEnabled(conversationId, controller.signal).then(enabled => {
-      if (!controller.signal.aborted) setCapability({ id: conversationId, generation: enabled });
-    }).catch(() => { if (!controller.signal.aborted) setCapability({ id: conversationId, generation: null }); });
+    void adapters.conversationPermissions(conversationId, controller.signal).then(permissions => {
+      if (!controller.signal.aborted) setCapability({ id: conversationId, permissions });
+    }).catch(() => { if (!controller.signal.aborted) setCapability({ id: conversationId, permissions: null }); });
     return () => controller.abort();
   }, [adapters, conversationId, revision]);
   const session = useMemo<SessionSource>(() => ({ getSnapshot: () => ({ localAccountId: account }), subscribe: () => () => {},
     async revalidate() { if (!await tokenSource.current()) throw new Error('Session unavailable'); } }), [account]);
   // A pending or failed capability read must never offer a different write action.
-  const resolved = capability?.id === conversationId ? capability?.generation : undefined;
-  if (conversationId && typeof resolved !== 'boolean') {
+  const resolved = capability?.id === conversationId ? capability?.permissions : undefined;
+  if (conversationId && !resolved) {
     return <WorkspaceShell accountAction={<WorkspaceSignOut />}>
       <h1>Conversation</h1>
       {resolved === null ? <>
@@ -90,8 +90,9 @@ function LocalConversationSession({ account, sessionId, getToken, children }: {
       </> : <p className={styles['feedback']} role="status">Opening conversation...</p>}
     </WorkspaceShell>;
   }
-  return <WorkspaceProvider readOnly={readOnly} accountAction={<WorkspaceSignOut />} session={session} api={adapters.api} savedMessages={adapters.savedMessages} recoverySessionId={sessionId}
-    {...(conversationId && resolved &&
+  return <WorkspaceProvider readOnly={readOnly} canSaveMessages={!readOnly && resolved?.save === true}
+    accountAction={<WorkspaceSignOut />} session={session} api={adapters.api} savedMessages={adapters.savedMessages} recoverySessionId={sessionId}
+    {...(conversationId && resolved?.generation &&
       { messageApi: adapters.messageApi, recoveryTtl: 300_000 })}>{children}</WorkspaceProvider>;
 }
 

@@ -19,7 +19,8 @@ const run = promisify(execFile);
 const fixture = `// Temporary test composition. Never copied into the real application.
 'use client';
 import { WorkspaceProvider } from '../../features/workspace/workspace-provider';
-import type { Conversation, Idea, MessageApi, SessionSource, WorkspaceApi } from '../../features/workspace/contracts';
+import type { Conversation, Idea, Message, MessageApi, SavedMessageApi, SessionSource, WorkspaceApi } from '../../features/workspace/contracts';
+import { usePathname } from 'next/navigation';
 import { useMemo, type ReactNode } from 'react';
 
 function fixture() {
@@ -69,7 +70,8 @@ function fixture() {
       return found ? { status: 200, data: found } : { status: 404 };
     },
     async conversations(id) {
-      return { status: 200, data: { items: conversations.filter(value => value.ideaId === id), page: { hasMore: false, nextCursor: null } } };
+      return { status: 200, data: { canCreate: account?.localAccountId === 'a' && id !== 'a',
+        items: conversations.filter(value => value.ideaId === id), page: { hasMore: false, nextCursor: null } } };
     },
     async conversation(id) {
       if (id === recoveryChatId && account?.localAccountId === 'a') {
@@ -113,11 +115,34 @@ function fixture() {
       }] : [] } };
     }
   };
-  return { session, api, messageApi, change, hold() { blockedRead = new Promise(resolve => { unlock = resolve; }); },
+  let pending: string | undefined;
+  const savedMessages: SavedMessageApi = {
+    pending: () => pending,
+    clear: () => { pending = undefined; },
+    async history() {
+      const stored = sessionStorage.getItem('synthetic-saved-turn');
+      return { status: 200, data: { items: stored ? [JSON.parse(stored)] : [],
+        page: { nextCursor: null, hasMore: false } } };
+    },
+    async save(id, content) {
+      if (content !== undefined) {
+        pending = content;
+        const turn: Message = { id: messageId, conversationId: id, sequence: 1, role: 'USER', content,
+          createdAt: '2026-01-01T00:00:00.000Z' };
+        sessionStorage.setItem('synthetic-saved-turn', JSON.stringify(turn));
+        return { status: 503 };
+      }
+      const stored = sessionStorage.getItem('synthetic-saved-turn');
+      pending = undefined;
+      return stored ? { status: 201, data: JSON.parse(stored) } : { status: 404 };
+    }
+  };
+  return { session, api, messageApi, savedMessages, change, hold() { blockedRead = new Promise(resolve => { unlock = resolve; }); },
     release() { unlock?.(); blockedRead = undefined; } };
 }
 export default function TestLayout({ children }: { children: ReactNode }) {
   const harness = useMemo(fixture, []);
+  const saving = usePathname() === '/app/ideas/a/conversations/saved';
   return <>
     <aside aria-label="Synthetic test controls">
       <button onClick={() => harness.change('a')}>Use founder A</button>
@@ -126,7 +151,9 @@ export default function TestLayout({ children }: { children: ReactNode }) {
       <button onClick={harness.hold}>Hold founder A reads</button>
       <button onClick={harness.release}>Release held reads</button>
     </aside>
-    <WorkspaceProvider api={harness.api} session={harness.session} messageApi={harness.messageApi} recoveryTtl={600_000}
+    <WorkspaceProvider api={harness.api} session={harness.session}
+      {...(saving ? { savedMessages: harness.savedMessages, canSaveMessages: true } : { messageApi: harness.messageApi })}
+      recoveryTtl={600_000}
       accountAction={<button type="button">Account fixture</button>}>
       {children}
     </WorkspaceProvider>
@@ -396,11 +423,24 @@ export default function Page() {
   await traverse(1);
   await locationIs('/app/ideas/archived/think');
   await text('Archived (read only)');
+  await open('/app/ideas/a/think');
+  await text('Saved conversation');
+  assert.equal(await evaluate('Boolean(document.getElementById("conversation-title"))'), false);
   await open('/app/ideas/a/conversations/saved');
   await text('Saved conversation');
   assert.equal(await mode(), 'dark');
+  await text('Message history');
+  await waitFor(() => evaluate('Boolean(document.querySelector("#save-message"))'), 'save-only composer');
+  await fill('save-message', 'Durable synthetic note');
+  await click('Save message');
+  await click('Retry original message');
+  await text('Message saved.');
+  await text('Durable synthetic note');
   await reload();
   await text('Saved conversation');
+  await text('Durable synthetic note');
+  assert.equal(await evaluate('document.querySelectorAll("[data-speaker=founder]").length'), 1);
+  await evaluate('sessionStorage.removeItem("synthetic-saved-turn")');
   await open('/app/ideas/archived/conversations/saved');
   await text('This workspace item is unavailable.');
   assert.equal(await evaluate('document.querySelector("main").innerText.includes("Saved conversation")'), false);

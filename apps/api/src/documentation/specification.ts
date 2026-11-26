@@ -133,7 +133,10 @@ const catalog: Record<string, Operation> = {
   'get /ideas/:ideaId/conversations': {
     operationId: 'listConversations', tag: 'Conversations', summary: 'List conversations for an owned idea',
     description: 'Lists active conversations for an active idea. ' + workspacePaging, parameters: workspaceQuery, extraErrors: [404],
-    responses: { 200: success(pageOf(activeConversationDto), { items: [conversation], page }) }
+    responses: { 200: { ...success(pageOf(activeConversationDto), { items: [conversation], page }), headers: {
+      'X-Workspace-Conversation-Creation': { description: 'Present when the local conversation creation route is admitted.',
+        schema: { type: 'string', enum: ['enabled'] } }
+    } } }
   },
   'post /ideas/:ideaId/conversations': {
     operationId: 'createConversation', tag: 'Conversations', summary: 'Create a conversation',
@@ -143,7 +146,10 @@ const catalog: Record<string, Operation> = {
   'get /conversations/:conversationId': {
     operationId: 'getConversation', tag: 'Conversations', summary: 'Read an owned conversation',
     description: 'Returns an active conversation in an active idea after checking account and parent access.',
-    extraErrors: [404], responses: { 200: success(activeConversationDto, conversation) }
+    extraErrors: [404], responses: { 200: { ...success(activeConversationDto, conversation), headers: {
+      'X-Workspace-Message-Save': { description: 'Present when the local save-only message route is admitted.',
+        schema: { type: 'string', enum: ['enabled'] } }
+    } } }
   },
   'get /conversations/:conversationId/messages': {
     operationId: 'listMessages', tag: 'Messages', summary: 'Read the conversation transcript',
