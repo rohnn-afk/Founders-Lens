@@ -9,7 +9,7 @@ import type { Command, CommandResult, Generation } from './contracts.js';
 export type Scope = { id: string; ideaId: string; idea: IdeaScope };
 export interface GenerationRepository {
   scope(principal: Principal, target: string, attempt: boolean): Promise<Scope | null>;
-  status(principal: Principal, scope: Scope, id: string, requireFresh?: () => void): Promise<Generation>;
+  status(principal: Principal, scope: Scope, id: string, requireFresh?: () => void, activeOnly?: boolean): Promise<Generation>;
   command(principal: Principal, scope: Scope, command: Command): Promise<CommandResult>;
 }
 
@@ -28,16 +28,16 @@ export function createGenerationService(repository: GenerationRepository, author
     return current;
   }
   return {
-    async status(principal: Principal, id: string) {
+    async status(principal: Principal, id: string, activeOnly = false) {
       const deadline = await statusDeadline?.();
       const window = suppressionWindow(authority);
-      const current = await scope(principal, id, true, false, window.authority);
+      const current = await scope(principal, id, true, activeOnly, window.authority);
       if (statusConversation && current.id !== statusConversation) throw new SecurityError('RESOURCE_NOT_FOUND');
       function requireFresh() {
         window.requireFresh();
         if (deadline !== undefined && Date.now() >= deadline) throw new SecurityError('DEPENDENCY_UNAVAILABLE');
       }
-      const result = await repository.status(principal, current, id, requireFresh);
+      const result = await repository.status(principal, current, id, requireFresh, activeOnly);
       requireFresh();
       return result;
     },

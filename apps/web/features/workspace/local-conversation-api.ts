@@ -3,6 +3,7 @@
 import type { Acceptance, Conversation, Generation, Idea, IdeaEdit, Message, MessageApi, MessageBody, Page, Reply, SavedMessageApi, WorkspaceApi } from './contracts';
 
 import { workspaceEndpoints } from './endpoints';
+import { waitForTerminalEvent } from './generation-events';
 
 const { origin, api: endpoint } = workspaceEndpoints();
 const ideaPath = (id: string) => '/ideas/' + encodeURIComponent(id);
@@ -131,14 +132,32 @@ export function createLocalConversationApi(getToken: () => Promise<string | null
     correlate: (id, submissionId, signal) =>
       request<Acceptance & { clientSubmissionId: string }>(conversationPath(id) + '/submissions/' +
         encodeURIComponent(submissionId), signal, verify(value => validAcceptance(value) && value.clientSubmissionId === submissionId)),
-    generation: { async status(id, signal) {
-      const reply = await request<Generation>('/generations/' + encodeURIComponent(id), signal, verify(value =>
-        value?.id === id && typeof value.conversationId === 'string' && typeof value.triggerMessageId === 'string' &&
-        typeof value.selected === 'boolean' && typeof value.createdAt === 'string' &&
-        ['PENDING', 'RUNNING', 'CANCEL_REQUESTED', 'COMPLETED', 'FAILED', 'CANCELLED'].includes(value.status)));
-      if ('data' in reply) return reply.status === 200 ? { status: 200, data: reply.data } : { status: 503 };
-      return reply;
-    } }
+    generation: {
+      async watchTerminal(id, signal) {
+        if (origin.startsWith('https://') || window.location.origin !== origin) return false;
+        const token = await getToken();
+        signal.throwIfAborted();
+        if (!token) return false;
+        const response = await fetch(endpoint + '/generations/' + encodeURIComponent(id) + '/events', {
+          headers: { Authorization: `Bearer ${token}`, Accept: 'text/event-stream' },
+          cache: 'no-store', credentials: 'omit', redirect: 'error',
+          signal: AbortSignal.any([signal, AbortSignal.timeout(65_000)])
+        });
+        if (response.status !== 200 || !response.headers.get('Content-Type')?.toLowerCase().startsWith('text/event-stream')) {
+          await response.body?.cancel();
+          return false;
+        }
+        return response.body ? waitForTerminalEvent(response.body, id) : false;
+      },
+      async status(id, signal) {
+        const reply = await request<Generation>('/generations/' + encodeURIComponent(id), signal, verify(value =>
+          value?.id === id && typeof value.conversationId === 'string' && typeof value.triggerMessageId === 'string' &&
+          typeof value.selected === 'boolean' && typeof value.createdAt === 'string' &&
+          ['PENDING', 'RUNNING', 'CANCEL_REQUESTED', 'COMPLETED', 'FAILED', 'CANCELLED'].includes(value.status)));
+        if ('data' in reply) return reply.status === 200 ? { status: 200, data: reply.data } : { status: 503 };
+        return reply;
+      }
+    }
   };
   return { api, savedMessages, messageApi,
     async editIdea(id: string, version: number, body: IdeaEdit, signal: AbortSignal): Promise<Reply<Idea>> {

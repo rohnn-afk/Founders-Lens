@@ -10,6 +10,8 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import test from 'node:test';
 import { leasedContextReader } from '../apps/worker/dist/leased-context-reader.js';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -24,6 +26,8 @@ import { submissionRoutes } from '../apps/api/dist/submission/routes.js';
 import { createGenerationRepository } from '../apps/api/dist/generation/repository.js';
 import { createGenerationService } from '../apps/api/dist/generation/service.js';
 import { generationRoutes } from '../apps/api/dist/generation/routes.js';
+import { localConversationOperations } from '../apps/api/dist/workspace/local-conversations.js';
+import { localConversationRoutes } from '../apps/api/dist/workspace/routes.js';
 import { suppressionScopeKey } from '../apps/api/dist/security/suppression-authority.js';
 import { dispatcher } from '../apps/dispatcher/dist/dispatch.js';
 import { outboxRepository } from '../apps/dispatcher/dist/outbox-repository.js';
@@ -83,7 +87,7 @@ async function unusedPort() {
   return port;
 }
 
-async function browserJourney({ account, idea, first, url, token, allowed, delivered, setFake, verifyUsage }) {
+async function browserJourney({ account, idea, url, token, allowed, delivered, setFake, verifyUsage }) {
   const temp = await realpath(tmpdir());
   const root = await mkdtemp(join(temp, 'fl-m05-browser-'));
   const children = [];
@@ -99,7 +103,7 @@ async function browserJourney({ account, idea, first, url, token, allowed, deliv
     const web = join(root, 'apps', 'web');
     await mkdir(web, { recursive: true });
     await cp('tsconfig.base.json', join(root, 'tsconfig.base.json'));
-    for (const entry of ['app', 'features', 'package.json', 'tsconfig.json', 'next.config.ts', 'next-env.d.ts']) {
+    for (const entry of ['app', 'features', 'package.json', 'tsconfig.json', 'next.config.ts', 'next-env.d.ts', 'app-mode.ts']) {
       await cp(join('apps', 'web', entry), join(web, entry), { recursive: true });
     }
     await symlink(join(process.cwd(), 'node_modules'), join(root, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
@@ -112,9 +116,10 @@ async function browserJourney({ account, idea, first, url, token, allowed, deliv
     });
     child(process.execPath, [next, 'start', '--hostname', '127.0.0.1', '--port', String(nextPort)], web);
     let loseSubmission = true, pauseStatus = false, archived = false, deny = false, dispatchFailure;
-    let nextGeneration;
-    const conversationPath = '/conversations/' + first;
+    let nextGeneration, first;
+    const observedStreams = new Set();
     const ideaPath = '/ideas/' + idea;
+    const assistantText = 'Identify the assumption that would change your decision.';
     const metadata = () => {
       const timestamp = new Date().toISOString();
       const status = archived ? 'ARCHIVED' : 'ACTIVE';
@@ -138,10 +143,26 @@ async function browserJourney({ account, idea, first, url, token, allowed, deliv
         }
         const path = target.pathname.slice('/__m05/api'.length);
         const method = req.method;
+        const event = /^\/generations\/([a-f0-9-]{36})\/events$/.exec(path);
+        if (event && method === 'GET' && !target.search && allowed.has(event[1])) {
+          const controller = new AbortController();
+          const closed = () => controller.abort();
+          res.once('close', closed);
+          try {
+            const reply = await fetch(url + path, { signal: controller.signal,
+              headers: { Authorization: 'Bearer ' + token, Accept: 'text/event-stream' } });
+            if (reply.ok) observedStreams.add(event[1]);
+            res.writeHead(reply.status, { 'Content-Type': reply.headers.get('Content-Type') ?? 'application/json' });
+            if (reply.body) await pipeline(Readable.fromWeb(reply.body), res);
+            else res.end();
+            return;
+          } finally { res.off('close', closed); }
+        }
+        const conversationPath = '/conversations/' + first;
         const { idea: fixtureIdea, conversation } = metadata();
         if (method === 'GET' && !target.search) {
-          if (path === ideaPath) return json(res, 200, fixtureIdea);
-          if (path === conversationPath) return json(res, 200, conversation);
+          if (archived && path === ideaPath) return json(res, 200, fixtureIdea);
+          if (archived && first && path === conversationPath) return json(res, 200, conversation);
         }
         const attempt = /^\/generations\/([a-f0-9-]{36})(\/cancel)?$/.exec(path);
         const generationRead = attempt && allowed.has(attempt[1]) && !attempt[2] && method === 'GET';
@@ -150,7 +171,10 @@ async function browserJourney({ account, idea, first, url, token, allowed, deliv
         const correlation = path.startsWith(conversationPath + '/submissions/') &&
           /^[a-f0-9-]{36}$/.test(path.slice((conversationPath + '/submissions/').length));
         const regeneration = path === conversationPath + '/regenerations' && method === 'POST';
-        if (!(generationRead || cancellation || (messages && ['GET', 'POST'].includes(method)) ||
+        const collection = path === ideaPath + '/conversations';
+        const create = collection && !first && method === 'POST';
+        const workspaceRead = method === 'GET' && (path === ideaPath || collection || (first && path === conversationPath));
+        if (!(workspaceRead || create || generationRead || cancellation || (messages && ['GET', 'POST'].includes(method)) ||
           (correlation && method === 'GET') || regeneration) ||
           [...target.searchParams.keys()].some(key => !messages || method !== 'GET' || key !== 'cursor')) return json(res, 404, {});
         if (deny) return json(res, 404, { error: { code: 'NOT_FOUND' } });
@@ -171,6 +195,13 @@ async function browserJourney({ account, idea, first, url, token, allowed, deliv
             ...(length && { 'Content-Type': 'application/json' }) },
           body: length ? Buffer.concat(chunks) : undefined, redirect: 'error' });
         const data = await reply.json();
+        if (create && reply.status === 201) {
+          assert.equal(data.ideaId, idea);
+          first = data.id;
+        }
+        if (collection && method === 'GET' && reply.status === 200) {
+          return json(res, 200, { ...data, canCreate: reply.headers.get('X-Workspace-Conversation-Creation') === 'enabled' });
+        }
         if (reply.status === 202 && ((messages && method === 'POST') || regeneration)) {
           nextGeneration = messages ? data.generationId : data.id;
           allowed.add(nextGeneration);
@@ -181,11 +212,13 @@ async function browserJourney({ account, idea, first, url, token, allowed, deliv
         }
         if (reply.headers.has('Retry-After')) res.setHeader('Retry-After', reply.headers.get('Retry-After'));
         return json(res, reply.status, data);
-      } catch { return json(res, 503, { error: { code: 'DEPENDENCY_UNAVAILABLE' } }); }
+      } catch {
+        if (res.headersSent || res.destroyed) return res.destroy();
+        return json(res, 503, { error: { code: 'DEPENDENCY_UNAVAILABLE' } });
+      }
     });
     const port = await loopback(proxy);
     const origin = 'http://127.0.0.1:' + port;
-    const route = '/app/ideas/' + idea + '/conversations/' + first;
     await until(async () => (await fetch('http://127.0.0.1:' + nextPort).catch(() => null))?.ok);
     child(edge, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
       '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=' + edgePort,
@@ -239,7 +272,10 @@ async function browserJourney({ account, idea, first, url, token, allowed, deliv
     await cdp('Page.bringToFront');
     await cdp('Emulation.setFocusEmulationEnabled', { enabled: true });
     await cdp('Emulation.setDeviceMetricsOverride', { width: 375, height: 720, deviceScaleFactor: 1, mobile: true });
-    await cdp('Page.navigate', { url: origin + route });
+    await cdp('Page.navigate', { url: origin + '/app/ideas/' + idea + '/think' });
+    await text('Synthetic idea');
+    await press('Create conversation');
+    await browserWait(() => first && evaluate('location.pathname.endsWith(' + JSON.stringify('/conversations/' + first) + ')'), 'created conversation');
     await text('No saved messages.');
     await evaluate(`(() => {
       const field = document.querySelector('textarea');
@@ -251,14 +287,25 @@ async function browserJourney({ account, idea, first, url, token, allowed, deliv
     pauseStatus = true;
     await press('Check Again');
     await text('Status observation paused.');
-    assert.equal(await evaluate('document.body.innerText.includes("Synthetic assistant")'), false);
+    assert.equal(await evaluate('document.body.innerText.includes(' + JSON.stringify(assistantText) + ')'), false);
     pauseStatus = false;
     await press('Check status');
     await text('Generation pending.');
     const accepted = nextGeneration;
+    await browserWait(() => observedStreams.has(accepted), 'browser SSE connection');
+    const eventUrl = url + '/generations/' + accepted + '/events';
+    const eventHeaders = { Authorization: 'Bearer ' + token, Accept: 'text/event-stream' };
+    const observe = () => fetch(eventUrl, { headers: eventHeaders, signal: AbortSignal.timeout(15_000) });
+    const live = await observe();
+    assert.equal(live.status, 200);
+    assert.match(live.headers.get('content-type'), /^text\/event-stream/);
     await delivered(accepted);
-    await text('Synthetic assistant');
-    await verifyUsage(accepted);
+    const frames = await live.text();
+    assert.match(frames, /event: generation\.status[^]*"status":"PENDING"[^]*event: generation\.completed/);
+    const reconnect = await observe();
+    assert.match(await reconnect.text(), /^event: generation\.completed/);
+    await text(assistantText);
+    await verifyUsage(accepted, first);
     assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
     let release, entered;
     const running = new Promise(resolve => { entered = resolve; });
@@ -267,23 +314,23 @@ async function browserJourney({ account, idea, first, url, token, allowed, deliv
     const replacement = await browserWait(() => nextGeneration !== accepted && nextGeneration, 'regeneration acceptance');
     void delivered(replacement).catch(error => { dispatchFailure = error; });
     await Promise.race([running, sleep(4000).then(() => { throw dispatchFailure ?? new Error('Replacement did not start'); })]);
-    assert.equal(await evaluate('document.body.innerText.includes("Synthetic assistant")'), true);
+    await text(assistantText);
     try {
       await press('Stop');
       await text('Cancellation requested.');
     } finally { release('Uncommitted replacement'); }
     await text('Generation cancelled.');
-    await text('Synthetic assistant');
+    await text(assistantText);
     assert.equal(await evaluate('document.body.innerText.includes("Uncommitted replacement")'), false);
     archived = true;
     await cdp('Page.reload');
     await text('Archived (read only)');
-    await text('Synthetic assistant');
+    await text(assistantText);
     assert.equal(await evaluate('Boolean(document.querySelector("textarea"))'), false);
     deny = true;
     await cdp('Page.reload');
     await text('This workspace item is unavailable.');
-    assert.equal(await evaluate('document.body.innerText.includes("Synthetic assistant")'), false);
+    assert.equal(await evaluate('document.body.innerText.includes(' + JSON.stringify(assistantText) + ')'), false);
   } finally {
     socket?.close();
     proxy?.closeAllConnections();
@@ -377,6 +424,12 @@ async function postgres(id, run, credentials) {
       throw error;
     }
     await admin.query(await readFile('tests/m05-local-generation-grants.sql', 'utf8'));
+    if (browserMode) await admin.query(`
+      GRANT SELECT (title,summary,version,"createdAt","updatedAt") ON "Idea" TO ${roles.api};
+      GRANT SELECT (title,"metadataVersion","proactiveResearch","createdAt","updatedAt"),
+        INSERT (id,"ideaId",title,status,"metadataVersion","proactiveResearch","nextSequence","createdAt","updatedAt")
+        ON "Conversation" TO ${roles.api};
+    `);
     if (!browserMode) await admin.query(await readFile('scripts/p9-local-runtime-grants.sql', 'utf8'));
     await admin.query(await readFile('tests/m05-t02-bootstrap.sql', 'utf8'));
     // Prove that the baseline and earlier test grants expose no context reader.
@@ -557,7 +610,10 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, submissionPris
   if (trustedAdmission) app.use('/api/v1', (req, res, next) => useTrusted ? trustedAdmission(req, res, next) : next());
   app.use('/api/v1', submissionRoutes(createSubmissionService(createSubmissionRepository(prisma), apiAuthority,
     { clock: () => new Date(), policy, cursorSecret: randomBytes(32) }), authenticate));
-  app.use('/api/v1', generationRoutes(createGenerationService(createGenerationRepository(prisma, policy), apiAuthority), authenticate));
+  app.use('/api/v1', generationRoutes(createGenerationService(createGenerationRepository(prisma, policy), apiAuthority), authenticate,
+    { events: true }));
+  if (browserMode) app.use('/api/v1', localConversationRoutes(localConversationOperations(prisma, apiAuthority, randomBytes(32),
+    { read: async () => Date.now() + 10_000, create: async () => Date.now() + 10_000 }), authenticate));
   const server = app.listen(0, '127.0.0.1');
   startServer(server);
   await once(server, 'listening');
@@ -593,7 +649,7 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, submissionPris
   }, id => allowed.has(id), undefined, Date.now, async (context, signal) => {
     executions++;
     lastContext = context;
-    if (!browserMode && executions === 1) return (await founderProvider.generate(founderPrompt(context), signal)).text;
+    if (executions === 1) return (await founderProvider.generate(founderPrompt(context), signal)).text;
     return fake ? fake() : syntheticContextResponse(context);
   });
   const consumer = generationConsumer(redisUrl, prefix, worker, true);
@@ -625,13 +681,13 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, submissionPris
   }
 
   if (browserMode) {
-    return browserJourney({ account, idea, first, url, token: fixtureToken, allowed, delivered,
+    return browserJourney({ account, idea, url, token: fixtureToken, allowed, delivered,
       setFake: next => { fake = next; },
-      async verifyUsage(id) {
+      async verifyUsage(id, conversationId) {
         const completed = await status(id);
         assert.ok(completed.selected && completed.outputMessageId);
         assert.deepEqual(await ledger(id), { reservationState: 'SETTLED', measuredUnits: '1.00000' });
-        assert.equal((await fixture.query('SELECT id FROM "Message" WHERE "conversationId"=$1', [first])).rowCount, 2);
+        assert.equal((await fixture.query('SELECT id FROM "Message" WHERE "conversationId"=$1', [conversationId])).rowCount, 2);
       } });
   }
 

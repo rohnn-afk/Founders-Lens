@@ -66,6 +66,7 @@ const errors = {
   401: ['UNAUTHENTICATED', 'Authentication is required.', false],
   403: ['ACCOUNT_UNAVAILABLE', 'The account is unavailable. A disallowed browser origin receives an empty 403.', false],
   404: ['RESOURCE_NOT_FOUND', 'The requested resource is unavailable or outside the caller’s authorized scope. Some route restrictions return an empty 404.', false],
+  406: ['NOT_ACCEPTABLE', 'Accept must allow an event stream.', false],
   409: ['IDEMPOTENCY_KEY_REUSED', 'An idempotency key or submission identifier conflicts with a prior intent, or a generation is already in progress.', false],
   412: ['PRECONDITION_FAILED', 'The idea version changed. Reload before editing again.', false],
   413: ['PAYLOAD_TOO_LARGE', 'The request body is too large.', false],
@@ -82,7 +83,8 @@ type Operation = {
   tag: Tag;
   summary: string;
   description: string;
-  responses: Record<string, { description: string; content?: ReturnType<typeof json>; headers?: Record<string, unknown> }>;
+  responses: Record<string, { description: string; content?: Record<string, { schema: Schema; example: unknown }>;
+    headers?: Record<string, unknown> }>;
   parameters?: ReturnType<typeof parameter>[];
   requestBody?: ReturnType<typeof body>;
   extraErrors?: (keyof typeof errors)[];
@@ -90,7 +92,7 @@ type Operation = {
 const generationPath = workspacePrefix + '/generations/' + id;
 const reference = { messageId: id, generationId: id, statusUrl: generationPath, eventsUrl: generationPath + '/events' };
 const links = acceptanceRef.extend({ statusUrl: z.string(), eventsUrl: z.string() });
-const eventNote = 'The returned events URL is reserved for streaming and is unavailable in this API composition.';
+const eventNote = 'The events URL is available only when the isolated generation stream is mounted.';
 const location = { Location: { description: 'Relative resource URL.', schema: { type: 'string' } } };
 
 const catalog: Record<string, Operation> = {
@@ -178,6 +180,18 @@ const catalog: Record<string, Operation> = {
     extraErrors: [404], responses: { 200: success(generation, {
       id, conversationId: otherId, triggerMessageId: id, status: 'PENDING', selected: false, createdAt: time
     }) }
+  },
+  'get /generations/:generationId/events': {
+    operationId: 'observeGeneration', tag: 'Generation', summary: 'Observe committed generation state',
+    description: 'Isolated local SSE. Authenticate again on reconnect and use the status endpoint and transcript for recovery. Last-Event-ID is rejected. The offline provider emits state and terminal notifications without provisional text.',
+    extraErrors: [404, 406, 429],
+    responses: { 200: { description: 'Ordered state changes or one terminal notification. Disconnect leaves the generation running.',
+      content: { 'text/event-stream': {
+        schema: { type: 'string' },
+        example: 'event: generation.status\ndata: ' + JSON.stringify({
+          schemaVersion: 1, generationId: id, emittedAt: time, status: 'RUNNING'
+        }) + '\n\n'
+      } } } }
   }
 };
 

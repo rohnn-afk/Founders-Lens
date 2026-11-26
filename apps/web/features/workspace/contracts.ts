@@ -50,6 +50,7 @@ type GenerationFailure = ReplyFailure & {
 export type GenerationReply = { status: 200 | 202; data: Generation } | GenerationFailure;
 export type GenerationApi = {
   status(id: string, signal: AbortSignal): Promise<GenerationReply>;
+  watchTerminal?(id: string, signal: AbortSignal): Promise<boolean>;
   cancel?(id: string, key: string, signal: AbortSignal): Promise<GenerationReply>;
   regenerate?(conversationId: string, triggerMessageId: string, key: string, signal: AbortSignal): Promise<GenerationReply>;
 };

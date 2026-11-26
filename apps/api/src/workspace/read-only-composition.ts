@@ -46,7 +46,7 @@ export function workspaceIdeasCors(allowCreate: boolean, conversations?: { creat
       /^\/conversations\/[^/]+(?:\/messages)?$/.test(path));
     const save = conversations?.save && /^\/conversations\/[^/]+\/messages\/save$/.test(path);
     const submit = allowSubmission && /^\/conversations\/[^/]+\/messages$/.test(path);
-    const generationRead = allowSubmission && (submit || /^\/generations\/[^/]+$/.test(path) ||
+    const generationRead = allowSubmission && (submit || /^\/generations\/[^/]+(?:\/events)?$/.test(path) ||
       /^\/conversations\/[^/]+\/submissions\/[^/]+$/.test(path));
     const allowRead = ideas || conversationRead || generationRead;
     const postHeaders = (ideas && allowCreate) || save || submit ? 'authorization,content-type,idempotency-key' :
@@ -275,7 +275,7 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
     if (submission && generation && generationReadDeadline && generationConversation) {
       mountDocumentedRouter(router, submissionRoutes(submission, authenticate, { readDeadline: generationReadDeadline,
         readConversation: generationConversation }));
-      mountDocumentedRouter(router, generationRoutes(generation, authenticate, { statusOnly: true }));
+      mountDocumentedRouter(router, generationRoutes(generation, authenticate, { statusOnly: true, events: isolated }));
     }
     if (conversations) mountDocumentedRouter(router, localConversationRoutes(conversations, authenticate));
     return { router, close };

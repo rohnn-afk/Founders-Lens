@@ -158,7 +158,7 @@ test('locally admitted operations include accurate request and response contract
   const unused = async () => assert.fail('fixture route called unexpectedly');
   mountDocumentedRouter(router, workspaceIdeaListRoutes(ideas, authenticate, { createIdea: unused }, { patchIdea: unused }));
   mountDocumentedRouter(router, submissionRoutes({}, authenticate, { readConversation: scopedId }));
-  mountDocumentedRouter(router, generationRoutes({}, authenticate, { statusOnly: true }));
+  mountDocumentedRouter(router, generationRoutes({}, authenticate, { statusOnly: true, events: true }));
   mountDocumentedRouter(router, localConversationRoutes({ ...reads, create: unused, save: unused }, authenticate));
   const base = await serve(t, router, 'local-health');
   const spec = await readSpec(base);
@@ -195,6 +195,9 @@ test('locally admitted operations include accurate request and response contract
   assert.ok(edit.parameters.some(param => param.name === 'If-Match' && param.required));
   assert.ok(edit.responses[412] && edit.responses[428] && edit.responses[200].headers.ETag);
   const messages = paths['/api/v1/conversations/{conversationId}/messages'];
+  const stream = paths['/api/v1/generations/{generationId}/events'].get;
+  assert.ok(stream.responses[200].content['text/event-stream']);
+  assert.ok(stream.responses[406] && stream.responses[429]);
   assert.equal(messages.post.requestBody.content['application/json'].schema.properties.content.maxLength, 10000);
   assert.deepEqual(messages.get.parameters.find(param => param.name === 'assistantResponseVersion').schema.enum, ['1', '2']);
   assert.equal(messages.get.responses[200].content['application/json'].example.page.nextCursor, null);

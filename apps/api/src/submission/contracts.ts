@@ -86,6 +86,7 @@ const failures = {
   GENERATION_IN_PROGRESS: [409, 'A generation is already in progress.'],
   PAYLOAD_TOO_LARGE: [413, 'The request body is too large.'],
   UNSUPPORTED_MEDIA_TYPE: [415, 'The request must contain JSON.'],
+  NOT_ACCEPTABLE: [406, 'Accept must allow an event stream.'],
   QUOTA_EXCEEDED: [429, 'The submission quota is exhausted.'],
   NOT_FOUND: [404, 'The requested resource was not found.'],
   PROJECTION_UNAVAILABLE: [503, 'The workspace request could not be completed.']
