@@ -86,11 +86,16 @@ checks passed. Live quality evaluation still requires confirmation of the key's
 organization plan, limits and data controls. Evidence creation, provider citation
 finalization and the founder-facing memory approval journey remain open.
 
-The stabilization run verified all four builds, 284 default test passes and
-separate disposable PostgreSQL, Redis, authority and browser suites. Idea and
-conversation changes are stacked in PRs #11 and #12. The image gate still
-requires an upstream fix or reviewed equivalence for the exact staging
-candidate. Hosted workspace writes remain disabled.
+The stabilization and remediation runs verified all four builds, 286 default
+test passes and separate disposable PostgreSQL, Redis, authority and browser
+suites. The Redis quota test covers independent clients and retention after
+reconnect. Linux application and secret checks passed on PR #13 after the
+migration checksum and scanner corrections. Idea Management PR #11 merged to
+staging at `c40ace6601ce7b3c9b78497e27b0c10855f79595` after its exact runtime
+equivalence was approved. Conversation Management PR #12 now targets staging,
+with PR #13 still stacked on it. Each later staging candidate needs matching
+scan evidence and separate approval if the existing policy does not cover it.
+Hosted workspace writes remain disabled.
 
 ## 4. Milestone dependency and authority audit
 
