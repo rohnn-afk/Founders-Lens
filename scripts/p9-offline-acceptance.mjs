@@ -8,6 +8,7 @@ import { parseEnv } from 'node:util';
 import { setTimeout as wait } from 'node:timers/promises';
 import { p6Operator, signIdeaEditClearance, signP6Clearance, signP8Clearances, signP9Clearances } from '../tests/fixtures/p6-local-operator.mjs';
 import { p9OfflineTarget } from '../tests/fixtures/p9-targets.mjs';
+import { freeGroqPolicy } from '../apps/worker/dist/groq-free-policy.js';
 
 const fixturePrompt = 'Fictional startup Lantern Locker rents reusable picnic kits. What should we test first?';
 const manifest = async path => parseEnv(await readFile(path, 'utf8'));
@@ -15,11 +16,30 @@ const cleanup = [];
 const children = [];
 try {
   const [phase, conversation, ...extra] = process.argv.slice(2);
-  const development = phase === 'development';
+  const free = phase === 'groq-free';
+  const development = phase === 'development' || free;
   assert.ok(extra.length === 0 && (phase === 'workspace' && conversation === undefined ||
     (phase === 'generation' || development) && (conversation === undefined ||
       /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(conversation.trim()))), 'Invalid acceptance phase');
   assert.ok(process.env.FL_DEPLOYMENT === undefined && process.env.NODE_ENV !== 'production', 'Local operator process required');
+  const freeSettings = {};
+  if (free) {
+    const confirmed = await manifest('.env.groq-free.local');
+    for (const [name, value] of Object.entries(confirmed)) {
+      if (/^FL_GROQ_(?:ORG_(?:PLAN|RPM|RPD|TPM|TPD)|ORGANIZATION_SCOPE|FREE_(?:MODEL|REASONING)|APP_(?:RPM|RPD|TPM|TPD|INPUT|COMPLETION))$/.test(name)) {
+        freeSettings[name] = value;
+      }
+    }
+    const freePolicy = freeGroqPolicy({ ...freeSettings, FL_P9_ISOLATED: '1' });
+    assert.equal(freePolicy.model, 'openai/gpt-oss-20b', 'The local generation ledger supports the approved 20B free model only');
+    const fixtures = JSON.parse(await readFile('tests/fixtures/p9-founder-evaluation.json', 'utf8'));
+    Object.assign(freeSettings, { FL_P9_LOCAL_RUNTIME: 'groq-free',
+      FL_GROQ_SYNTHETIC_PROMPTS: JSON.stringify(fixtures.map(entry => entry.prompt)),
+      FL_P9_PROVIDER: 'groq', P9_GROQ_MODEL: freePolicy.model,
+      FL_P9_PRICE_VERSION: 'v1:groq-gpt-oss-20b', FL_P9_MAX_MICROS_PER_MILLION_TOKENS: '300000',
+      FL_P9_BUDGET_MICROS: '1575', FL_P9_ACCOUNT_TOKEN_BUDGET: '5248',
+      FL_P9_MAX_ADMISSIONS: '1', FL_P9_REQUESTS_PER_MINUTE: '1' });
+  }
   const secretInput = await manifest('.env.clerk-staging.local');
   const local = await manifest('.env.p9-offline-api.local');
   const worker = await manifest('.env.p9-offline-worker.local');
@@ -40,6 +60,7 @@ try {
   };
   if (development) Object.assign(settings, { FL_P9_LOCAL_DEVELOPMENT: '1', FL_P9_MAX_ADMISSIONS: '30',
     FL_P9_REQUESTS_PER_MINUTE: '6', FL_P9_BUDGET_MICROS: '207360', FL_P9_ACCOUNT_TOKEN_BUDGET: '138240' });
+  Object.assign(settings, freeSettings);
   const os = Object.fromEntries(['PATH', 'SystemRoot', 'TEMP', 'TMP'].filter(name => process.env[name])
     .map(name => [name, process.env[name]]));
   const api = { ...os, ...local, ...settings, CLERK_AUTHORIZED_PARTIES: '["http://127.0.0.1:3000"]',

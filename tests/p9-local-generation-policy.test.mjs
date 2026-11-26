@@ -2,7 +2,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { localGenerationModel, localGenerationPolicy } from '../apps/api/dist/generation/local-policy.js';
-import { localDevelopmentEnabled, localRuntimeTarget } from '../apps/api/dist/generation/local-runtime-config.js';
+import { localDevelopmentEnabled, localRuntimeTarget, syntheticFreePrompts } from '../apps/api/dist/generation/local-runtime-config.js';
 import { p9AcceptanceTarget, p9RecheckTarget, p9OfflineTarget } from './fixtures/p9-targets.mjs';
 
 test('local runtime configuration is generic, explicit and fail-closed', () => {
@@ -21,6 +21,19 @@ test('local runtime configuration is generic, explicit and fail-closed', () => {
     database: 'founders_lens_cedar_acceptance' });
   assert.deepEqual(p9RecheckTarget, { primaryPort: 55443, authorityPort: 55444, redisPort: 56384,
     database: 'founders_lens_cedar_recheck' });
+});
+
+test('Groq Free local mode requires the Free attestation and a finite synthetic prompt set', () => {
+  const env = { FL_P9_ISOLATED: '1', FL_P9_LOCAL_DEVELOPMENT: '1', FL_P9_LOCAL_RUNTIME: 'groq-free' };
+  assert.throws(() => localDevelopmentEnabled(env));
+  assert.equal(localDevelopmentEnabled({ ...env, FL_GROQ_ORG_PLAN: 'free' }), true);
+  assert.throws(() => localDevelopmentEnabled({ ...env, FL_GROQ_ORG_PLAN: 'free', FL_DEPLOYMENT: 'staging' }));
+  const prompts = syntheticFreePrompts({ FL_GROQ_SYNTHETIC_PROMPTS: '["Synthetic case"]' });
+  assert.equal(prompts.has('Synthetic case'), true);
+  assert.equal(prompts.has('Private founder data'), false);
+  for (const invalid of ['[]', '["same","same"]', '[" trailing "]', '[false]']) {
+    assert.throws(() => syntheticFreePrompts({ FL_GROQ_SYNTHETIC_PROMPTS: invalid }));
+  }
 });
 const content = 'Synthetic: a clinic booking exercise.';
 const config = { model: 'gemini-3.1-flash-lite', priceVersion: 'v1:offline-pricing-fixture',

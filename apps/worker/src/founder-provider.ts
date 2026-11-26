@@ -2,7 +2,7 @@
 // or issue network requests on import. Callers must authorize each invocation.
 import { ApiError, FinishReason, GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { createHash } from 'node:crypto';
-import type { GenerationContext } from './generation-context.js';
+import type { GenerationContext, OfflineAssistantContent } from './generation-context.js';
 
 export const founderPromptVersion = 'founder-challenger-v1';
 export const founderInstructions = `You are Founder's Lens, a critical thinking partner for early-stage founders.
@@ -21,7 +21,8 @@ const geminiOrigin = 'https://generativelanguage.googleapis.com';
 
 export type FounderPrompt = { version: typeof founderPromptVersion; data: string };
 export type ProviderUsage = { inputTokens: number; outputTokens: number; totalTokens: number };
-export type ProviderResult = { text: string | null; usage: ProviderUsage | null; responseId: string | null };
+export type ProviderResult = { text: string | null; usage: ProviderUsage | null; responseId: string | null;
+  assistantContent?: OfflineAssistantContent };
 export interface FounderProvider {
   /** Execute one bounded request. A thrown failure conveys no proof of zero spend. */
   generate(prompt: FounderPrompt, signal: AbortSignal): Promise<ProviderResult>;

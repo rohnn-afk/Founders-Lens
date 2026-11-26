@@ -89,7 +89,38 @@ ignored manifests after verifying their identities and reviewing data retention.
 
 ## Runtime configuration
 
-### Provider evaluation pending approval
+### Groq Free evaluation
+
+Before live inference, confirm the organization which owns the key is on the
+Free plan. Record the lower of the displayed limits for enabled GPT-OSS models
+in ignored `.env.groq-free.local` as `FL_GROQ_ORG_PLAN=free` and
+`FL_GROQ_ORG_RPM`, `FL_GROQ_ORG_RPD`, `FL_GROQ_ORG_TPM`, `FL_GROQ_ORG_TPD`.
+Use one stable SHA-256 organization identifier in `FL_GROQ_ORGANIZATION_SCOPE`
+across models and restarts. Keep the key only in the existing ignored worker
+manifest. Review Zero Data Retention in the same organization.
+
+Run `node scripts/evaluate-groq-free.mjs --dry-run` to list the checked-in
+synthetic cases without credentials. After plan verification, the same command
+with `--live` and an optional case ID takes only those synthetic cases. The
+existing loopback Redis must have AOF, synchronous persistence and no eviction
+for the quota ledger. No requests are sent while that check fails. The shared
+rolling ceilings are 10 requests and 6,000 tokens per minute, and 40 requests
+and 120,000 tokens per day, each clamped to the organization limits. One
+reservation is active at a time. Missing usage retains the original reserve.
+The evaluator stops at a denial or transport failure without retrying it.
+
+The default model is `openai/gpt-oss-20b` with low reasoning. Set
+`FL_GROQ_FREE_MODEL=openai/gpt-oss-120b` or
+`FL_GROQ_FREE_REASONING=medium` for comparison. The request uses the strict
+text, strategy and question schema, excludes reasoning, and disables streaming
+and tools. For authenticated synthetic workspace development, run
+`node scripts/p9-offline-acceptance.mjs groq-free <owned-conversation-id>`.
+The API and worker accept only the checked-in synthetic prompts for this mode.
+The worker forwards only allowlisted recent founder turns. It excludes prior
+assistant text, memory and evidence from external requests. Keep using the
+`development` mode for offline conversations and private context.
+
+### Historical paid-equivalent reference
 
 Start with the existing Groq `openai/gpt-oss-20b` adapter and the existing
 isolated, synthetic-only single-admission profile. Set its worker-only key

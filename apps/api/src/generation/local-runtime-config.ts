@@ -36,8 +36,17 @@ export function localDevelopmentEnabled(env: NodeJS.ProcessEnv): boolean {
   const selected = env['FL_P9_LOCAL_DEVELOPMENT'];
   if (selected === undefined) return false;
   if (selected !== '1' || env['NODE_ENV'] === 'production' || env['FL_DEPLOYMENT'] !== undefined ||
-    env['FL_P9_ISOLATED'] !== '1' || env['FL_P9_LOCAL_RUNTIME'] !== 'deterministic') {
+    env['FL_P9_ISOLATED'] !== '1' || !['deterministic', 'groq-free'].includes(env['FL_P9_LOCAL_RUNTIME'] ?? '') ||
+    (env['FL_P9_LOCAL_RUNTIME'] === 'groq-free' && env['FL_GROQ_ORG_PLAN'] !== 'free')) {
     throw new Error('Local development profile unavailable');
   }
   return true;
+}
+
+export function syntheticFreePrompts(env: NodeJS.ProcessEnv): ReadonlySet<string> {
+  const values: unknown = JSON.parse(env['FL_GROQ_SYNTHETIC_PROMPTS'] ?? 'null');
+  if (!Array.isArray(values) || !values.length || values.length > 40 ||
+    !values.every((value: unknown) => typeof value === 'string' && value === value.trim() && value.length <= 1200 && value.length > 0) ||
+    new Set(values).size !== values.length) throw new Error('Groq Free requires a reviewed synthetic prompt set');
+  return new Set(values as string[]);
 }

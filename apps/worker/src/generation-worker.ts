@@ -107,9 +107,11 @@ export function generationWorker(repository: Repository, authority: Authority, a
           const response = await Promise.race([work, interrupted]);
           if (typeof response !== 'string') observation = response;
           const text = typeof response === 'string' ? response : response.text;
+          const assistantContent = typeof response === 'string' ? undefined : response.assistantContent;
           if (typeof text === 'string' && text.length > 0 && Array.from(text).length <= 10_000 &&
             text.isWellFormed() && !text.includes('\0')) result = { id: randomUUID(), text,
-              ...(trusted?.structuredOffline && context && { assistantContent: offlineAssistantContent(context) }) };
+              ...(assistantContent ? { assistantContent } :
+                trusted?.structuredOffline && context && { assistantContent: offlineAssistantContent(context) }) };
         }
       }
     } catch { /* The repository decides whether the failed fake can be recovered. */ }

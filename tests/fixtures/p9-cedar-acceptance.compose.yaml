@@ -24,7 +24,7 @@ services:
     image: docker.io/library/redis:7.4.12-bookworm@sha256:2e3eb11462c4e3759e6972678dd051d150ff54b1e60714b3c33b701260172a90
     environment:
       FL_P9_REDIS_PASSWORD: ${FL_P9_REDIS_PASSWORD:?Required}
-    command: ["sh", "-ec", "umask 077; printf 'protected-mode yes\nrequirepass %s\n' \"$$FL_P9_REDIS_PASSWORD\" > /tmp/p9-redis.conf; exec redis-server /tmp/p9-redis.conf"]
+    command: ["sh", "-ec", "umask 077; printf 'protected-mode yes\nappendonly yes\nappendfsync always\nmaxmemory-policy noeviction\nrequirepass %s\n' \"$$FL_P9_REDIS_PASSWORD\" > /tmp/p9-redis.conf; exec redis-server /tmp/p9-redis.conf"]
     ports: ["127.0.0.1:56383:6379"]
     volumes: ["redis-data:/data"]
 volumes:

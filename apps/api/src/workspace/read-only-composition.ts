@@ -23,7 +23,7 @@ import { createGenerationRepository } from '../generation/repository.js';
 import { generationRoutes } from '../generation/routes.js';
 import { createGenerationService } from '../generation/service.js';
 import { localGenerationModel, localGenerationPolicy } from '../generation/local-policy.js';
-import { localDevelopmentEnabled, localRuntimeTarget } from '../generation/local-runtime-config.js';
+import { localDevelopmentEnabled, localRuntimeTarget, syntheticFreePrompts } from '../generation/local-runtime-config.js';
 import { WorkspaceCursor } from './contracts.js';
 import { WorkspaceRepository } from './repository.js';
 import { localConversationRoutes, workspaceIdeaListRoutes, type LocalConversationOperations } from './routes.js';
@@ -97,6 +97,7 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
   if (env['FL_P6_READ_ONLY'] !== '1' || env['NODE_ENV'] === 'production') return;
   const isolated = env['FL_P9_ISOLATED'] === '1';
   const offlineDevelopment = localDevelopmentEnabled(env);
+  const freePrompts = offlineDevelopment && env['FL_P9_LOCAL_RUNTIME'] === 'groq-free' ? syntheticFreePrompts(env) : undefined;
   const target = localRuntimeTarget(env);
   const primaryPort = target.primaryPort;
   const authorityPort = target.authorityPort;
@@ -249,7 +250,8 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
         generationConversation = approvedConversation;
         submission = createSubmissionService(createSubmissionRepository(submissionClient, offlineDevelopment), authority.authority, {
           executionAdmission: admission.verifiedDecision, clock: () => new Date(), policy, cursorSecret: cursorKey,
-          allowSubmission: (principal, conversationId, content) => allows(principal.localUserId, conversationId, content)
+          allowSubmission: (principal, conversationId, content) => allows(principal.localUserId, conversationId, content) &&
+            (!freePrompts || freePrompts.has(content))
         });
       } catch {
         await submissionClient?.$disconnect();
