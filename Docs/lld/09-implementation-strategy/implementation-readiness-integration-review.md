@@ -92,10 +92,13 @@ suites. The Redis quota test covers independent clients and retention after
 reconnect. Linux application and secret checks passed on PR #13 after the
 migration checksum and scanner corrections. Idea Management PR #11 merged to
 staging at `c40ace6601ce7b3c9b78497e27b0c10855f79595` after its exact runtime
-equivalence was approved. Conversation Management PR #12 now targets staging,
-with PR #13 still stacked on it. Each later staging candidate needs matching
-scan evidence and separate approval if the existing policy does not cover it.
-Hosted workspace writes remain disabled.
+equivalence was approved. Conversation Management PR #12 also passed its
+required checks and merged to staging at
+`536a61a939b271decdf500228860d00a37300ba6`. PR #13 brings the accepted local
+offline journey and synthetic Groq evaluation tooling into the staging source
+tree. Deployment remains read-only. The exact staging image equivalence entries
+for this stack expire on 2026-12-25 at 12:32:47 UTC. Hosted workspace writes and
+live Groq evaluation retain separate activation requirements.
 
 ## 4. Milestone dependency and authority audit
 
