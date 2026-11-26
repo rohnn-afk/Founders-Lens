@@ -165,7 +165,7 @@ const catalog: Record<string, Operation> = {
   },
   'post /conversations/:conversationId/messages': {
     operationId: 'submitMessage', tag: 'Generation', summary: 'Submit a message for generation',
-    description: 'Accepts a message and enqueues generation only for the admitted local account and synthetic conversation. Retry with the original key and submission ID. ' + textRule + ' ' + eventNote,
+    description: 'Accepts messages in the authorized local conversation. Offline development accepts ordinary local text. Groq Free accepts approved synthetic prompts only. Retry with the original key and submission ID. ' + textRule + ' ' + eventNote,
     parameters: [key], requestBody: messageBody, extraErrors: [404, 409, 413, 415, 429],
     responses: { 202: { ...success(links.extend({ status: z.literal('PENDING') }), { ...reference, status: 'PENDING' }), headers: location } }
   },

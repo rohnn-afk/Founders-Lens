@@ -7,6 +7,17 @@ import { openGroqFreeQuota } from '../apps/worker/dist/groq-free-quota.js';
 import { groqFounderProvider } from '../apps/worker/dist/groq-provider.js';
 
 const read = path => readFile(new URL('../' + path, import.meta.url), 'utf8');
+export async function evaluateSyntheticCase(entry, provider) {
+  const turn = (text, id) => ({ id: String(id), text, truncated: false });
+  const previous = (entry.previous ?? []).map((text, index) => ({ user: turn(text, index) }));
+  const input = founderPrompt({ current: turn(entry.prompt, previous.length), previous, memory: [] });
+  const response = await provider.generate(input, AbortSignal.timeout(10_000));
+  const schemaValid = Boolean(response.text && response.assistantContent);
+  return { schemaValid, quality: schemaValid ? 'pending-human-review' : 'not-evaluated',
+    lookFor: entry.lookFor, usage: response.usage, text: response.text, assistantContent: response.assistantContent };
+}
+
+async function main() {
 const [mode, selected, ...extra] = process.argv.slice(2);
 if (mode === '--live' && !selected) {
   console.error('Live evaluation requires one case ID. Use --dry-run to list available cases.');
@@ -31,17 +42,21 @@ try {
     }
     limiter = await openGroqFreeQuota(broker, operator.FL_GROQ_ORGANIZATION_SCOPE, policy);
     const key = parseEnv(await read('.env.p9-groq-worker.local')).GROQ_API_KEY;
-    const provider = groqFounderProvider(key, undefined,
+    let httpStatus;
+    const provider = groqFounderProvider(key, async (url, options) => {
+      const response = await fetch(url, options);
+      httpStatus = response.status;
+      return response;
+    },
       event => console.log(JSON.stringify({ event })), { policy, quota: limiter.quota });
-    for (const [index, entry] of selectedCases.entries()) {
-      // IDs are synthetic and never sent as part of the prompt.
-      const input = founderPrompt({ current: { id: String(index), text: entry.prompt, truncated: false }, previous: [], memory: [] });
-      const start = performance.now();
-      const response = await provider.generate(input, AbortSignal.timeout(10_000));
-      console.log(JSON.stringify({ id: entry.id, model: policy.model, elapsedMs: Math.round(performance.now() - start),
-        valid: Boolean(response.text && response.assistantContent), usage: response.usage,
-        text: response.text, assistantContent: response.assistantContent }));
-    }
+    const entry = selectedCases[0];
+    const start = performance.now();
+    const result = await evaluateSyntheticCase(entry, provider).catch(() => ({
+      schemaValid: null, quality: 'not-evaluated'
+    }));
+    console.log(JSON.stringify({ id: entry.id, model: policy.model, httpStatus: httpStatus ?? null,
+      elapsedMs: Math.round(performance.now() - start), ...result }));
+    if (result.schemaValid !== true) process.exitCode = 1;
   }
 } catch {
   console.error('Groq Free evaluation stopped. Check the confirmed plan and quotas, persistent local Redis, and provider diagnostics.');
@@ -49,3 +64,6 @@ try {
 } finally {
   limiter?.close();
 }
+}
+
+if (import.meta.main) await main();

@@ -4,11 +4,23 @@ import test from 'node:test';
 import { founderInstructions, founderPromptVersion } from '../apps/worker/dist/founder-provider.js';
 import { groqFounderProvider } from '../apps/worker/dist/groq-provider.js';
 import { freeGroqPolicy } from '../apps/worker/dist/groq-free-policy.js';
+import { evaluateSyntheticCase } from '../scripts/evaluate-groq-free.mjs';
 
 const key = 'gsk_' + 'offline_synthetic_fixture';
 const prompt = { version: founderPromptVersion, data: '{"recent":[],"current":"Synthetic founder turn"}' };
 const freeEnv = { FL_P9_ISOLATED: '1', FL_GROQ_ORG_PLAN: 'free',
   FL_GROQ_ORG_RPM: '30', FL_GROQ_ORG_RPD: '1000', FL_GROQ_ORG_TPM: '8000', FL_GROQ_ORG_TPD: '200000' };
+
+test('synthetic Groq evaluation sends prior turns and separates invalid output from quality', async () => {
+  const entry = { previous: ['The test has six shops. No deposits.'], prompt: 'What is a good signal?', lookFor: 'Use appointments.' };
+  const result = await evaluateSyntheticCase(entry, { async generate(input) {
+    assert.match(input.data, /six shops/);
+    assert.match(input.data, /good signal/);
+    return { text: null, usage: null };
+  } });
+  assert.equal(result.schemaValid, false);
+  assert.equal(result.quality, 'not-evaluated');
+});
 
 test('live Groq evaluation requires an explicit case before loading credentials', () => {
   const result = spawnSync(process.execPath, ['scripts/evaluate-groq-free.mjs', '--live'], { encoding: 'utf8' });

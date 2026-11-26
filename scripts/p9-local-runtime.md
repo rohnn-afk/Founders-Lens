@@ -107,6 +107,9 @@ Run `node scripts/evaluate-groq-free.mjs --dry-run` to list the checked-in
 synthetic cases without credentials. After plan verification, run
 `node scripts/evaluate-groq-free.mjs --live <case-id>` for one synthetic case.
 This lets you review each result and space requests within the rolling quota.
+The evaluator reports HTTP status and schema validity separately from manual
+quality review. The contextual case uses synthetic prior turns. Memory and
+citation evaluation remain pending.
 The existing loopback Redis must have AOF, synchronous persistence and no eviction
 for the quota ledger. No requests are sent while that check fails. The shared
 rolling ceilings are 10 requests and 6,000 tokens per minute, and 40 requests

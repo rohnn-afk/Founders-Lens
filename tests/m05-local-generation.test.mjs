@@ -37,6 +37,7 @@ import { generationWorker } from '../apps/worker/dist/generation-worker.js';
 import { syntheticContextResponse } from '../apps/worker/dist/generation-context.js';
 import { deterministicFounderProvider, founderPrompt } from '../apps/worker/dist/founder-provider.js';
 import { groqFounderProvider } from '../apps/worker/dist/groq-provider.js';
+import { groqFreeQuota } from '../apps/worker/dist/groq-free-quota.js';
 import { generationConsumer } from '../apps/worker/dist/generation-consumer.js';
 import { createExecutionAuthorizer } from '../apps/api/dist/generation/execution-scope.js';
 import { createSuppressionLedger } from '../apps/api/dist/security/suppression-ledger.js';
@@ -1254,6 +1255,21 @@ test('isolated HTTP submission through outbox, BullMQ and the fake generation wo
     await until(() => redis.ping().catch(() => false));
     assert.equal((await redis.info('keyspace')).trim(), '# Keyspace');
     assert.equal((await redis.client('LIST')).trim().split('\n').length, 1);
+    const quotaClient = new Redis(redisUrl.href, { maxRetriesPerRequest: 0, connectTimeout: 1000 });
+    try {
+      const organization = randomBytes(32).toString('hex');
+      const policy = { inputTokens: 1800, completionTokens: 1200,
+        limits: { rpm: 10, rpd: 40, tpm: 3000, tpd: 3000 } };
+      const attempts = await Promise.allSettled([redis, quotaClient].map(client => groqFreeQuota(client, organization, policy).reserve()));
+      const accepted = attempts.filter(attempt => attempt.status === 'fulfilled');
+      assert.equal(accepted.length, 1);
+      await accepted[0].value(); // Unknown usage keeps the full reservation.
+      quotaClient.disconnect();
+      await quotaClient.connect();
+      // Simulate lease expiry without advancing the usage window.
+      await redis.del(`founders-lens:groq-free:{${organization}}:active`);
+      await assert.rejects(groqFreeQuota(quotaClient, organization, policy).reserve(), /quota is currently unavailable/);
+    } finally { quotaClient.disconnect(); }
     const liveBroker = (await redis.info('server')).match(/^run_id:(\w+)/m)?.[1];
     assert.ok(liveBroker);
     queue = new Queue('generation', { prefix, connection: createIORedisClient(redis) });
