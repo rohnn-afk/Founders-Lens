@@ -68,6 +68,22 @@ test('Prisma 7 translation preserves the entire approved domain and additive gua
   assert.match(schema, /provider\s*=\s*"prisma-client"/);
 });
 
+test('canonical migration bytes and historical local checksums have separate contracts', async () => {
+  const { steps } = await reviewedMigration();
+  const historical = [
+    ['0002_p9_context', 'e30c7f7003eb74fa715e3457d4ec220f08bc33f9b66287dab2d3979a1c212fff'],
+    ['0003_p9_provider_receipt', 'a0a3a093f734c1f55440cd5b5a74f386191bb1a6e5403a78d7248511ecf03058'],
+    ['0004_m06_selected_context', '7533b2e2afdabf85653f100fce9abb7cf24d9a81f885dc740cd51fc975770194']
+  ];
+  for (const [name, checksum] of historical) {
+    const step = steps.find(candidate => candidate.name === name);
+    assert.ok(step);
+    assert.notEqual(step.checksum, checksum);
+    assert.ok(localMigrationChecksumMatches(step, checksum));
+    assert.equal(localMigrationChecksumMatches(steps[0], checksum), false);
+  }
+});
+
 test('runtime configuration rejects missing, owner, remote and malformed connection settings', () => {
   assert.throws(() => databaseConfig({}));
   const valid = `postgresql://fl_m02_runtime:${'1'.repeat(64)}@127.0.0.1:55432/founders_lens_m02_test?schema=public`;
