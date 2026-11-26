@@ -32,6 +32,15 @@ export function offlineAcceptanceEnabled(env: NodeJS.ProcessEnv): boolean {
   return true;
 }
 
+export function offlineDevelopmentEnabled(env: NodeJS.ProcessEnv): boolean {
+  const selected = env['FL_P9_OFFLINE_DEVELOPMENT'];
+  if (selected === undefined) return false;
+  if (selected !== '1' || !offlineAcceptanceEnabled(env) || env['FL_P9_SYNTHETIC_TEXT_SHA256'] !== undefined) {
+    throw new Error('Offline development profile unavailable');
+  }
+  return true;
+}
+
 /** Keep the acceptance profile local and Groq-only. Compositions still verify signed live identities. */
 export function cedarAcceptanceEnabled(env: NodeJS.ProcessEnv): boolean {
   const selected = env['FL_P9_CEDAR_ACCEPTANCE'];

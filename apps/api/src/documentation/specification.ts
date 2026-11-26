@@ -1,6 +1,6 @@
 ﻿import { z } from 'zod';
 import { generation } from '../generation/contracts.js';
-import { acceptanceRef, messageCreate, messageDto, transcriptQuery } from '../submission/contracts.js';
+import { acceptanceRef, messageCreate, messageDto, structuredMessageDto, transcriptQuery } from '../submission/contracts.js';
 import { conversationCreate, conversationDto, ideaCreate, ideaDetailsPatch, ideaDto, idempotencyKey, listQuery, uuid } from '../workspace/contracts.js';
 import { workspacePrefix, type RegisteredOperation } from './routes.js';
 
@@ -45,8 +45,8 @@ const listLimit = parameter('limit', 'query', 'Decimal digits representing a pag
   ...schema(listQuery.shape.limit), default: '25', description: 'Numeric value must be between 1 and 100.'
 }, '25');
 const workspaceQuery = [listLimit, parameter('cursor', 'query', 'Opaque continuation from the preceding page. Scoped to the signed-in account and collection.', schema(listQuery.shape.cursor))];
-const messagesQuery = [listLimit, parameter('cursor', 'query', 'Opaque continuation scoped to the account, conversation and page size.', schema(transcriptQuery.shape.cursor)),
-  parameter('assistantResponseVersion', 'query', 'Version 1 returns text. Version 2 is accepted but returns 503 because the structured projection is unavailable.',
+const messagesQuery = [listLimit, parameter('cursor', 'query', 'Opaque continuation scoped to the account, conversation, response version and page size.', schema(transcriptQuery.shape.cursor)),
+  parameter('assistantResponseVersion', 'query', 'Version 1 returns text. Version 2 also returns validated metadata for structured assistant replies. Legacy rows keep their original text.',
     { ...schema(transcriptQuery.shape.assistantResponseVersion), default: '1' }, '1')];
 const body = (shape: Schema, example: unknown, limit: string) => ({
   required: true, description: 'Strict JSON object. Maximum body size is ' + limit + '.', content: json(shape, example)
@@ -156,7 +156,7 @@ const catalog: Record<string, Operation> = {
   'get /conversations/:conversationId/messages': {
     operationId: 'listMessages', tag: 'Messages', summary: 'Read the conversation transcript',
     description: 'Returns the visible text for an active conversation in an active idea. ' + transcriptPaging, parameters: messagesQuery, extraErrors: [404],
-    responses: { 200: success(pageOf(messageDto), { items: [message], page }) }
+    responses: { 200: success(pageOf(structuredMessageDto), { items: [message], page }) }
   },
   'post /conversations/:conversationId/messages/save': {
     operationId: 'saveMessage', tag: 'Messages', summary: 'Save a user message',

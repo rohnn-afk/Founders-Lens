@@ -9,11 +9,13 @@
 | Hosted staging | Clerk account binding, restricted Neon roles, independent authority and release gates | Read-only workspace |
 | Production | Separate identities and infrastructure, reviewed deployment and capability approvals | Provider activation requires separate authorization |
 
-The one-shot scope used for acceptance and provider experiments is too narrow
-for routine offline feature development. A durable local developer profile
-should retain ownership and local authority checks, use dedicated loopback
-stores, and refuse paid-provider or hosted configuration. The offline acceptance
-launcher consolidates the existing signing steps without changing grant expiry.
+For repeatable offline development, reuse the same stores, Clerk binding and
+operator key paths. Run `node scripts/p9-offline-acceptance.mjs development <conversation-id>`
+for an active owned conversation. This mode accepts multiple turns without a
+prompt hash. It retains a bounded per-account quota, exact conversation
+authorization, live authority and the five-minute signed window. Start a new
+window with the same command. The mode rejects hosted configuration and paid
+providers before it opens its database or queue.
 
 ## Designated Clerk offline acceptance
 

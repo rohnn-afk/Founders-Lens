@@ -10,7 +10,7 @@ import { createRuntimeRecoveryClearance } from '../apps/api/dist/privacy/runtime
 import { createSuppressionLedger } from '../apps/api/dist/security/suppression-ledger.js';
 import { generationReservationTokens, localGenerationModel, localGenerationPolicy } from '../apps/api/dist/generation/local-policy.js';
 import { cedarAcceptanceEnabled, cedarAcceptanceTarget, cedarRecheckTarget, offlineAcceptanceEnabled,
-  offlineAcceptanceTarget } from '../apps/api/dist/generation/cedar-acceptance-target.js';
+  offlineAcceptanceTarget, offlineDevelopmentEnabled } from '../apps/api/dist/generation/cedar-acceptance-target.js';
 import { isUuid } from '../apps/dispatcher/dist/config.js';
 import { dispatcher } from '../apps/dispatcher/dist/dispatch.js';
 import { generationQueue } from '../apps/dispatcher/dist/generation-queue.js';
@@ -47,6 +47,7 @@ export async function startLocalGeneration(env, report = () => {}, { determinist
   const isolated = env.FL_P9_ISOLATED === '1';
   const cedar = cedarAcceptanceEnabled(env);
   const offline = offlineAcceptanceEnabled(env);
+  const offlineDevelopment = offlineDevelopmentEnabled(env);
   const recheck = env.FL_P9_CEDAR_ACCEPTANCE === '2';
   const target = offline ? offlineAcceptanceTarget : recheck ? cedarRecheckTarget : cedarAcceptanceTarget;
   const dedicated = cedar || offline;
@@ -72,7 +73,7 @@ export async function startLocalGeneration(env, report = () => {}, { determinist
   const approved = { accountId: required('FL_P9_SYNTHETIC_ACCOUNT'), conversationId: required('FL_P9_SYNTHETIC_CONVERSATION') };
   const run = required('FL_P9_REDIS_RUN');
   if (![run, approved.accountId, approved.conversationId].every(isUuid)) throw new Error('Invalid local runtime scope');
-  const textHash = required('FL_P9_SYNTHETIC_TEXT_SHA256');
+  const textHash = offlineDevelopment ? undefined : required('FL_P9_SYNTHETIC_TEXT_SHA256');
   const budget = live || model === 'openai/gpt-oss-20b' ? localGenerationPolicy({
     model, priceVersion: required('FL_P9_PRICE_VERSION'),
     maximumMicrosPerMillionTokens: required('FL_P9_MAX_MICROS_PER_MILLION_TOKENS'),
@@ -81,8 +82,9 @@ export async function startLocalGeneration(env, report = () => {}, { determinist
     ...approved, syntheticTextSha256: textHash
   }).policy : undefined;
   const groqKey = groq ? parseEnv(await readFile(new URL('../.env.p9-groq-worker.local', import.meta.url), 'utf8')).GROQ_API_KEY : undefined;
-  const provider = syntheticOnlyProvider(gemini ? geminiFounderProvider(env, undefined, report)
-    : groq ? groqFounderProvider(groqKey, undefined, report) : deterministicProvider ?? deterministicFounderProvider(), textHash);
+  const provider = textHash ? syntheticOnlyProvider(gemini ? geminiFounderProvider(env, undefined, report)
+    : groq ? groqFounderProvider(groqKey, undefined, report) : deterministicProvider ?? deterministicFounderProvider(), textHash)
+    : deterministicFounderProvider();
   const redis = localUrl(required('FL_P9_REDIS_URL'), 'redis:', dedicated ? String(target.redisPort) : test ? '56382' : '56381');
   if (redis.pathname !== '/0' || redis.username || !/^[a-f0-9]{64}$/.test(redis.password)) throw new Error('Invalid local broker');
   const prefix = 'founders-lens-p9-local-' + run;
@@ -164,6 +166,7 @@ export async function startLocalGeneration(env, report = () => {}, { determinist
         return { ...result, responseId: 'p9-deterministic-observation',
           usage: { inputTokens: 17, outputTokens: 9, totalTokens: 26 } };
       }, {
+        structuredOffline: offline || test && !deterministicProvider,
         verifyExecution: ({ id }) => execute(id),
         readContext: leasedContextReader(workerPool,
           createContextGrantIssuer(verifier, ledger.authority, executionPermission, urls[2].username, approved))

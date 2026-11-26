@@ -5,7 +5,7 @@ import { SecurityError } from '../security/errors.js';
 import type { Principal } from '../security/principal.js';
 import type { RuntimeRecoveryDecision } from '../privacy/runtime-recovery-clearance.js';
 import { requireClearance, suppressionWindow, type SuppressionAuthority } from '../security/suppression-authority.js';
-import { digest, messageDto, requestFingerprint, storedMessageText, SubmissionError, transcriptCursor,
+import { digest, messageDto, requestFingerprint, storedMessageText, storedStructuredMessage, SubmissionError, transcriptCursor,
   type AcceptanceRef, type MessageCreate, type TranscriptQuery, type TurnAnchor } from './contracts.js';
 
 export interface AdmissionPolicy {
@@ -77,12 +77,11 @@ export function createSubmissionService(repository: SubmissionRepository, author
       const window = suppressionWindow(authority);
       const scope = await readScope(principal, conversationId, Boolean(localReadGuard), window.authority);
       if (localReadGuard && scope.status !== 'ACTIVE') throw new SecurityError('RESOURCE_NOT_FOUND');
-      // The isolated slice explicitly reports an unavailable projection for
-      // valid v2 requests until the structured transcript is implemented.
-      if (query.assistantResponseVersion === '2') throw new SubmissionError('PROJECTION_UNAVAILABLE');
+      const structured = query.assistantResponseVersion === '2';
       if (!cursors) throw new SecurityError('DEPENDENCY_UNAVAILABLE');
       const limit = query.limit ?? 25;
-      const cursorScope = JSON.stringify([principal.localUserId, scope.ideaId, conversationId, limit]);
+      const scopeParts = [principal.localUserId, scope.ideaId, conversationId, limit];
+      const cursorScope = JSON.stringify(structured ? [...scopeParts, '2'] : scopeParts);
       const after = query.cursor === undefined ? undefined : cursors.decode(cursorScope, query.cursor);
       const rows = await repository.history(principal, scope, limit + 1, after, localReadGuard);
       window.requireFresh();
@@ -96,7 +95,10 @@ export function createSubmissionService(repository: SubmissionRepository, author
         const dto = messageDto.safeParse({ id: row.id, conversationId: row.conversationId, sequence: row.sequence,
           role: row.role, content: text.data.text, createdAt: row.createdAt.toISOString() });
         if (!dto.success) throw new SubmissionError('PROJECTION_UNAVAILABLE');
-        return dto.data;
+        if (!structured || row.contentSchemaVersion === 1) return dto.data;
+        const enriched = storedStructuredMessage.safeParse(row.content);
+        if (!enriched.success) throw new SubmissionError('PROJECTION_UNAVAILABLE');
+        return { ...dto.data, assistantContent: enriched.data.assistantContent };
       });
       if (Buffer.byteLength(JSON.stringify(items)) > 8 * 1024 * 1024) throw new SubmissionError('PROJECTION_UNAVAILABLE');
       const last = pageRows.at(-1);

@@ -60,7 +60,10 @@ export function Transcript({ conversationId, page, pageIndex, archived }: {
         {page.items.map(item => <li key={item.id} className={styles['turn']} data-speaker={item.role === 'USER' ? 'founder' : 'assistant'}>
           <div className={styles['speaker']}>{item.role === 'USER' ? 'You' : 'Assistant'}</div>
           {item.role === 'USER' ? <p className={styles['founderText']}>{item.content}</p> :
-            <div className={styles['assistantText']}><AssistantText content={item.content} /></div>}
+            <div className={styles['assistantText']}>
+              <AssistantText content={item.content} />
+              {item.assistantContent?.nextQuestion && <p>{item.assistantContent.nextQuestion}</p>}
+            </div>}
         </li>)}
       </ol> : <div className={styles['empty']}>
         <p>No saved messages.</p>

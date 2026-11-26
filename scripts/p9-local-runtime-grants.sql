@@ -67,6 +67,11 @@ GRANT SELECT ("contextEpoch","leaseEpoch","executionAttempts","leaseUntil","disp
 GRANT SELECT (id,"conversationId","ideaId",role),
   INSERT (id,"conversationId","ideaId",role,sequence,content,"generationAttemptId")
   ON public."Message" TO fl_p9_worker;
+DO $$ BEGIN
+  IF current_database() IN ('founders_lens_offline_acceptance', 'founders_lens_m05_e2e_test') THEN
+    GRANT INSERT ("contentSchemaVersion") ON public."Message" TO fl_p9_worker;
+  END IF;
+END $$;
 GRANT SELECT ("accountId","reservationId","reservationState","reservedUnits","measuredUnits",unit,"operationType"),
   UPDATE ("reservationState","measuredUnits") ON public."UsageLedger" TO fl_p9_worker;
 GRANT SELECT, INSERT ON public."GenerationProviderReceipt" TO fl_p9_worker;

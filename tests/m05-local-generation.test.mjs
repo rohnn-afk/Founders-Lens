@@ -933,6 +933,15 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, submissionPris
   assert.deepEqual(initialTranscript.map(item => item.role), ['USER', 'ASSISTANT']);
   assert.equal(initialTranscript[0].content, body.content);
   assert.match(initialTranscript[1].content, /Identify the assumption.*pass threshold/);
+  if (trusted) {
+    const structured = await request(convo(first) + '/messages?assistantResponseVersion=2', 200);
+    assert.deepEqual(structured.items[0], initialTranscript[0]);
+    assert.equal(initialTranscript[1].assistantContent, undefined);
+    assert.deepEqual(structured.items[1], { ...initialTranscript[1], assistantContent: {
+      schemaVersion: 1, primaryStrategy: 'CHALLENGE', nextQuestion: 'What result would disprove this assumption?',
+      citationRefs: [], proposalIds: [], actions: []
+    } });
+  }
 
   fake = async () => 'Regenerated synthetic assistant';
   const regenKey = randomUUID();

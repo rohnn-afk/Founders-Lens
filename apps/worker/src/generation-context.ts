@@ -4,6 +4,18 @@ type Source = { id: string; text: string; truncated: boolean };
 type Turn = { user: Source; assistant?: Source };
 type Memory = Source & { version: number };
 export type GenerationContext = { current: Source; previous: Turn[]; memory: Memory[] };
+export type OfflineAssistantContent = {
+  schemaVersion: 1; primaryStrategy: 'CHALLENGE' | 'REFLECT'; nextQuestion: string;
+  citationRefs: []; proposalIds: []; actions: [];
+};
+
+/** Only server-controlled metadata is derived from authorized context. */
+export function offlineAssistantContent(context: GenerationContext): OfflineAssistantContent {
+  const priorTurn = context.previous.length > 0;
+  return { schemaVersion: 1, primaryStrategy: priorTurn ? 'REFLECT' : 'CHALLENGE',
+    nextQuestion: priorTurn ? 'What changed since your previous test?' : 'What result would disprove this assumption?',
+    citationRefs: [], proposalIds: [], actions: [] };
+}
 
 const uuid = /^[\da-f]{8}-[\da-f]{4}-[1-8][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i;
 const object = (value: unknown): value is Record<string, unknown> =>

@@ -1,7 +1,7 @@
 // Isolated worker coordinator. It validates scoped synthetic evidence, bounds
 // fake execution, and hands durable transitions to the PostgreSQL adapter.
 import { randomUUID } from 'node:crypto';
-import { assembleGenerationContext, type GenerationContext } from './generation-context.js';
+import { assembleGenerationContext, offlineAssistantContent, type GenerationContext, type OfflineAssistantContent } from './generation-context.js';
 import type { Repository, Scope } from './generation-repository.js';
 import type { ProviderResult } from './founder-provider.js';
 
@@ -22,6 +22,7 @@ export function generationWorker(repository: Repository, authority: Authority, a
   fake: (signal: AbortSignal) => Promise<string> = async () => 'This is a deterministic test response.',
   now = Date.now, contextResponse?: (context: GenerationContext, signal: AbortSignal) => Promise<string | ProviderResult>,
   trusted?: {
+    structuredOffline?: boolean;
     verifyExecution(scope: Scope): Promise<number>;
     readContext(scope: Scope, lease: { epoch: number }): Promise<unknown>;
   }) {
@@ -89,7 +90,7 @@ export function generationWorker(repository: Repository, authority: Authority, a
     }, 1000);
     const timeoutMs = Math.min(trusted ? 9000 : 3000, lease.remainingMs - (performance.now() - started));
     let timeout: ReturnType<typeof setTimeout> | undefined;
-    let result: { id: string; text: string } | null = null;
+    let result: { id: string; text: string; assistantContent?: OfflineAssistantContent } | null = null;
     let observation: ProviderResult | undefined;
     try {
       if (timeoutMs > 0 && !stopping) {
@@ -105,7 +106,8 @@ export function generationWorker(repository: Repository, authority: Authority, a
           if (typeof response !== 'string') observation = response;
           const text = typeof response === 'string' ? response : response.text;
           if (typeof text === 'string' && text.length > 0 && Array.from(text).length <= 10_000 &&
-            text.isWellFormed() && !text.includes('\0')) result = { id: randomUUID(), text };
+            text.isWellFormed() && !text.includes('\0')) result = { id: randomUUID(), text,
+              ...(trusted?.structuredOffline && context && { assistantContent: offlineAssistantContent(context) }) };
         }
       }
     } catch { /* The repository decides whether the failed fake can be recovered. */ }

@@ -159,27 +159,47 @@ test('isolated recovery projects the original IDs and negotiates legacy transcri
   }
   assert.equal((await get({ method: 'GET', path, fields: {} })).status, 401);
   assert.equal((await get({ method: 'GET', path: path + '?unexpected=true' })).status, 400);
-  for (const suffix of ['', '?assistantResponseVersion=1']) {
+  for (const suffix of ['', '?assistantResponseVersion=1', '?assistantResponseVersion=2']) {
     const response = await get({ method: 'GET', path: '/messages' + suffix });
     assert.equal(response.status, 200);
     assert.deepEqual(response.body, { items: [], page: { nextCursor: null, hasMore: false } });
   }
-  const unavailable = await get({ method: 'GET', path: '/messages?assistantResponseVersion=2' });
-  assert.equal(unavailable.status, 503);
-  assert.deepEqual(unavailable.body.error, { code: 'PROJECTION_UNAVAILABLE',
-    message: 'The workspace request could not be completed.', retryable: true, requestId: unavailable.body.error.requestId });
-  assert.ok(unavailable.body.error.requestId);
   for (const query of ['limit=0', 'limit=101', 'assistantResponseVersion=3', 'assistantResponseVersion=',
     'assistantResponseVersion=1&assistantResponseVersion=2', 'cursor=invalid']) {
     const response = await get({ method: 'GET', path: '/messages?' + query });
     assert.equal(response.status, 400);
     assert.equal(response.body.error.code, 'VALIDATION_ERROR');
   }
-  assert.equal(reads, 2);
+  assert.equal(reads, 3);
   const denied = await harness(t, createSubmissionService(repo, unavailableSuppressionAuthority(), { clock: () => new Date() }));
   for (const readPath of [path, '/messages']) {
     assert.equal((await denied({ method: 'GET', path: readPath })).body.error.code, 'DEPENDENCY_UNAVAILABLE');
   }
+});
+
+test('structured history rejects unsupported claims and binds cursors to the response version', async t => {
+  const content = { text: 'Offline response', assistantContent: { schemaVersion: 1, primaryStrategy: 'REFLECT',
+    citationRefs: [], proposalIds: [], actions: [], nextQuestion: 'What changed?' } };
+  const assistant = { id: randomUUID(), conversationId, sequence: 2, role: 'ASSISTANT', turn: 1, slot: 1,
+    contentSchemaVersion: 2, content, createdAt: new Date() };
+  const repo = {
+    async scope() { return { id: conversationId, ideaId, status: 'ACTIVE',
+      idea: { id: ideaId, status: 'ACTIVE', ownerId: principal.localUserId } }; },
+    async history() { return [assistant, { ...assistant, id: randomUUID(), sequence: 3 }]; }
+  };
+  const get = await harness(t, createSubmissionService(repo, authority, { clock: () => new Date(), cursorSecret: Buffer.alloc(32, 17) }));
+  const structured = await get({ method: 'GET', path: '/messages?limit=1&assistantResponseVersion=2' });
+  assert.equal(structured.status, 200);
+  assert.deepEqual(structured.body.items[0].assistantContent, content.assistantContent);
+  const mismatched = await get({ method: 'GET', path: '/messages?limit=1&cursor=' +
+    encodeURIComponent(structured.body.page.nextCursor) });
+  assert.equal(mismatched.status, 400);
+  content.assistantContent.citationRefs.push({ evidenceId: randomUUID() });
+  const rejected = await get({ method: 'GET', path: '/messages?assistantResponseVersion=2' });
+  assert.equal(rejected.status, 503);
+  const legacy = await get({ method: 'GET', path: '/messages' });
+  assert.equal(legacy.status, 200);
+  assert.equal(legacy.body.items[0].assistantContent, undefined);
 });
 
 test('the public shell remains unready and exposes neither recovery read', async t => {

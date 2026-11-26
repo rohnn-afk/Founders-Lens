@@ -14,8 +14,9 @@ const cleanup = [];
 const children = [];
 try {
   const [phase, conversation, ...extra] = process.argv.slice(2);
+  const development = phase === 'development';
   assert.ok(extra.length === 0 && (phase === 'workspace' && conversation === undefined ||
-    phase === 'generation' && (conversation === undefined ||
+    (phase === 'generation' || development) && (conversation === undefined ||
       /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(conversation.trim()))), 'Invalid acceptance phase');
   assert.ok(process.env.FL_DEPLOYMENT === undefined && process.env.NODE_ENV !== 'production', 'Local operator process required');
   const secretInput = await manifest('.env.clerk-staging.local');
@@ -34,6 +35,8 @@ try {
     FL_P9_MAX_MICROS_PER_MILLION_TOKENS: '1500000', FL_P9_BUDGET_MICROS: '6912', FL_P9_ACCOUNT_TOKEN_BUDGET: '4608',
     FL_P9_MAX_ADMISSIONS: '1', FL_P9_REQUESTS_PER_MINUTE: '1'
   };
+  if (development) Object.assign(settings, { FL_P9_OFFLINE_DEVELOPMENT: '1', FL_P9_MAX_ADMISSIONS: '30',
+    FL_P9_REQUESTS_PER_MINUTE: '6', FL_P9_BUDGET_MICROS: '207360', FL_P9_ACCOUNT_TOKEN_BUDGET: '138240' });
   const os = Object.fromEntries(['PATH', 'SystemRoot', 'TEMP', 'TMP'].filter(name => process.env[name])
     .map(name => [name, process.env[name]]));
   const api = { ...os, ...local, ...settings, CLERK_AUTHORIZED_PARTIES: '["http://127.0.0.1:3000"]',
@@ -50,18 +53,20 @@ try {
     api[name] = secretInput[name];
   }
   let processor;
-  if (phase === 'generation') {
+  if (phase === 'generation' || development) {
     const account = accounts[0].id;
     const { rows } = await context.primary.query(`SELECT c.id FROM public."Conversation" c
       JOIN public."Idea" i ON i.id=c."ideaId" WHERE ($1::uuid IS NULL OR c.id=$1) AND i."ownerId"=$2
-      AND c.status='ACTIVE' AND i.status='ACTIVE' AND c."nextSequence"=1
+      AND c.status='ACTIVE' AND i.status='ACTIVE' AND ($3::boolean OR (c."nextSequence"=1
       AND NOT EXISTS (SELECT FROM public."Message" WHERE "conversationId"=c.id)
       AND NOT EXISTS (SELECT FROM public."GenerationAttempt" g JOIN public."Conversation" existing
         ON existing.id=g."conversationId" JOIN public."Idea" owned ON owned.id=existing."ideaId"
-        WHERE owned."ownerId"=$2) LIMIT 2`, [conversation?.trim() ?? null, account]);
-    assert.equal(rows.length, 1, 'Select one owned, empty conversation on an unused offline account');
+        WHERE owned."ownerId"=$2))) LIMIT 2`, [conversation?.trim() ?? null, account, development]);
+    assert.equal(rows.length, 1, development ? 'Select one active conversation owned by the designated account' :
+      'Select one owned, empty conversation on an unused offline account');
     const scope = { FL_P9_SYNTHETIC_ACCOUNT: account, FL_P9_SYNTHETIC_CONVERSATION: rows[0].id,
-      FL_P9_SYNTHETIC_TEXT_SHA256: createHash('sha256').update(fixturePrompt).digest('hex') };
+      ...(!development && { FL_P9_SYNTHETIC_TEXT_SHA256: createHash('sha256').update(fixturePrompt).digest('hex') }) };
+    await context.primary.query('GRANT INSERT ("contentSchemaVersion") ON public."Message" TO fl_p9_worker');
     const decisions = await signP9Clearances(context, ...keys, 'approve-p9-isolated-runtime');
     const { FL_P9_DISPATCH_DECISION, FL_P9_EXECUTE_DECISION, ...apiDecisions } = decisions;
     Object.assign(api, scope, apiDecisions, { FL_P9_SUBMIT: '1' });
@@ -103,7 +108,7 @@ try {
   assert.ok(mounted, 'Local API stopped before acceptance routes were verified');
   if (processor) {
     runs.push(launch('scripts/p9-local-runtime.mjs', processor));
-    console.info('Offline fixture prompt:', fixturePrompt);
+    if (!development) console.info('Offline fixture prompt:', fixturePrompt);
   }
   const stop = () => children.forEach(child => child.kill());
   process.once('SIGINT', stop);

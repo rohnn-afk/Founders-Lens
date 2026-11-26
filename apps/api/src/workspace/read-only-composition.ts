@@ -24,7 +24,7 @@ import { generationRoutes } from '../generation/routes.js';
 import { createGenerationService } from '../generation/service.js';
 import { localGenerationModel, localGenerationPolicy } from '../generation/local-policy.js';
 import { cedarAcceptanceEnabled, cedarAcceptanceTarget, cedarRecheckTarget, offlineAcceptanceEnabled,
-  offlineAcceptanceTarget } from '../generation/cedar-acceptance-target.js';
+  offlineAcceptanceTarget, offlineDevelopmentEnabled } from '../generation/cedar-acceptance-target.js';
 import { WorkspaceCursor } from './contracts.js';
 import { WorkspaceRepository } from './repository.js';
 import { localConversationRoutes, workspaceIdeaListRoutes, type LocalConversationOperations } from './routes.js';
@@ -99,6 +99,7 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
   const isolated = env['FL_P9_ISOLATED'] === '1';
   const cedar = cedarAcceptanceEnabled(env);
   const offline = offlineAcceptanceEnabled(env);
+  const offlineDevelopment = offlineDevelopmentEnabled(env);
   const target = offline ? offlineAcceptanceTarget :
     env['FL_P9_CEDAR_ACCEPTANCE'] === '2' ? cedarRecheckTarget : cedarAcceptanceTarget;
   const primaryPort = cedar || offline ? target.primaryPort : isolated ? 55435 : 55437;
@@ -243,8 +244,8 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
           budgetMicros: required('FL_P9_BUDGET_MICROS'), tokenBudget: required('FL_P9_ACCOUNT_TOKEN_BUDGET'),
           requestsPerMinute: required('FL_P9_REQUESTS_PER_MINUTE'), maximumAdmissions: required('FL_P9_MAX_ADMISSIONS'),
           accountId: required('FL_P9_SYNTHETIC_ACCOUNT'), conversationId: approvedConversation,
-          syntheticTextSha256: required('FL_P9_SYNTHETIC_TEXT_SHA256')
-        });
+          ...(!offlineDevelopment && { syntheticTextSha256: required('FL_P9_SYNTHETIC_TEXT_SHA256') })
+        }, offlineDevelopment);
         submissionClient = new PrismaClient({ adapter: new PrismaPg(target), log: [], errorFormat: 'minimal' });
         generation = createGenerationService(createGenerationRepository(submissionClient, policy),
           authority.authority, status.verifiedDeadline, approvedConversation);

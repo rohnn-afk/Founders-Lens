@@ -51,6 +51,15 @@ export const messageDto = z.strictObject({
   role: z.enum(['USER', 'ASSISTANT']), content: z.string(), createdAt: z.iso.datetime()
 });
 export const storedMessageText = z.object({ text: z.string() });
+// The offline slice has no authorized citation, proposal or action sources.
+export const assistantContent = z.strictObject({
+  schemaVersion: z.literal(1), primaryStrategy: z.enum(['EXPLORE', 'CHALLENGE', 'INFORM', 'COMPARE', 'ACT', 'REFLECT']),
+  citationRefs: z.tuple([]), proposalIds: z.tuple([]), actions: z.tuple([]),
+  nextQuestion: z.string().min(1).max(2000).optional()
+});
+export const structuredMessageDto = z.union([messageDto,
+  messageDto.extend({ role: z.literal('ASSISTANT'), assistantContent })]);
+export const storedStructuredMessage = storedMessageText.strict().extend({ assistantContent });
 
 // The signature binds the logical turn position to this owner, parent and
 // query. A cursor copied from another conversation cannot move this read.

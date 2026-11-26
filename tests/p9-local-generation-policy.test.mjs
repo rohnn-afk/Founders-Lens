@@ -3,12 +3,15 @@ import { createHash, randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { localGenerationModel, localGenerationPolicy } from '../apps/api/dist/generation/local-policy.js';
 import { cedarAcceptanceEnabled, cedarAcceptanceTarget, cedarRecheckTarget, offlineAcceptanceEnabled,
-  offlineAcceptanceTarget } from '../apps/api/dist/generation/cedar-acceptance-target.js';
+  offlineAcceptanceTarget, offlineDevelopmentEnabled } from '../apps/api/dist/generation/cedar-acceptance-target.js';
 
 test('offline acceptance requires an explicit isolated deterministic local profile', () => {
   const env = { FL_P9_OFFLINE_ACCEPTANCE: '1', FL_P9_ISOLATED: '1', FL_P9_LOCAL_RUNTIME: 'deterministic' };
   assert.equal(offlineAcceptanceEnabled({}), false);
   assert.equal(offlineAcceptanceEnabled(env), true);
+  assert.equal(offlineDevelopmentEnabled({ ...env, FL_P9_OFFLINE_DEVELOPMENT: '1' }), true);
+  assert.throws(() => offlineDevelopmentEnabled({ FL_P9_OFFLINE_DEVELOPMENT: '1' }));
+  assert.throws(() => offlineDevelopmentEnabled({ ...env, FL_P9_OFFLINE_DEVELOPMENT: '1', FL_P9_SYNTHETIC_TEXT_SHA256: 'fixture' }));
   assert.deepEqual(offlineAcceptanceTarget, { primaryPort: 55445, authorityPort: 55446, redisPort: 56385,
     database: 'founders_lens_offline_acceptance' });
   for (const invalid of [{ NODE_ENV: 'production' }, { FL_DEPLOYMENT: 'staging' }, { FL_P9_ISOLATED: '0' },
@@ -23,6 +26,16 @@ const config = { model: 'gemini-3.1-flash-lite', priceVersion: 'v1:offline-prici
   maximumMicrosPerMillionTokens: '1500000', budgetMicros: '7500', tokenBudget: '9000',
   requestsPerMinute: '2', maximumAdmissions: '1', accountId: randomUUID(), conversationId: randomUUID(),
   syntheticTextSha256: createHash('sha256').update(content).digest('hex') };
+
+test('contextual offline admission accepts repeat turns only within the pinned account and conversation', () => {
+  const { syntheticTextSha256, ...scope } = config;
+  assert.equal(syntheticTextSha256.length, 64);
+  assert.throws(() => localGenerationPolicy(scope));
+  const { allows } = localGenerationPolicy(scope, true);
+  assert.equal(allows(scope.accountId, scope.conversationId, 'A different turn'), true);
+  assert.equal(allows(randomUUID(), scope.conversationId, content), false);
+  assert.equal(allows(scope.accountId, randomUUID(), content), false);
+});
 
 test('a conservative tariff caps reserved tokens and binds synthetic admission to exact scope and content', () => {
   const { policy, allows } = localGenerationPolicy(config);

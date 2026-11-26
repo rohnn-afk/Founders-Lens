@@ -35,7 +35,13 @@ const conversation = (value: Conversation, ideaId?: string) => typeof value?.id 
   (value.createdAt === undefined || timestamp(value.createdAt));
 const message = (value: Message, id: string) => typeof value?.id === 'string' && value.conversationId === id &&
   Number.isSafeInteger(value.sequence) && value.sequence > 0 && ['USER', 'ASSISTANT'].includes(value.role) &&
-  typeof value.content === 'string' && timestamp(value.createdAt);
+  typeof value.content === 'string' && timestamp(value.createdAt) &&
+  (value.assistantContent === undefined || (value.role === 'ASSISTANT' && structuredAssistant(value.assistantContent)));
+function structuredAssistant(value: NonNullable<Message['assistantContent']>) {
+  return value?.schemaVersion === 1 && ['EXPLORE', 'CHALLENGE', 'INFORM', 'COMPARE', 'ACT', 'REFLECT'].includes(value.primaryStrategy) &&
+    [value.citationRefs, value.proposalIds, value.actions].every(items => Array.isArray(items) && items.length === 0) &&
+    (value.nextQuestion === undefined || typeof value.nextQuestion === 'string' && value.nextQuestion.length > 0 && value.nextQuestion.length <= 2000);
+}
 
 /** Construct session-scoped P8 and opt-in generation transports. */
 export function createLocalConversationApi(getToken: () => Promise<string | null>, makeKey = () => crypto.randomUUID()) {
@@ -122,7 +128,9 @@ export function createLocalConversationApi(getToken: () => Promise<string | null
     typeof value.generationId === 'string' && value.statusUrl === '/api/v1/generations/' + value.generationId &&
     value.eventsUrl === value.statusUrl + '/events';
   const messageApi: MessageApi = {
-    history: savedMessages.history,
+    history: (id, cursor, signal) => request<Page<Message>>(
+      conversationPath(id) + '/messages?assistantResponseVersion=2' + (cursor ? '&cursor=' + encodeURIComponent(cursor) : ''), signal,
+      value => page(value, item => message(item, id))),
     async submit(id, body, key, signal) {
       const reply = await request<Acceptance & { status: 'PENDING' }>(messagePath(id), signal,
         verify(value => validAcceptance(value) && value.status === 'PENDING'), { body, key, accepted: true });
