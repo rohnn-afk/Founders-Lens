@@ -77,6 +77,11 @@ GRANT SELECT ("accountId","reservationId","reservationState","reservedUnits","me
 GRANT SELECT, INSERT ON public."GenerationProviderReceipt" TO fl_p9_worker;
 GRANT USAGE ON SCHEMA p9_context TO fl_p9_worker, fl_p9_context_verifier;
 GRANT EXECUTE ON FUNCTION p9_context.read_attempt(uuid,integer,integer) TO fl_p9_worker;
+DO $$ BEGIN
+  IF current_database() IN ('founders_lens_offline_acceptance', 'founders_lens_m05_e2e_test') THEN
+    GRANT EXECUTE ON FUNCTION p9_context.read_with_approved_memory(uuid,integer,integer) TO fl_p9_worker;
+  END IF;
+END $$;
 GRANT SELECT, INSERT, UPDATE ON p9_context.context_grant TO fl_p9_context_verifier;
 GRANT SELECT (id,"conversationId","triggerMessageId","orchestrationMetadata","deadlineAt",status,
   "leaseClaimant","leaseEpoch","contextEpoch","leaseUntil") ON public."GenerationAttempt" TO fl_p9_context_verifier;

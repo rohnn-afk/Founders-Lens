@@ -401,6 +401,7 @@ async function postgres(id, run, credentials) {
         await admin.query((await readFile('apps/api/prisma/migrations/0002_p9_context/migration.sql')).toString());
         await admin.query((await readFile('apps/api/prisma/migrations/0003_p9_provider_receipt/migration.sql')).toString());
         await admin.query((await readFile('apps/api/prisma/migrations/0004_m06_selected_context/migration.sql')).toString());
+        await admin.query((await readFile('apps/api/prisma/migrations/0005_m06_approved_memory/migration.sql')).toString());
         await admin.query(`CREATE ROLE fl_p9_context LOGIN NOINHERIT PASSWORD '${credentials.context}';
           CREATE ROLE fl_p9_context_verifier LOGIN NOINHERIT PASSWORD '${credentials.contextVerifier}';
           CREATE ROLE fl_p9_submit LOGIN NOINHERIT PASSWORD '${credentials.standaloneSubmit}';
@@ -416,6 +417,10 @@ async function postgres(id, run, credentials) {
           GRANT EXECUTE ON FUNCTION pg_catalog.pg_control_system() TO ${roles.api}`);
         await admin.query(`GRANT SELECT ("dispatchAuthorizedAt"), UPDATE ("leaseClaimant","deadlineAt")
           ON public."GenerationAttempt" TO ${roles.fixture}`);
+        await admin.query(`GRANT INSERT (provenance) ON public."MemoryRevision" TO ${roles.fixture};
+          GRANT INSERT (id,"ideaId","sourceMessageId","resultMemoryId",kind,candidate,status,"reviewedById","reviewedAt")
+            ON public."MemoryProposal" TO ${roles.fixture};
+          GRANT EXECUTE ON FUNCTION p9_context.read_with_approved_memory(uuid,integer,integer) TO fl_p9_context`);
         await admin.query(`GRANT USAGE ON SCHEMA p9_context TO fl_p9_other_context;
           GRANT EXECUTE ON FUNCTION p9_context.read_attempt(uuid,integer,integer) TO fl_p9_other_context`);
       }
@@ -482,7 +487,7 @@ async function verify(pool, name, run) {
 }
 
 /** Exercise the new function through separate authenticated PostgreSQL logins. */
-async function verifyContextProjection(credentials, attempt, lease, epoch, selectedOutput) {
+async function verifyContextProjection(credentials, attempt, lease, epoch, selectedOutput, approvedMemory) {
   const connect = (user, password) => new Pool({ host: '127.0.0.1', port: 55439, database, user, password, max: 1 });
   const reader = connect('fl_p9_context', credentials.context);
   const wrong = connect('fl_p9_other_context', credentials.context);
@@ -501,9 +506,16 @@ async function verifyContextProjection(credentials, attempt, lease, epoch, selec
     assert.equal(await read(reader, attempt, lease, epoch + 1), null);
     const projection = await leasedContextReader(reader, async (id, claim, context) => {
       assert.deepEqual([id, claim, context], [attempt, lease, epoch]);
-    })({ id: attempt, contextEpoch: epoch }, { epoch: lease });
+    }, Boolean(approvedMemory))({ id: attempt, contextEpoch: epoch }, { epoch: lease });
     assert.ok(projection?.current.text);
-    assert.deepEqual(projection.memory, []);
+    assert.deepEqual(projection.memory.map(item => item.id), approvedMemory ? [approvedMemory] : []);
+    if (approvedMemory) {
+      const { rows: [stored] } = await issuer.query(`SELECT "orchestrationMetadata"->'memoryLineage' AS lineage
+        FROM public."GenerationAttempt" WHERE id=$1`, [attempt]);
+      assert.equal(stored.lineage.length, 1);
+      assert.deepEqual(Object.keys(stored.lineage[0]).sort(), ['memoryId', 'proposalId', 'revisionId', 'sourceMessageId', 'version']);
+      assert.equal(stored.lineage[0].memoryId, approvedMemory);
+    }
     assert.ok(projection.previous.length <= 3);
     if (selectedOutput) assert.deepEqual(projection.previous.map(turn => turn.assistant?.id), [selectedOutput]);
     assert.equal(await read(reader), null);
@@ -957,18 +969,22 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, submissionPris
   assert.equal((await status(id)).selected, false);
   assert.equal((await history(first)).items.at(-1).content, 'Regenerated synthetic assistant');
 
-  async function seedMemory(ideaId, message, state = 'ACTIVE', actor = account) {
+  async function seedMemory(ideaId, message, state = 'ACTIVE', actor = account, sourceMessage) {
     const memory = randomUUID(), content = { text: message };
+    const proposal = sourceMessage ? randomUUID() : undefined;
     await fixture.query(`INSERT INTO "ConfirmedMemory" (id,"ideaId",kind,"currentContent",status,"updatedAt")
       VALUES ($1,$2,'FACT',$3,$4,now())`, [memory, ideaId, content, state]);
-    await fixture.query(`INSERT INTO "MemoryRevision" (id,"memoryId",version,content,"actorId")
-      VALUES ($1,$2,1,$3,$4)`, [randomUUID(), memory, content, actor]);
+    if (proposal) await fixture.query(`INSERT INTO "MemoryProposal"
+      (id,"ideaId","sourceMessageId","resultMemoryId",kind,candidate,status,"reviewedById","reviewedAt")
+      VALUES ($1,$2,$3,$4,'FACT',$5,'ACCEPTED',$6,now())`, [proposal, ideaId, sourceMessage, memory, content, actor]);
+    await fixture.query(`INSERT INTO "MemoryRevision" (id,"memoryId",version,content,"actorId",provenance)
+      VALUES ($1,$2,1,$3,$4,$5)`, [randomUUID(), memory, content, actor, proposal ? { proposalId: proposal } : {}]);
     return memory;
   }
   const otherIdea = randomUUID();
   await fixture.query('INSERT INTO "Idea" (id,"ownerId",title,"updatedAt") VALUES ($1,$2,$3,now())',
     [otherIdea, account, 'Other synthetic idea']);
-  const reviewed = await seedMemory(idea, 'Reviewed channel is referrals');
+  const reviewed = await seedMemory(idea, 'Reviewed channel is referrals', 'ACTIVE', account, admitted.messageId);
   await seedMemory(otherIdea, 'Other idea confidential marker');
   const foreign = randomUUID(), foreignIdea = randomUUID();
   await fixture.query('INSERT INTO "UserAccount" (id,"clerkSubject","clerkInstanceId","subjectKey","updatedAt") VALUES ($1,$2,$3,$4,now())',
@@ -993,7 +1009,7 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, submissionPris
     await Promise.race([followUpContext, sleep(4000).then(() => { throw new Error('Follow-up did not enter the worker'); })]);
     const active = await work.scope(followUp.generationId);
     const { rows: [{ leaseEpoch }] } = await fixture.query('SELECT "leaseEpoch" FROM "GenerationAttempt" WHERE id=$1', [active.id]);
-    await verifyContextProjection(credentials, active.id, leaseEpoch, active.contextEpoch, replacement.outputMessageId);
+    await verifyContextProjection(credentials, active.id, leaseEpoch, active.contextEpoch, replacement.outputMessageId, reviewed);
   } finally {
     finishFollowUp();
     fake = undefined;

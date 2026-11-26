@@ -170,7 +170,8 @@ test('real PostgreSQL database foundation', { skip: !live, timeout: 90_000 }, as
   await t.test('both databases have the reviewed migrations, constraints, indexes, enums and triggers', async () => {
     const expectedMigrations = [
       ['0001_approved_baseline', checksum],
-      ...await Promise.all(['0002_p9_context', '0003_p9_provider_receipt', '0004_m06_selected_context'].map(async name => [
+      ...await Promise.all(['0002_p9_context', '0003_p9_provider_receipt', '0004_m06_selected_context',
+        '0005_m06_approved_memory'].map(async name => [
         name, sha256(await readFile(path.join(root, 'apps/api/prisma/migrations', name, 'migration.sql')))
       ]))
     ];

@@ -18,7 +18,8 @@ const approvedMigrations = [
   ['0001_approved_baseline', '19fcf7f5f144d1ff39a00a489193392e9deaa60617ebe2f42a8ee576e203032b'],
   ['0002_p9_context', 'e30c7f7003eb74fa715e3457d4ec220f08bc33f9b66287dab2d3979a1c212fff'],
   ['0003_p9_provider_receipt', 'a0a3a093f734c1f55440cd5b5a74f386191bb1a6e5403a78d7248511ecf03058'],
-  ['0004_m06_selected_context', '88c4a464f0f0f7fb27e028781ee2666334adffaf151f4a927cee535fa56a215e']
+  ['0004_m06_selected_context', '88c4a464f0f0f7fb27e028781ee2666334adffaf151f4a927cee535fa56a215e'],
+  ['0005_m06_approved_memory', '3cf987d87099a9f31bcb55b55f9766701af19482a7cd7bd4929744619e907b1d']
 ];
 // The first local application preceded Git's newline normalization. Accept
 // only that exact recorded checksum for the same SQL on the local targets.

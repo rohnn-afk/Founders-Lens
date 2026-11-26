@@ -23,6 +23,7 @@ export function generationWorker(repository: Repository, authority: Authority, a
   now = Date.now, contextResponse?: (context: GenerationContext, signal: AbortSignal) => Promise<string | ProviderResult>,
   trusted?: {
     structuredOffline?: boolean;
+    approvedOfflineMemory?: boolean;
     verifyExecution(scope: Scope): Promise<number>;
     readContext(scope: Scope, lease: { epoch: number }): Promise<unknown>;
   }) {
@@ -68,7 +69,8 @@ export function generationWorker(repository: Repository, authority: Authority, a
     // Acquire fresh evidence after the bounded projection. The existing
     // invocation fence rechecks the captured context epoch before execution.
     const invocationExpiry = context && !stopping ? await clearance(scope) : readExpiry;
-    if (!invocationExpiry || stopping || (contextResponse && !context) || (trusted && context?.memory.length) ||
+    if (!invocationExpiry || stopping || (contextResponse && !context) ||
+      (trusted && !trusted.approvedOfflineMemory && context?.memory.length) ||
       !await repository.markInvocation(scope, lease.epoch, invocationExpiry)) {
       const expiry = stopping ? undefined : await clearance(scope);
       if (expiry && !stopping) await repository.finish(scope, lease.epoch, null, expiry);

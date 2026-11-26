@@ -43,11 +43,20 @@ export function syntheticOnlyProvider(provider: FounderProvider, approvedTextSha
 }
 
 /** Keep the current turn intact and add only the most recent complete turns that fit. */
-export function founderPrompt(context: GenerationContext): FounderPrompt {
+export function founderPrompt(context: GenerationContext, approvedOfflineMemory = false): FounderPrompt {
+  let memory: readonly { text: string; version: number }[] = [];
   const encode = (recent: readonly { user: string; assistant?: string }[]) =>
-    JSON.stringify({ recent, current: context.current.text });
+    JSON.stringify({ recent, current: context.current.text, ...(memory.length && { approvedMemory: memory }) });
   const fits = (value: string) => Buffer.byteLength(founderInstructions) + Buffer.byteLength(value) <= inputBytes;
   if (context.current.truncated || !context.current.text || !fits(encode([]))) throw new Error('Founder prompt exceeds local input policy');
+  if (approvedOfflineMemory) {
+    for (const item of context.memory) {
+      if (item.truncated) continue;
+      const previous = memory;
+      memory = [...memory, { text: item.text, version: item.version }];
+      if (!fits(encode([]))) memory = previous;
+    }
+  }
   let recent: { user: string; assistant?: string }[] = [];
   for (const turn of context.previous.slice(-3).reverse()) {
     if (turn.user.truncated || turn.assistant?.truncated) break;

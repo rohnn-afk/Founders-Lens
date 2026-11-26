@@ -159,7 +159,7 @@ export async function startLocalGeneration(env, report = () => {}, { determinist
     const execute = createExecutionAuthorizer(verifier, ledger.authority, executionPermission, 'execute', approved);
     const worker = generationWorker(repository, () => Promise.reject(new Error('Independent verification required')), isUuid,
       undefined, Date.now, async (context, signal) => {
-        const result = await provider.generate(founderPrompt(context), signal);
+        const result = await provider.generate(founderPrompt(context, offlineDevelopment), signal);
         if (live || deterministicProvider) return result;
         report('P9_DETERMINISTIC_INVOCATION');
         // Fixed synthetic observation for the deterministic runtime, never a Gemini receipt.
@@ -167,9 +167,10 @@ export async function startLocalGeneration(env, report = () => {}, { determinist
           usage: { inputTokens: 17, outputTokens: 9, totalTokens: 26 } };
       }, {
         structuredOffline: offline || test && !deterministicProvider,
+        approvedOfflineMemory: offlineDevelopment,
         verifyExecution: ({ id }) => execute(id),
         readContext: leasedContextReader(workerPool,
-          createContextGrantIssuer(verifier, ledger.authority, executionPermission, urls[2].username, approved))
+          createContextGrantIssuer(verifier, ledger.authority, executionPermission, urls[2].username, approved), offlineDevelopment)
       });
     consumer = generationConsumer(redis, prefix, worker, brokerProfile);
     const brokerTimer = setTimeout(() => abort.abort(), 4000);

@@ -10,6 +10,15 @@ import { deterministicFounderProvider, founderInstructions, founderPrompt, found
 const source = (text, truncated = false) => ({ id: 'fixture', text, truncated });
 const input = text => founderPrompt({ current: source(text), previous: [], memory: [] });
 
+test('approved memory enters only the explicitly offline prompt and omits truncated revisions', () => {
+  const context = { current: source('What should we test?'), previous: [],
+    memory: [{ ...source('The owner approved this revision.'), version: 2 },
+      { ...source('Incomplete memory text', true), version: 1 }] };
+  assert.equal(JSON.parse(founderPrompt(context).data).approvedMemory, undefined);
+  assert.deepEqual(JSON.parse(founderPrompt(context, true).data).approvedMemory,
+    [{ text: 'The owner approved this revision.', version: 2 }]);
+});
+
 test('contextual offline replies use bounded authorized turns and distinguish follow-ups', async () => {
   const provider = deterministicFounderProvider({ contextual: true });
   const signal = new AbortController().signal;

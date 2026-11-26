@@ -69,12 +69,17 @@ reconnect, and worker recovery.
 **M06 is in progress.** The offline workspace has verified live SSE, bounded
 conversation context, and a persisted v2 assistant projection with a strategy
 and follow-up question. The local follow-up implementation adds contextual
-offline text and an optional experiment card. The local context reader includes
+offline text and an optional experiment card. The designated browser confirmed
+the card survived reload. Attempt `be060c0e-8504-4948-a1eb-880fc67943d1`
+committed selected v2 output `ac5a48e4-cd0e-4d18-b24a-6201c190094b` with
+`REFLECT` strategy, one published event and one settled offline receipt.
+The local context reader includes
 only the selected earlier answer in the same conversation, idea and context
 epoch. Revised or removed memory closes the historical context window until
 lineage-aware revalidation is available. Version 1 remains text-only.
-Approved memory lineage, additional card types and resource references, and external-provider quality
-evaluation remain open. Staging image approval and hosted capability activation
+The offline memory reader records bounded revision and approval provenance under
+the same one-use lease grant. Evidence references, the founder-facing memory
+approval journey, and external-provider quality evaluation remain open. Staging image approval and hosted capability activation
 are tracked separately from local acceptance.
 
 ## 4. Milestone dependency and authority audit

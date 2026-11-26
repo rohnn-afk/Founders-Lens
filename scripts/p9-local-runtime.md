@@ -23,6 +23,13 @@ version 2. That card is guidance and does not create or approve an experiment.
 The local development projection requires migration `0004_m06_selected_context`
 to include selected assistant replies. It never uses an answer from another
 conversation, a different context epoch or a superseded generation.
+Migration `0005_m06_approved_memory` adds an offline-only read of at most three
+active revisions tied to an accepted proposal, matching owner, and an
+available same-idea founder message. The approval writer must record
+`provenance.proposalId` on the revision. The attempt records only lineage IDs
+and versions. This slice has no founder-facing approval UI, does not send
+memory to external providers, and keeps citations disabled until their
+evidence authorization and support checks are implemented.
 
 ## Designated Clerk offline acceptance
 
@@ -60,6 +67,34 @@ retain state. A reset deletes only that project's volumes and its matching
 ignored manifests after verifying their identities and reviewing data retention.
 
 ## Runtime configuration
+
+### Provider evaluation pending approval
+
+Start with the existing Groq `openai/gpt-oss-20b` adapter and the existing
+isolated, synthetic-only single-admission profile. Set its worker-only key
+through the ignored provider manifest. Use the existing split signed decisions,
+pinned synthetic account, conversation and prompt hash, and the
+`v1:groq-gpt-oss-20b` tariff. Keep research, tools and retrieval of real
+workspace data outside the trial.
+
+Use the twelve synthetic prompts in
+[`p9-founder-evaluation.json`](../tests/fixtures/p9-founder-evaluation.json).
+Score each response from 0 to 2 for intent understanding, usefulness,
+evidence and uncertainty, naturalness and brevity, respectful challenge, and
+memory or correction fidelity. Treat disclosure, invented evidence, and any
+attempt or settlement discrepancy as failures regardless of score. Record the
+model, prompt version, latency, measured usage and any unknown provider outcome.
+One accepted synthetic prompt is the initial approval unit. A twelve-case batch
+requires its own cap and isolated scopes.
+
+The [Groq model rate](https://console.groq.com/docs/model/openai/gpt-oss-20b)
+is $0.075 input and $0.30 output per million tokens. The application's
+conservative reservation is $0.001575 per admission and $0.0189 across twelve.
+The [Gemini 3.1 Flash-Lite rate](https://ai.google.dev/gemini-api/docs/pricing)
+is $0.25 input and $1.50 output per million tokens. The comparable conservative
+reservation is $0.006912 per admission and $0.082944 across twelve. These are
+reservation ceilings for the configured limits. Measured billing is separate.
+No paid run is enabled by this documentation.
 
 Run the launcher from the repository root after building the API, dispatcher,
 and worker. Feed it a dedicated ignored environment file. Keep the API process
