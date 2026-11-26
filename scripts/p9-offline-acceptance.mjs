@@ -42,6 +42,9 @@ try {
     ...await signP6Clearance(context, ...keys, 'approve-p7-create-idea', true),
     ...await signIdeaEditClearance(context, ...keys, 'approve-local-idea-edit'),
     ...await signP8Clearances(context, ...keys, 'approve-p8-conversations') };
+  // An acceptance message must enter the transactional generation route. The
+  // separate save-only capability would let a message bypass that journey.
+  delete api.FL_P8_SAVE_DECISION;
   for (const name of ['CLERK_INSTANCE_ID', 'CLERK_ISSUER', 'CLERK_SECRET_KEY', 'CLERK_PUBLISHABLE_KEY', 'CLERK_AUDIENCE']) {
     assert.ok(secretInput[name], 'Clerk configuration incomplete');
     api[name] = secretInput[name];
