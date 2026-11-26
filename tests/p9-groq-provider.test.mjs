@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { founderInstructions, founderPromptVersion } from '../apps/worker/dist/founder-provider.js';
 import { groqFounderProvider } from '../apps/worker/dist/groq-provider.js';
@@ -8,6 +9,13 @@ const key = 'gsk_' + 'offline_synthetic_fixture';
 const prompt = { version: founderPromptVersion, data: '{"recent":[],"current":"Synthetic founder turn"}' };
 const freeEnv = { FL_P9_ISOLATED: '1', FL_GROQ_ORG_PLAN: 'free',
   FL_GROQ_ORG_RPM: '30', FL_GROQ_ORG_RPD: '1000', FL_GROQ_ORG_TPM: '8000', FL_GROQ_ORG_TPD: '200000' };
+
+test('live Groq evaluation requires an explicit case before loading credentials', () => {
+  const result = spawnSync(process.execPath, ['scripts/evaluate-groq-free.mjs', '--live'], { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /requires one case ID/);
+  assert.equal(result.stdout, '');
+});
 
 test('Groq Free clamps limits and requires the isolated confirmed organization', () => {
   assert.deepEqual(freeGroqPolicy(freeEnv).limits, { rpm: 10, rpd: 40, tpm: 6000, tpd: 120000 });

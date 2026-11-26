@@ -100,9 +100,10 @@ across models and restarts. Keep the key only in the existing ignored worker
 manifest. Review Zero Data Retention in the same organization.
 
 Run `node scripts/evaluate-groq-free.mjs --dry-run` to list the checked-in
-synthetic cases without credentials. After plan verification, the same command
-with `--live` and an optional case ID takes only those synthetic cases. The
-existing loopback Redis must have AOF, synchronous persistence and no eviction
+synthetic cases without credentials. After plan verification, run
+`node scripts/evaluate-groq-free.mjs --live <case-id>` for one synthetic case.
+This lets you review each result and space requests within the rolling quota.
+The existing loopback Redis must have AOF, synchronous persistence and no eviction
 for the quota ledger. No requests are sent while that check fails. The shared
 rolling ceilings are 10 requests and 6,000 tokens per minute, and 40 requests
 and 120,000 tokens per day, each clamped to the organization limits. One

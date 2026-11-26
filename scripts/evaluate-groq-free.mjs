@@ -8,6 +8,10 @@ import { groqFounderProvider } from '../apps/worker/dist/groq-provider.js';
 
 const read = path => readFile(new URL('../' + path, import.meta.url), 'utf8');
 const [mode, selected, ...extra] = process.argv.slice(2);
+if (mode === '--live' && !selected) {
+  console.error('Live evaluation requires one case ID. Use --dry-run to list available cases.');
+  process.exit(1);
+}
 let limiter;
 try {
   if (!['--dry-run', '--live'].includes(mode) || extra.length) throw new Error('Invalid evaluation mode');
