@@ -3,7 +3,22 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
-import { assembleGenerationContext, syntheticContextResponse } from '../apps/worker/dist/generation-context.js';
+import { assembleGenerationContext, offlineAssistantContent, syntheticContextResponse } from '../apps/worker/dist/generation-context.js';
+
+test('offline structured metadata changes for an authorized follow-up without claiming external evidence', () => {
+  const current = { id: randomUUID(), text: 'What would change the test?', truncated: false };
+  const first = offlineAssistantContent({ current, previous: [], memory: [] });
+  const later = offlineAssistantContent({ current, previous: [{ user: { ...current, id: randomUUID() } }], memory: [] });
+  assert.equal(first.primaryStrategy, 'CHALLENGE');
+  assert.equal(later.primaryStrategy, 'REFLECT');
+  assert.notEqual(later.nextQuestion, first.nextQuestion);
+  assert.equal(first.card, undefined);
+  assert.equal(later.card.type, 'experiment');
+  assert.match(later.card.plan, /baseline/);
+  for (const reply of [first, later]) {
+    assert.deepEqual([reply.citationRefs, reply.proposalIds, reply.actions], [[], [], []]);
+  }
+});
 import { generationWorker } from '../apps/worker/dist/generation-worker.js';
 
 const source = (text, truncated = false) => ({ id: randomUUID(), text, truncated });

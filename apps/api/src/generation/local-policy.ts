@@ -36,8 +36,8 @@ export function localGenerationModel(env: NodeJS.ProcessEnv) {
 /** Count released, settled and unresolved admission rows toward the invocation cap.
  * A dedicated synthetic account's budget stays consumed across runtime restarts.
  */
-export function localGenerationPolicy(input: unknown) {
-  const options = config.parse(input);
+export function localGenerationPolicy(input: unknown, contextualOffline = false) {
+  const options = contextualOffline ? config.omit({ syntheticTextSha256: true }).parse(input) : config.parse(input);
   const { reservation, maximumRateFloor } = modelBudgets[options.model];
   if (options.maximumMicrosPerMillionTokens < maximumRateFloor ||
     (options.model === 'openai/gpt-oss-20b' && options.priceVersion !== 'v1:groq-gpt-oss-20b')) {
@@ -55,7 +55,8 @@ export function localGenerationPolicy(input: unknown) {
     /** Bind admission to the operator-approved exact synthetic text and owned conversation. */
     allows(accountId: string, conversationId: string, content: string) {
       return accountId === options.accountId && conversationId === options.conversationId &&
-        createHash('sha256').update(content).digest('hex') === options.syntheticTextSha256;
+        (contextualOffline || ('syntheticTextSha256' in options &&
+          createHash('sha256').update(content).digest('hex') === options.syntheticTextSha256));
     }
   };
 }

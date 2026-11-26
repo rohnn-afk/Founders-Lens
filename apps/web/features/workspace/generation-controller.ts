@@ -23,6 +23,7 @@ export function createGenerationController(api: GenerationApi, scope: Scope, con
   let timer: ReturnType<typeof setTimeout> | undefined;
   let deadline = 0, backoff: number = observationPolicy.initialMs;
   let read: AbortController | undefined, command: AbortController | undefined;
+  let stream: AbortController | undefined;
   let readTimeout: ReturnType<typeof setTimeout> | undefined, commandTimeout: ReturnType<typeof setTimeout> | undefined;
   let resume = false;
   let disposed = false;
@@ -40,6 +41,7 @@ export function createGenerationController(api: GenerationApi, scope: Scope, con
     cancelTimer(readTimeout);
     cancelTimer(commandTimeout);
     read?.abort();
+    stream?.abort();
     command?.abort();
     scope.signal.removeEventListener('abort', stop);
   }
@@ -53,6 +55,7 @@ export function createGenerationController(api: GenerationApi, scope: Scope, con
     }
     if (reply.status === 404 || reply.status === 503) {
       clearTimer();
+      stream?.abort();
       update({ observation: 'blocked', ...(intent && { intent: intent.kind, command: 'unknown' }) });
       return true;
     }
@@ -60,6 +63,7 @@ export function createGenerationController(api: GenerationApi, scope: Scope, con
   }
 
   function pause() {
+    stream?.abort();
     if (view.observation !== 'blocked') update({ ...view, observation: 'paused' });
   }
 
@@ -91,6 +95,7 @@ export function createGenerationController(api: GenerationApi, scope: Scope, con
       if (blocked(reply)) return;
       if (reply.status === 200 && reply.data.id === target && reply.data.conversationId === conversationId) {
         const terminal = isTerminal(reply.data.status);
+        if (terminal) stream?.abort();
         const refresh = view.observation === 'blocked' || (terminal && view.value?.status !== reply.data.status);
         update({ ...view, value: reply.data, observation: terminal ? 'idle' : 'observing' });
         if (refresh) refreshTranscript();
@@ -118,11 +123,22 @@ export function createGenerationController(api: GenerationApi, scope: Scope, con
     clearTimer();
     if (target !== id) {
       read?.abort();
+      stream?.abort();
       id = target;
       update({ observation: 'observing' });
     } else if (view.observation !== 'blocked') update({ ...view, observation: 'observing' });
     deadline = now() + observationPolicy.windowMs;
     backoff = observationPolicy.initialMs;
+    if (api.watchTerminal && (!stream || stream.signal.aborted)) {
+      const observer = new AbortController();
+      stream = observer;
+      void api.watchTerminal(target, observer.signal).then(terminal => {
+        if (!terminal || !live() || observer.signal.aborted || id !== target || read || command) return;
+        clearTimer();
+        void poll();
+      }).catch(() => { /* Polling continues when the stream is unavailable. */ })
+        .finally(() => { if (stream === observer) stream = undefined; });
+    }
     void poll();
   }
 
@@ -134,6 +150,7 @@ export function createGenerationController(api: GenerationApi, scope: Scope, con
     const frozen = intent;
     clearTimer();
     read?.abort();
+    stream?.abort();
     const request = new AbortController();
     command = request;
     commandTimeout = schedule(() => {

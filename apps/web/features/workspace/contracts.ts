@@ -22,6 +22,9 @@ type ReplyFailure = { status: 400 | 401 | 403 | 404 | 409 | 412 | 413 | 415 | 42
 export type Reply<T> = { status: 200 | 201; data: T } | ReplyFailure;
 export type Message = {
   id: string; conversationId: string; sequence: number; role: 'USER' | 'ASSISTANT'; content: string; createdAt: string;
+  assistantContent?: { schemaVersion: 1; primaryStrategy: string; nextQuestion?: string;
+    citationRefs: { claimText: string; evidenceId: string; qualification?: string }[]; proposalIds: []; actions: [];
+    card?: { type: 'experiment'; hypothesis: string; plan: string; successSignals: string[]; timebox: string } };
 };
 export type Acceptance = { messageId: string; generationId: string; statusUrl: string; eventsUrl: string };
 export type MessageBody = Readonly<{ content: string; clientSubmissionId: string }>;
@@ -50,6 +53,7 @@ type GenerationFailure = ReplyFailure & {
 export type GenerationReply = { status: 200 | 202; data: Generation } | GenerationFailure;
 export type GenerationApi = {
   status(id: string, signal: AbortSignal): Promise<GenerationReply>;
+  watchTerminal?(id: string, signal: AbortSignal): Promise<boolean>;
   cancel?(id: string, key: string, signal: AbortSignal): Promise<GenerationReply>;
   regenerate?(conversationId: string, triggerMessageId: string, key: string, signal: AbortSignal): Promise<GenerationReply>;
 };

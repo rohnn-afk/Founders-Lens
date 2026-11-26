@@ -5,6 +5,7 @@
 import type { ReactNode } from 'react';
 import type { Generation, GenerationReply, MessageApi, Reply, WorkspaceApi } from '../../features/workspace/contracts';
 import { WorkspaceProvider } from '../../features/workspace/workspace-provider';
+import { waitForTerminalEvent } from '../../features/workspace/generation-events';
 
 const account = '__M05_FIXTURE_ACCOUNT__';
 const snapshot = { localAccountId: account };
@@ -49,7 +50,10 @@ const workspace: WorkspaceApi = {
   conversations: (idea, _cursor, signal) => read('/ideas/' + idea + '/conversations', signal),
   conversation: (conversation, signal) => read('/conversations/' + conversation, signal),
   async createIdea() { return { status: 403 }; },
-  async createConversation() { return { status: 403 }; }
+  async createConversation(idea, body, signal) {
+    return await request('/ideas/' + idea + '/conversations', signal, 'POST', undefined, body) as
+      Awaited<ReturnType<WorkspaceApi['createConversation']>>;
+  }
 };
 const messages: MessageApi = {
   async submit(conversation, body, key, signal) {
@@ -60,6 +64,12 @@ const messages: MessageApi = {
   history: (conversation, cursor, signal) =>
     read('/conversations/' + conversation + '/messages' + (cursor ? '?cursor=' + encodeURIComponent(cursor) : ''), signal),
   generation: {
+    async watchTerminal(attempt, signal) {
+      const response = await fetch('/__m05/api/generations/' + attempt + '/events', {
+        headers: { Accept: 'text/event-stream' }, signal, cache: 'no-store'
+      });
+      return response.ok && response.body ? waitForTerminalEvent(response.body, attempt) : false;
+    },
     status: (attempt, signal) => generation('/generations/' + attempt, signal),
     cancel: (attempt, key, signal) => generation('/generations/' + attempt + '/cancel', signal, 'POST', key),
     regenerate: (conversation, triggerMessageId, key, signal) =>

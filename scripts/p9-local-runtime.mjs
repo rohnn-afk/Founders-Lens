@@ -9,13 +9,15 @@ import { createExecutionAuthorizer, createContextGrantIssuer } from '../apps/api
 import { createRuntimeRecoveryClearance } from '../apps/api/dist/privacy/runtime-recovery-clearance.js';
 import { createSuppressionLedger } from '../apps/api/dist/security/suppression-ledger.js';
 import { generationReservationTokens, localGenerationModel, localGenerationPolicy } from '../apps/api/dist/generation/local-policy.js';
-import { cedarAcceptanceEnabled, cedarAcceptanceTarget, cedarRecheckTarget } from '../apps/api/dist/generation/cedar-acceptance-target.js';
+import { localDevelopmentEnabled, syntheticFreePrompts } from '../apps/api/dist/generation/local-runtime-config.js';
 import { isUuid } from '../apps/dispatcher/dist/config.js';
 import { dispatcher } from '../apps/dispatcher/dist/dispatch.js';
 import { generationQueue } from '../apps/dispatcher/dist/generation-queue.js';
 import { outboxRepository } from '../apps/dispatcher/dist/outbox-repository.js';
 import { deterministicFounderProvider, founderPrompt, geminiFounderProvider, syntheticOnlyProvider } from '../apps/worker/dist/founder-provider.js';
 import { groqFounderProvider } from '../apps/worker/dist/groq-provider.js';
+import { freeGroqPolicy } from '../apps/worker/dist/groq-free-policy.js';
+import { openGroqFreeQuota } from '../apps/worker/dist/groq-free-quota.js';
 import { generationConsumer } from '../apps/worker/dist/generation-consumer.js';
 import { generationRepository } from '../apps/worker/dist/generation-repository.js';
 import { generationWorker } from '../apps/worker/dist/generation-worker.js';
@@ -30,9 +32,9 @@ const identityQuery = `SELECT system_identifier::text || ':' || d.oid::text AS i
     FROM pg_catalog.pg_roles r WHERE rolname=session_user) AS privileged
   FROM pg_catalog.pg_control_system(), pg_catalog.pg_database d WHERE d.datname=current_database()`;
 
-function localUrl(input, protocol, port) {
+function localUrl(input, protocol) {
   const result = new URL(input);
-  if (result.protocol !== protocol || result.hostname !== '127.0.0.1' || result.port !== port ||
+  if (result.protocol !== protocol || result.hostname !== '127.0.0.1' || !result.port ||
     result.hash || result.search || !result.password) throw new Error('Invalid loopback runtime target');
   return result;
 }
@@ -41,16 +43,19 @@ function localUrl(input, protocol, port) {
 export async function startLocalGeneration(env, report = () => {}, { deterministicProvider, afterOfflineObservation } = {}) {
   const gemini = env.FL_P9_LOCAL_RUNTIME === 'gemini';
   const groq = env.FL_P9_LOCAL_RUNTIME === 'groq';
-  const live = gemini || groq;
+  const free = env.FL_P9_LOCAL_RUNTIME === 'groq-free';
+  const live = gemini || groq || free;
   const test = env.FL_P9_DISPOSABLE === '1';
   const isolated = env.FL_P9_ISOLATED === '1';
-  const cedar = cedarAcceptanceEnabled(env);
-  const recheck = env.FL_P9_CEDAR_ACCEPTANCE === '2';
-  const target = recheck ? cedarRecheckTarget : cedarAcceptanceTarget;
+  const offlineDevelopment = localDevelopmentEnabled(env);
+  const freePolicy = free ? freeGroqPolicy(env) : undefined;
+  const freePrompts = free ? syntheticFreePrompts(env) : undefined;
   if (env.NODE_ENV === 'production' || (!live && env.FL_P9_LOCAL_RUNTIME !== 'deterministic') ||
-    env.GROQ_API_KEY || (cedar && !groq) ||
+    env.FL_DEPLOYMENT !== undefined ||
+    env.GROQ_API_KEY ||
     (test && isolated) ||
-    (live && (test || !isolated || env.FL_P9_MAX_ADMISSIONS !== '1')) ||
+    (live && (test || !isolated || (!free && env.FL_P9_MAX_ADMISSIONS !== '1'))) ||
+    (free && !offlineDevelopment) ||
     (gemini && env.FL_P9_GEMINI_CONFIRM !== 'approve-one-synthetic-invocation') ||
     (groq && env.FL_P9_GROQ_CONFIRM !== 'approve-one-synthetic-invocation') ||
     (!gemini && env.P9_GEMINI_API_KEY) || ((deterministicProvider || afterOfflineObservation) && (live || !test))) {
@@ -68,23 +73,22 @@ export async function startLocalGeneration(env, report = () => {}, { determinist
   const approved = { accountId: required('FL_P9_SYNTHETIC_ACCOUNT'), conversationId: required('FL_P9_SYNTHETIC_CONVERSATION') };
   const run = required('FL_P9_REDIS_RUN');
   if (![run, approved.accountId, approved.conversationId].every(isUuid)) throw new Error('Invalid local runtime scope');
-  const textHash = required('FL_P9_SYNTHETIC_TEXT_SHA256');
-  const budget = live || model === 'openai/gpt-oss-20b' ? localGenerationPolicy({
+  const textHash = offlineDevelopment ? undefined : required('FL_P9_SYNTHETIC_TEXT_SHA256');
+  const budget = gemini || groq || model === 'openai/gpt-oss-20b' ? localGenerationPolicy({
     model, priceVersion: required('FL_P9_PRICE_VERSION'),
     maximumMicrosPerMillionTokens: required('FL_P9_MAX_MICROS_PER_MILLION_TOKENS'),
     budgetMicros: required('FL_P9_BUDGET_MICROS'), tokenBudget: required('FL_P9_ACCOUNT_TOKEN_BUDGET'),
     requestsPerMinute: required('FL_P9_REQUESTS_PER_MINUTE'), maximumAdmissions: required('FL_P9_MAX_ADMISSIONS'),
     ...approved, syntheticTextSha256: textHash
   }).policy : undefined;
-  const groqKey = groq ? parseEnv(await readFile(new URL('../.env.p9-groq-worker.local', import.meta.url), 'utf8')).GROQ_API_KEY : undefined;
-  const provider = syntheticOnlyProvider(gemini ? geminiFounderProvider(env, undefined, report)
-    : groq ? groqFounderProvider(groqKey, undefined, report) : deterministicProvider ?? deterministicFounderProvider(), textHash);
-  const redis = localUrl(required('FL_P9_REDIS_URL'), 'redis:', cedar ? String(target.redisPort) : test ? '56382' : '56381');
+  const groqKey = groq || free ? parseEnv(await readFile(new URL('../.env.p9-groq-worker.local', import.meta.url), 'utf8')).GROQ_API_KEY : undefined;
+  const fallback = textHash ? syntheticOnlyProvider(gemini ? geminiFounderProvider(env, undefined, report)
+    : groq ? groqFounderProvider(groqKey, undefined, report) : deterministicProvider ?? deterministicFounderProvider(), textHash)
+    : deterministicFounderProvider({ contextual: true });
+  const redis = localUrl(required('FL_P9_REDIS_URL'), 'redis:');
+  const brokerPort = Number(redis.port);
   if (redis.pathname !== '/0' || redis.username || !/^[a-f0-9]{64}$/.test(redis.password)) throw new Error('Invalid local broker');
   const prefix = 'founders-lens-p9-local-' + run;
-  const primaryPort = cedar ? String(target.primaryPort) : test ? '55439' : isolated ? '55435' : '55437';
-  const authorityPort = cedar ? String(target.authorityPort) : test ? '55440' : isolated ? '55438' : '55436';
-  const database = cedar ? '/' + target.database : test ? '/founders_lens_m05_e2e_test' : isolated ? '/founders_lens_p9_local' : '/founders_lens_p6_local';
   const resources = [];
   function pool(url, path) {
     if (url.pathname !== path || !/^[a-z][a-z0-9_]{0,62}$/.test(url.username)) throw new Error('Invalid database login');
@@ -95,11 +99,12 @@ export async function startLocalGeneration(env, report = () => {}, { determinist
     return result;
   }
   const abort = new AbortController();
-  let pump, consumer, running, expiryTimer, closing;
+  let pump, consumer, running, expiryTimer, closing, limiter;
   const close = () => closing ??= (async () => {
     abort.abort();
     clearTimeout(expiryTimer);
     const loops = await Promise.allSettled([pump?.close(), consumer?.close(), running]);
+    limiter?.close();
     const pools = await Promise.allSettled(resources.map(value => value.end()));
     if ([...loops.slice(0, 2), ...pools].some(result => result.status === 'rejected')) {
       throw new Error('Local generation cleanup failed');
@@ -107,11 +112,14 @@ export async function startLocalGeneration(env, report = () => {}, { determinist
   })();
   try {
     const urls = ['DISPATCH', 'VERIFIER', 'WORKER'].map(role =>
-      localUrl(required('FL_P9_' + role + '_DATABASE_URL'), 'postgresql:', primaryPort));
+      localUrl(required('FL_P9_' + role + '_DATABASE_URL'), 'postgresql:'));
+    const database = urls[0].pathname;
     const expected = ['fl_p9_dispatch', 'fl_p9_context_verifier', 'fl_p9_worker'];
-    if (urls.some((url, index) => url.username !== expected[index])) throw new Error('Dedicated runtime logins required');
+    if (urls.some((url, index) => url.username !== expected[index] || url.port !== urls[0].port)) {
+      throw new Error('Dedicated runtime logins on one primary required');
+    }
     const [dispatchPool, verifier, workerPool] = urls.map(url => pool(url, database));
-    const authorityUrl = localUrl(required('FL_P9_AUTHORITY_DATABASE_URL'), 'postgresql:', authorityPort);
+    const authorityUrl = localUrl(required('FL_P9_AUTHORITY_DATABASE_URL'), 'postgresql:');
     if (authorityUrl.username !== 'ledger_reader') throw new Error('Authority reader required');
     const authorityReader = pool(authorityUrl, '/suppression_proof');
     const versions = required('FL_P9_RETAINED_VERSIONS').split(',').map(Number);
@@ -139,6 +147,8 @@ export async function startLocalGeneration(env, report = () => {}, { determinist
       WHERE c.id=$1 AND a.id=$2 AND c.status='ACTIVE' AND i.status='ACTIVE' AND a.status='ACTIVE'`,
     [approved.conversationId, approved.accountId]);
     if (scope.rowCount !== 1) throw new Error('Approved local scope unavailable');
+    limiter = freePolicy && await openGroqFreeQuota(redis, required('FL_GROQ_ORGANIZATION_SCOPE'), freePolicy);
+    const provider = limiter ? groqFounderProvider(groqKey, undefined, report, { policy: freePolicy, quota: limiter.quota }) : fallback;
     const work = generationRepository(workerPool, { bindClaimant: true, singleInvocation: true, metered: true,
       ...(env.FL_P9_MAX_ADMISSIONS === '1' && {
         oneInvocationReservation: budget?.reservationUnits ?? generationReservationTokens
@@ -153,18 +163,23 @@ export async function startLocalGeneration(env, report = () => {}, { determinist
     const execute = createExecutionAuthorizer(verifier, ledger.authority, executionPermission, 'execute', approved);
     const worker = generationWorker(repository, () => Promise.reject(new Error('Independent verification required')), isUuid,
       undefined, Date.now, async (context, signal) => {
-        const result = await provider.generate(founderPrompt(context), signal);
+        if (freePrompts && !freePrompts.has(context.current.text)) throw new Error('Unapproved synthetic prompt');
+        const admittedContext = freePrompts ? { ...context, memory: [],
+          previous: context.previous.filter(turn => freePrompts.has(turn.user.text)).map(({ user }) => ({ user })) } : context;
+        const result = await provider.generate(founderPrompt(admittedContext, offlineDevelopment && !free), signal);
         if (live || deterministicProvider) return result;
         report('P9_DETERMINISTIC_INVOCATION');
         // Fixed synthetic observation for the deterministic runtime, never a Gemini receipt.
         return { ...result, responseId: 'p9-deterministic-observation',
           usage: { inputTokens: 17, outputTokens: 9, totalTokens: 26 } };
       }, {
+        structuredOffline: !live && (offlineDevelopment || env.FL_P9_OFFLINE_ACCEPTANCE === '1' || test && !deterministicProvider),
+        approvedOfflineMemory: offlineDevelopment && !free,
         verifyExecution: ({ id }) => execute(id),
         readContext: leasedContextReader(workerPool,
-          createContextGrantIssuer(verifier, ledger.authority, executionPermission, urls[2].username, approved))
+          createContextGrantIssuer(verifier, ledger.authority, executionPermission, urls[2].username, approved), offlineDevelopment && !free)
       });
-    consumer = generationConsumer(redis, prefix, worker, recheck ? 'cedar-recheck' : cedar ? 'cedar' : test);
+    consumer = generationConsumer(redis, prefix, worker, brokerPort);
     const brokerTimer = setTimeout(() => abort.abort(), 4000);
     const onAbort = () => consumer.close().catch(() => {});
     abort.signal.addEventListener('abort', onAbort, { once: true });
@@ -176,7 +191,7 @@ export async function startLocalGeneration(env, report = () => {}, { determinist
       abort.signal.removeEventListener('abort', onAbort);
     }
     const outbox = outboxRepository(dispatchPool, approved);
-    pump = dispatcher(outbox, generationQueue(redis, prefix, undefined, recheck ? 'cedar-recheck' : cedar ? 'cedar' : test),
+    pump = dispatcher(outbox, generationQueue(redis, prefix, undefined, brokerPort),
       () => Promise.reject(new Error('Independent verification required')), outcome => report(outcome), {
         verifyExecution: createExecutionAuthorizer(verifier, ledger.authority, dispatchPermission, 'dispatch', approved)
       });

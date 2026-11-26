@@ -1,8 +1,8 @@
 // Local database administration CLI. Unlike the restricted runtime Prisma
 // Client, it manages setup. Plan only reads inventory. Provision creates
-// roles and databases, and migrate applies the reviewed baseline and grants.
+// roles and databases, and migrate applies the reviewed sequence and grants.
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +14,21 @@ export const databases = ['founders_lens_m02_dev', 'founders_lens_m02_test', 'fo
 export const roles = ['fl_m02_migrator', 'fl_m02_runtime'];
 export const migrationPath = 'apps/api/prisma/migrations/0001_approved_baseline/migration.sql';
 export const sha256 = value => createHash('sha256').update(value).digest('hex');
+const approvedMigrations = [
+  ['0001_approved_baseline', '19fcf7f5f144d1ff39a00a489193392e9deaa60617ebe2f42a8ee576e203032b'],
+  ['0002_p9_context', 'aa24e097c5ebaaa6bb683f27eac7ad3163e14595623bd3ad51eb427e94a67c46'],
+  ['0003_p9_provider_receipt', 'f13342b7740293bae2467669abb63462bf4ac49e40f6ff43c3bba95f63286053'],
+  ['0004_m06_selected_context', '88c4a464f0f0f7fb27e028781ee2666334adffaf151f4a927cee535fa56a215e'],
+  ['0005_m06_approved_memory', '3cf987d87099a9f31bcb55b55f9766701af19482a7cd7bd4929744619e907b1d']
+];
+// These exact historical byte variants are valid only in local database history.
+const historicalLocalChecksums = new Map([
+  ['0002_p9_context', 'e30c7f7003eb74fa715e3457d4ec220f08bc33f9b66287dab2d3979a1c212fff'],
+  ['0003_p9_provider_receipt', 'a0a3a093f734c1f55440cd5b5a74f386191bb1a6e5403a78d7248511ecf03058'],
+  ['0004_m06_selected_context', '7533b2e2afdabf85653f100fce9abb7cf24d9a81f885dc740cd51fc975770194']
+]);
+export const localMigrationChecksumMatches = (step, checksum) => checksum === step.checksum ||
+  historicalLocalChecksums.get(step.name) === checksum;
 
 export async function settings(readSettingsFile = readFile) {
   const values = parseEnv(await readSettingsFile(path.join(root, '.env.database'), 'utf8'));
@@ -49,8 +64,7 @@ export async function reviewedMigration() {
   const approved = await readFile(path.join(root, 'Docs/lld/01-database/schema/schema.prisma'), 'utf8');
   const guards = await readFile(path.join(root, 'Docs/lld/01-database/constraints/guards.sql'), 'utf8');
   const sql = await readFile(path.join(root, migrationPath), 'utf8');
-  // The M02 tool still applies only the baseline. Project the later reviewed
-  // P9 additions out of the runtime schema before comparing its baseline domain.
+  // Project the reviewed additions out of the runtime schema for the baseline comparison.
   const baselineDomain = schema.slice(schema.indexOf('enum AccountStatus'))
     .replace('  providerReceipt GenerationProviderReceipt?\n', '')
     .replace('  leaseClaimant        String? @db.VarChar(63)\n', '')
@@ -72,7 +86,19 @@ export async function reviewedMigration() {
     /\b(DROP|TRUNCATE|DELETE FROM|ALTER SYSTEM|CREATE ROLE|CREATE DATABASE)\b/i.test(sql.replace(/--[^\r\n]*/g, ''))) {
     throw new Error('Approved schema/guard or additive migration verification failed');
   }
-  return { sql, checksum: sha256(sql) };
+  const directory = path.join(root, 'apps/api/prisma/migrations');
+  const names = (await readdir(directory, { withFileTypes: true })).filter(entry => entry.isDirectory())
+    .map(entry => entry.name).sort();
+  if (names.length !== approvedMigrations.length || names.some((name, index) => name !== approvedMigrations[index][0])) {
+    throw new Error('Unexpected local migration inventory');
+  }
+  const steps = await Promise.all(approvedMigrations.map(async ([name, checksum]) => {
+    const bytes = await readFile(path.join(directory, name, 'migration.sql'));
+    if (sha256(bytes) !== checksum) throw new Error('Unreviewed local migration');
+    return { name, checksum, publicTables: [...bytes.toString().matchAll(/^CREATE TABLE (?:public\.)?"([^"]+)"/gm)]
+      .map(match => match[1]) };
+  }));
+  return { sql, checksum: steps[0].checksum, steps };
 }
 
 async function adminConnection() {
@@ -175,14 +201,20 @@ async function migrate(current, values, migration) {
     try {
       const tables = (await client.query("SELECT tablename FROM pg_tables WHERE schemaname='public'")).rows.map(row => row.tablename);
       if (tables.length) {
-        const expected = [...migration.sql.matchAll(/^CREATE TABLE "([^"]+)"/gm)].map(match => match[1]);
-        expected.push('_prisma_migrations');
-        if (tables.length !== expected.length || tables.some(table => !expected.includes(table))) {
+        if (!tables.includes('_prisma_migrations')) {
           throw new DatabaseCliError('Unrecognized existing database contents');
         }
-        const rows = (await client.query('SELECT migration_name, checksum, finished_at, rolled_back_at FROM "_prisma_migrations"')).rows;
-        if (rows.length !== 1 || rows[0].migration_name !== '0001_approved_baseline' || rows[0].checksum !== migration.checksum || !rows[0].finished_at || rows[0].rolled_back_at) {
+        const rows = (await client.query('SELECT migration_name, checksum, finished_at, rolled_back_at FROM "_prisma_migrations" ORDER BY started_at')).rows;
+        if (!rows.length || rows.length > migration.steps.length || rows.some((row, index) => {
+          const step = migration.steps[index];
+          return row.migration_name !== step.name || !localMigrationChecksumMatches(step, row.checksum) ||
+            !row.finished_at || row.rolled_back_at;
+        })) {
           throw new DatabaseCliError('Unrecognized or failed migration history');
+        }
+        const expected = new Set(['_prisma_migrations', ...migration.steps.slice(0, rows.length).flatMap(step => step.publicTables)]);
+        if (tables.length !== expected.size || tables.some(table => !expected.has(table))) {
+          throw new DatabaseCliError('Unrecognized existing database contents');
         }
       }
     } finally { await client.end(); }
@@ -218,7 +250,7 @@ export async function main(command, { readSettingsFile = readFile, openAdmin = a
     } else if (command === 'migrate') {
       phase = 'migration or restricted grants';
       await migrate(current, values, migration);
-      report('Reviewed baseline and restricted grants applied to isolated dev/test only.');
+      report('Reviewed migrations and restricted grants applied to isolated dev/test only.');
     }
   } catch (error) {
     if (admin) await admin.end().catch(() => {});

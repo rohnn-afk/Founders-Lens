@@ -1,4 +1,4 @@
-/** Create only the fixed disposable Cedar target. Stop on any existing resource or unexpected identity. */
+/** Create only the fixed disposable P9 acceptance target. Stop on any existing resource or unexpected identity. */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
@@ -9,20 +9,23 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { parseEnv } from 'node:util';
 import pg from 'pg';
 import { Redis } from 'ioredis';
-import { cedarAcceptanceTarget, cedarRecheckTarget } from '../apps/api/dist/generation/cedar-acceptance-target.js';
+import { p9AcceptanceTarget, p9RecheckTarget, p9OfflineTarget } from '../tests/fixtures/p9-targets.mjs';
 import { createSuppressionLedger } from '../apps/api/dist/security/suppression-ledger.js';
 
 const recheck = process.env.FL_P9_CEDAR_ACCEPTANCE === '2';
-const target = recheck ? cedarRecheckTarget : cedarAcceptanceTarget;
-const project = recheck ? 'fl-p9-cedar-recheck' : 'fl-p9-cedar-acceptance';
-const root = recheck ? '.env.p9-cedar-recheck-' : '.env.p9-cedar-';
+const offline = process.argv.includes('--offline');
+const resume = offline && process.argv.includes('--resume');
+const target = offline ? p9OfflineTarget : recheck ? p9RecheckTarget : p9AcceptanceTarget;
+const project = offline ? 'fl-p9-offline-acceptance' : recheck ? 'fl-p9-cedar-recheck' : 'fl-p9-cedar-acceptance';
+const root = offline ? '.env.p9-offline-' : recheck ? '.env.p9-cedar-recheck-' : '.env.p9-cedar-';
 const files = [root + 'primary.operator.local', root + 'primary.runtime.local', root + 'api.local', root + 'worker.local'];
 const roles = {
   fl_p6_workspace: 'FL_P6_WORKSPACE_PASSWORD', fl_p6_provision: 'FL_P6_PROVISION_PASSWORD',
   fl_p8_conversations: 'FL_P8_CONVERSATIONS_PASSWORD', fl_p9_submit: 'FL_P9_SUBMIT_PASSWORD',
-  fl_p9_dispatch: 'CEDAR_DISPATCH_PASSWORD', fl_p9_context_verifier: 'CEDAR_VERIFIER_PASSWORD',
-  fl_p9_worker: 'CEDAR_WORKER_PASSWORD'
+  fl_p9_dispatch: 'FL_P9_DISPATCH_PASSWORD', fl_p9_context_verifier: 'FL_P9_VERIFIER_PASSWORD',
+  fl_p9_worker: 'FL_P9_WORKER_PASSWORD'
 };
+if (offline) Object.assign(roles, { fl_p7_idea_create: 'FL_P7_IDEA_CREATE_PASSWORD', fl_idea_edit: 'FL_IDEA_EDIT_PASSWORD' });
 const fresh = () => randomBytes(32).toString('hex');
 const docker = (args, env = process.env, input) => {
   const command = spawnSync('docker', ['--context', 'desktop-linux', ...args], { env, input, encoding: 'utf8', timeout: 90_000 });
@@ -56,18 +59,23 @@ async function waitForStore(pool) {
 const pools = [];
 let redis;
 try {
-  assert.ok(process.env.NODE_ENV !== 'production' && process.env.FL_P9_CEDAR_BOOTSTRAP_CONFIRM === 'create-one-disposable-cedar-target',
-    'Cedar bootstrap authorization required');
+  assert.ok(process.env.NODE_ENV !== 'production' && process.env.FL_DEPLOYMENT === undefined &&
+    (offline ? process.env.FL_P9_CEDAR_ACCEPTANCE === undefined :
+      process.env.FL_P9_CEDAR_BOOTSTRAP_CONFIRM === 'create-one-disposable-cedar-target'),
+    'Local bootstrap authorization required');
   assert.ok([undefined, '1', '2'].includes(process.env.FL_P9_CEDAR_ACCEPTANCE), 'Invalid Cedar profile');
-  for (const file of files) {
-    assert.ok(!existsSync(file) && spawnSync('git', ['check-ignore', '-q', '--', file]).status === 0,
+  for (const [index, file] of files.entries()) {
+    assert.ok(existsSync(file) === (resume && index === 0) && spawnSync('git', ['check-ignore', '-q', '--', file]).status === 0,
       'Cedar local configuration already exists or is not ignored');
   }
   assert.equal(docker(['info', '--format', '{{.OSType}}']), 'linux');
-  assert.ok(!docker(['ps', '-a', '--filter', 'name=' + project, '--format', '{{.ID}}']) &&
-    !docker(['volume', 'ls', '--filter', 'name=' + project, '-q']), 'Cedar Docker resources already exist');
-  await Promise.all([target.primaryPort, target.authorityPort, target.redisPort].map(verifyPort));
-  const historicalFiles = ['.env.p9-primary.runtime.local', ...(recheck ? ['.env.p9-cedar-primary.runtime.local'] : [])];
+  if (!resume) {
+    assert.ok(!docker(['ps', '-a', '--filter', 'name=' + project, '--format', '{{.ID}}']) &&
+      !docker(['volume', 'ls', '--filter', 'name=' + project, '-q']), 'Local Docker resources already exist');
+    await Promise.all([target.primaryPort, target.authorityPort, target.redisPort].map(verifyPort));
+  }
+  const historicalFiles = offline ? ['.env.p6.runtime.local'] :
+    ['.env.p9-primary.runtime.local', ...(recheck ? ['.env.p9-cedar-primary.runtime.local'] : [])];
   const historicalClusters = new Set();
   for (const file of historicalFiles) {
     const priorEnv = parseEnv(await readFile(file, 'utf8'));
@@ -75,16 +83,19 @@ try {
     historicalClusters.add(prior.primary.cluster);
     historicalClusters.add(prior.authority.cluster);
   }
-  const env = Object.fromEntries([...Object.values(roles), 'FL_P6_PRIMARY_ADMIN_PASSWORD', 'FL_SUPPRESSION_ADMIN_PASSWORD',
+  const names = [...Object.values(roles), 'FL_P6_PRIMARY_ADMIN_PASSWORD', 'FL_SUPPRESSION_ADMIN_PASSWORD',
     'FL_SUPPRESSION_READER_PASSWORD', 'FL_SUPPRESSION_WRITER_PASSWORD', 'FL_P6_INTEGRITY_KEY', 'FL_P6_CHALLENGE_KEY',
-    'FL_P6_SUBJECT_KEY_V1', 'FL_P6_GENESIS_KEY', 'CEDAR_REDIS_PASSWORD'].map(name => [name, fresh()]));
-  await save(files[0], env);
+    'FL_P6_SUBJECT_KEY_V1', 'FL_P6_GENESIS_KEY', 'FL_P9_REDIS_PASSWORD'];
+  const env = resume ? parseEnv(await readFile(files[0], 'utf8')) : Object.fromEntries(names.map(name => [name, fresh()]));
+  assert.ok(Object.keys(env).length === names.length && names.every(name => /^[a-f0-9]{64}$/.test(env[name] ?? '')),
+    'Invalid local bootstrap credentials');
+  if (!resume) await save(files[0], env);
   const compose = (await readFile('tests/fixtures/p9-cedar-acceptance.compose.yaml', 'utf8'))
-    .replaceAll('fl-p9-cedar-acceptance', project).replaceAll(cedarAcceptanceTarget.database, target.database)
-    .replaceAll(String(cedarAcceptanceTarget.primaryPort), String(target.primaryPort))
-    .replaceAll(String(cedarAcceptanceTarget.authorityPort), String(target.authorityPort))
-    .replaceAll(String(cedarAcceptanceTarget.redisPort), String(target.redisPort));
-  docker(['compose', '--project-directory', 'tests/fixtures', '-f', '-', 'up', '-d', '--pull', 'never'],
+    .replaceAll('fl-p9-cedar-acceptance', project).replaceAll(p9AcceptanceTarget.database, target.database)
+    .replaceAll(String(p9AcceptanceTarget.primaryPort), String(target.primaryPort))
+    .replaceAll(String(p9AcceptanceTarget.authorityPort), String(target.authorityPort))
+    .replaceAll(String(p9AcceptanceTarget.redisPort), String(target.redisPort));
+  if (!resume) docker(['compose', '--project-directory', 'tests/fixtures', '-f', '-', 'up', '-d', '--pull', 'never'],
     { ...process.env, ...env }, compose);
   for (const [service, port, internal, path] of [
     ['primary', target.primaryPort, '5432/tcp', '/var/lib/postgresql/data'],
@@ -108,15 +119,25 @@ try {
   const [primaryId, authorityId] = await Promise.all([waitForStore(primary), waitForStore(authority)]);
   assert.ok(primaryId.cluster !== authorityId.cluster && !historicalClusters.has(primaryId.cluster) && !historicalClusters.has(authorityId.cluster),
     'Cedar target does not have independent cluster identities');
+  if (resume) {
+    const [{ rows: [app] }, { rows: [ledgerState] }] = await Promise.all([
+      primary.query('SELECT count(*)::int AS accounts FROM public."UserAccount"'),
+      authority.query(`SELECT (SELECT count(*) FROM authority.coverage) +
+        (SELECT count(*) FROM authority.intent) + (SELECT count(*) FROM authority.recovery_progress) AS occupied`)
+    ]);
+    assert.ok(app.accounts === 0 && Number(ledgerState.occupied) === 0, 'Local genesis is no longer fresh');
+  }
   const pgUrl = (port, database, user, password) => `postgresql://${user}:${password}@127.0.0.1:${port}/${database}`;
   const migration = spawnSync(process.execPath, ['node_modules/prisma/build/index.js', 'migrate', 'deploy', '--config', 'prisma.config.ts'],
     { env: { ...process.env, SHADOW_DATABASE_URL: '', MIGRATION_DATABASE_URL: pgUrl(target.primaryPort, target.database, 'postgres',
       env.FL_P6_PRIMARY_ADMIN_PASSWORD) }, stdio: 'ignore', timeout: 60_000 });
   assert.ok(migration.status === 0, 'Cedar migrations did not apply');
   for (const [role, name] of Object.entries(roles)) {
+    if (resume && (await primary.query('SELECT 1 FROM pg_roles WHERE rolname=$1', [role])).rowCount) continue;
     await primary.query(`CREATE ROLE ${role} LOGIN NOINHERIT PASSWORD '${env[name]}'`);
   }
-  for (const grants of ['tests/fixtures/p6-primary-grants.sql', 'tests/fixtures/p8-conversation-grants.sql']) {
+  const localGrants = offline ? ['tests/fixtures/p7-idea-create-grants.sql', 'tests/fixtures/idea-edit-grants.sql'] : [];
+  for (const grants of ['tests/fixtures/p6-primary-grants.sql', 'tests/fixtures/p8-conversation-grants.sql', ...localGrants]) {
     await primary.query((await readFile(grants, 'utf8')).replaceAll('founders_lens_p6_local', target.database));
   }
   await primary.query(`GRANT CONNECT ON DATABASE ${target.database} TO fl_p9_submit, fl_p9_dispatch, fl_p9_worker, fl_p9_context_verifier`);
@@ -134,16 +155,18 @@ try {
     integrityKey: Buffer.from(env.FL_P6_INTEGRITY_KEY, 'hex') });
   const snapshot = await ledger.runtimeSnapshot();
   assert.deepEqual(await ledger.inventory(), []);
-  const redisUrl = `redis://:${env.CEDAR_REDIS_PASSWORD}@127.0.0.1:${target.redisPort}/0`;
+  const redisUrl = `redis://:${env.FL_P9_REDIS_PASSWORD}@127.0.0.1:${target.redisPort}/0`;
   redis = new Redis(redisUrl, { lazyConnect: true, connectTimeout: 1000, retryStrategy: () => null, maxRetriesPerRequest: 0 });
   redis.on('error', () => {});
   assert.equal(await redis.ping(), 'PONG');
   const record = { version: 1, primary: primaryId, authority: authorityId, epoch, namespace, subjectVersions,
     inventoryDigest: snapshot.inventoryDigest };
   const shared = { FL_P6_AUTHORITY_EPOCH: epoch, FL_P6_AUTHORITY_NAMESPACE: namespace, FL_P6_INTEGRITY_KEY: env.FL_P6_INTEGRITY_KEY };
-  const api = { ...shared, FL_P6_WORKSPACE_PASSWORD: env.FL_P6_WORKSPACE_PASSWORD, FL_P6_SUBJECT_KEY_V1: env.FL_P6_SUBJECT_KEY_V1,
+  const api = { ...shared, FL_LOCAL_PRIMARY_PORT: String(target.primaryPort), FL_LOCAL_AUTHORITY_PORT: String(target.authorityPort),
+    FL_LOCAL_PRIMARY_DATABASE: target.database, FL_P6_WORKSPACE_PASSWORD: env.FL_P6_WORKSPACE_PASSWORD, FL_P6_SUBJECT_KEY_V1: env.FL_P6_SUBJECT_KEY_V1,
     FL_SUPPRESSION_READER_PASSWORD: env.FL_SUPPRESSION_READER_PASSWORD, FL_P8_CONVERSATIONS_PASSWORD: env.FL_P8_CONVERSATIONS_PASSWORD,
-    FL_P9_SUBMIT_PASSWORD: env.FL_P9_SUBMIT_PASSWORD };
+    FL_P9_SUBMIT_PASSWORD: env.FL_P9_SUBMIT_PASSWORD,
+    ...(offline && { FL_P7_IDEA_CREATE_PASSWORD: env.FL_P7_IDEA_CREATE_PASSWORD, FL_IDEA_EDIT_PASSWORD: env.FL_IDEA_EDIT_PASSWORD }) };
   await save(files[1], { ...api, FL_P6_GENESIS: Buffer.from(JSON.stringify({ record,
     integrity: mac(env.FL_P6_GENESIS_KEY, ['p6-fresh-genesis-v1', record]) })).toString('base64url') });
   await save(files[2], api);

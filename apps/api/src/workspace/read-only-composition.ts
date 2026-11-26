@@ -23,7 +23,7 @@ import { createGenerationRepository } from '../generation/repository.js';
 import { generationRoutes } from '../generation/routes.js';
 import { createGenerationService } from '../generation/service.js';
 import { localGenerationModel, localGenerationPolicy } from '../generation/local-policy.js';
-import { cedarAcceptanceEnabled, cedarAcceptanceTarget, cedarRecheckTarget } from '../generation/cedar-acceptance-target.js';
+import { localDevelopmentEnabled, localRuntimeTarget, syntheticFreePrompts } from '../generation/local-runtime-config.js';
 import { WorkspaceCursor } from './contracts.js';
 import { WorkspaceRepository } from './repository.js';
 import { localConversationRoutes, workspaceIdeaListRoutes, type LocalConversationOperations } from './routes.js';
@@ -46,7 +46,7 @@ export function workspaceIdeasCors(allowCreate: boolean, conversations?: { creat
       /^\/conversations\/[^/]+(?:\/messages)?$/.test(path));
     const save = conversations?.save && /^\/conversations\/[^/]+\/messages\/save$/.test(path);
     const submit = allowSubmission && /^\/conversations\/[^/]+\/messages$/.test(path);
-    const generationRead = allowSubmission && (submit || /^\/generations\/[^/]+$/.test(path) ||
+    const generationRead = allowSubmission && (submit || /^\/generations\/[^/]+(?:\/events)?$/.test(path) ||
       /^\/conversations\/[^/]+\/submissions\/[^/]+$/.test(path));
     const allowRead = ideas || conversationRead || generationRead;
     const postHeaders = (ideas && allowCreate) || save || submit ? 'authorization,content-type,idempotency-key' :
@@ -96,11 +96,12 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
   const origin = localOrigin;
   if (env['FL_P6_READ_ONLY'] !== '1' || env['NODE_ENV'] === 'production') return;
   const isolated = env['FL_P9_ISOLATED'] === '1';
-  const cedar = cedarAcceptanceEnabled(env);
-  const target = env['FL_P9_CEDAR_ACCEPTANCE'] === '2' ? cedarRecheckTarget : cedarAcceptanceTarget;
-  const primaryPort = cedar ? target.primaryPort : isolated ? 55435 : 55437;
-  const authorityPort = cedar ? target.authorityPort : isolated ? 55438 : 55436;
-  const primaryDatabase = cedar ? target.database : isolated ? 'founders_lens_p9_local' : 'founders_lens_p6_local';
+  const offlineDevelopment = localDevelopmentEnabled(env);
+  const freePrompts = offlineDevelopment && env['FL_P9_LOCAL_RUNTIME'] === 'groq-free' ? syntheticFreePrompts(env) : undefined;
+  const target = localRuntimeTarget(env);
+  const primaryPort = target.primaryPort;
+  const authorityPort = target.authorityPort;
+  const primaryDatabase = target.database;
   const required = (name: string) => {
     const value = env[name];
     if (!value) throw new Error('Local workspace configuration unavailable');
@@ -178,7 +179,7 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
       }
     }
     let edit: Pick<WorkspaceService, 'patchIdea'> | undefined;
-    if (!isolated && !cedar && env['FL_DEPLOYMENT'] === undefined && env['FL_IDEA_EDIT'] === '1') {
+    if ((!isolated || offlineDevelopment) && env['FL_DEPLOYMENT'] === undefined && env['FL_IDEA_EDIT'] === '1') {
       try {
         editPool = pool(primaryPort, primaryDatabase, 'fl_idea_edit', required('FL_IDEA_EDIT_PASSWORD'));
         editPool.on('error', () => {});
@@ -240,16 +241,17 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
           budgetMicros: required('FL_P9_BUDGET_MICROS'), tokenBudget: required('FL_P9_ACCOUNT_TOKEN_BUDGET'),
           requestsPerMinute: required('FL_P9_REQUESTS_PER_MINUTE'), maximumAdmissions: required('FL_P9_MAX_ADMISSIONS'),
           accountId: required('FL_P9_SYNTHETIC_ACCOUNT'), conversationId: approvedConversation,
-          syntheticTextSha256: required('FL_P9_SYNTHETIC_TEXT_SHA256')
-        });
+          ...(!offlineDevelopment && { syntheticTextSha256: required('FL_P9_SYNTHETIC_TEXT_SHA256') })
+        }, offlineDevelopment);
         submissionClient = new PrismaClient({ adapter: new PrismaPg(target), log: [], errorFormat: 'minimal' });
         generation = createGenerationService(createGenerationRepository(submissionClient, policy),
           authority.authority, status.verifiedDeadline, approvedConversation);
         generationReadDeadline = status.verifiedDeadline;
         generationConversation = approvedConversation;
-        submission = createSubmissionService(createSubmissionRepository(submissionClient), authority.authority, {
+        submission = createSubmissionService(createSubmissionRepository(submissionClient, offlineDevelopment), authority.authority, {
           executionAdmission: admission.verifiedDecision, clock: () => new Date(), policy, cursorSecret: cursorKey,
-          allowSubmission: (principal, conversationId, content) => allows(principal.localUserId, conversationId, content)
+          allowSubmission: (principal, conversationId, content) => allows(principal.localUserId, conversationId, content) &&
+            (!freePrompts || freePrompts.has(content))
         });
       } catch {
         await submissionClient?.$disconnect();
@@ -275,7 +277,7 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
     if (submission && generation && generationReadDeadline && generationConversation) {
       mountDocumentedRouter(router, submissionRoutes(submission, authenticate, { readDeadline: generationReadDeadline,
         readConversation: generationConversation }));
-      mountDocumentedRouter(router, generationRoutes(generation, authenticate, { statusOnly: true }));
+      mountDocumentedRouter(router, generationRoutes(generation, authenticate, { statusOnly: true, events: isolated }));
     }
     if (conversations) mountDocumentedRouter(router, localConversationRoutes(conversations, authenticate));
     return { router, close };

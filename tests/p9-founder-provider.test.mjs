@@ -9,6 +9,32 @@ import { deterministicFounderProvider, founderInstructions, founderPrompt, found
 
 const source = (text, truncated = false) => ({ id: 'fixture', text, truncated });
 const input = text => founderPrompt({ current: source(text), previous: [], memory: [] });
+
+test('approved memory enters only the explicitly offline prompt and omits truncated revisions', () => {
+  const context = { current: source('What should we test?'), previous: [],
+    memory: [{ ...source('The owner approved this revision.'), version: 2 },
+      { ...source('Incomplete memory text', true), version: 1 }] };
+  assert.equal(JSON.parse(founderPrompt(context).data).approvedMemory, undefined);
+  assert.deepEqual(JSON.parse(founderPrompt(context, true).data).approvedMemory,
+    [{ text: 'The owner approved this revision.', version: 2 }]);
+});
+
+test('contextual offline replies use bounded authorized turns and distinguish follow-ups', async () => {
+  const provider = deterministicFounderProvider({ contextual: true });
+  const signal = new AbortController().signal;
+  const first = await provider.generate(input('Will tenants pay for reusable kits?'), signal);
+  const followUp = await provider.generate(founderPrompt({
+    current: source('What would change the test?'),
+    previous: [{ user: source('Will tenants pay for reusable kits?'), assistant: source('Measure actual reservations.') }], memory: []
+  }), signal);
+  assert.notEqual(followUp.text, first.text);
+  assert.match(followUp.text, /Will tenants pay for reusable kits/);
+  assert.match(followUp.text, /What would change the test/);
+  assert.match(followUp.text, /The previous reply suggested “Measure actual reservations\.”/);
+  assert.match(followUp.text, /same outcome for both groups/);
+  assert.equal(followUp.usage, null);
+  assert.equal(followUp.responseId, null);
+});
 const standardKey = 'AIza' + 'synthetic_fixture'.padEnd(35, '_');
 const authorizationKey = 'AQ.synthetic_authorization_fixture';
 const env = { P9_GEMINI_API_KEY: standardKey, P9_GEMINI_MODEL: 'gemini-3.1-flash-lite' };
@@ -202,9 +228,9 @@ test('metered Gemini replies can be billed even when no complete answer can be p
   });
 });
 
-test('the twelve synthetic evaluation prompts are repeatable and ready for manual scoring', async () => {
+test('the synthetic evaluation prompts are repeatable and ready for manual scoring', async () => {
   const cases = JSON.parse(await readFile(new URL('./fixtures/p9-founder-evaluation.json', import.meta.url), 'utf8'));
-  assert.equal(cases.length, 12);
+  assert.equal(cases.length, 13);
   assert.equal(new Set(cases.map(item => item.id)).size, cases.length);
   assert.match(founderInstructions, /Never invent findings/);
   const fake = deterministicFounderProvider();

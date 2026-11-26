@@ -513,7 +513,8 @@ test('runtime decision is invalidated by live PostgreSQL target and authority ch
           }), /outage after commit/);
           const recovered = await writeService.createIdea(owner, 'lost-reply-key', input, verify);
           assert.notEqual(recovered.id, created.id);
-          await primary.query('UPDATE "IdempotencyRecord" SET "expiresAt"=now() WHERE key=$1', ['same-create-key']);
+          // Put the receipt safely in the past on both the PostgreSQL and Node clocks.
+          await primary.query("UPDATE \"IdempotencyRecord\" SET \"expiresAt\"=now()-interval '1 minute' WHERE key=$1", ['same-create-key']);
           const replacement = await writeService.createIdea(owner, 'same-create-key', input, verify);
           assert.notEqual(replacement.id, created.id);
           const { rows: [totals] } = await primary.query(`SELECT

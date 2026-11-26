@@ -17,6 +17,7 @@ const require = createRequire(import.meta.url);
 const browserLive = process.argv.includes('--clerk-browser-live');
 const reverificationLive = process.argv.includes('--clerk-reverification-live');
 const p6Bind = process.argv.includes('--p6-bind-account');
+const offlineBind = process.argv.includes('--offline-bind-account');
 const p6Sign = process.argv.includes('--p6-sign-clearance');
 const p7Sign = process.argv.includes('--p7-sign-create');
 const p7Prepare = process.argv.includes('--p7-prepare-writer');
@@ -33,7 +34,7 @@ const p9SecondBind = process.argv.includes('--p9-bind-second-isolated');
 const p9CedarBind = process.argv.includes('--p9-bind-cedar-isolated');
 const p9CedarReadiness = process.argv.includes('--p9-cedar-readiness');
 const p9Diagnose = process.argv.includes('--p9-diagnose-harbor');
-const modes = [browserLive, reverificationLive, p6Bind, p6Sign, p7Sign, p7Prepare, ideaEditPrepare, ideaEditSign, workspaceCreateLive,
+const modes = [browserLive, reverificationLive, p6Bind, offlineBind, p6Sign, p7Sign, p7Prepare, ideaEditPrepare, ideaEditSign, workspaceCreateLive,
   p8Prepare, p8Sign, p8Live, p9Sign, p9Bind, p9SecondBind, p9CedarBind, p9CedarReadiness, p9Diagnose];
 const interactiveMode = modes.some(Boolean);
 if (modes.filter(Boolean).length > 1) throw new Error('Select exactly one Clerk test mode.');
@@ -252,8 +253,8 @@ test(p7Sign ? 'P7 operator signs idea creation clearance' : 'P6 operator signs l
 /** Keep Clerk credentials in the same process as verification and provisioning. */
 test(p9CedarReadiness ? 'P9 Cedar Desk read-only browser readiness' : p9Diagnose ? 'P9 Harbor Cart authenticated diagnostic'
   : p9CedarBind ? 'P9 Cedar Desk isolated Clerk binding'
-    : p9SecondBind ? 'P9 second isolated Clerk binding' : p9Bind ? 'P9 one-time isolated Clerk binding' : 'P6 one-time Clerk binding',
-  { skip: !p6Bind && !p9Bind && !p9SecondBind && !p9CedarBind && !p9CedarReadiness && !p9Diagnose, timeout: 450_000 }, async t => {
+    : p9SecondBind ? 'P9 second isolated Clerk binding' : p9Bind ? 'P9 one-time isolated Clerk binding' : offlineBind ? 'Offline acceptance Clerk binding' : 'P6 one-time Clerk binding',
+  { skip: !p6Bind && !offlineBind && !p9Bind && !p9SecondBind && !p9CedarBind && !p9CedarReadiness && !p9Diagnose, timeout: 450_000 }, async t => {
   const { p6Operator, verifyP6ProvisioningGrants, withP6Provisioning, seedP9Conversation } =
     await import('./fixtures/p6-local-operator.mjs');
   const { clerkConfig } = await import('../apps/api/dist/security/config.js');
@@ -279,23 +280,24 @@ test(p9CedarReadiness ? 'P9 Cedar Desk read-only browser readiness' : p9Diagnose
   assert.ok(config.publishableKey.startsWith('pk_test_') && config.authorizedParties.includes(origin) &&
     /^user_[A-Za-z0-9_-]+$/.test(expectedSubject ?? '') && expectedSubject !== 'user_REPLACE_WITH_CEDAR_CLERK_ID' &&
     (config.audience || env.CLERK_TEST_ALLOW_NO_AUDIENCE === '1'), 'Approved Clerk development identity required');
-  const context = await p6Operator(t, { isolated: p9Bind || p9SecondBind || cedarTarget || p9Diagnose,
+  const context = await p6Operator(t, { isolated: offlineBind || p9Bind || p9SecondBind || cedarTarget || p9Diagnose, offline: offlineBind,
     cedar: cedarTarget, recheck: cedarTarget && env.FL_P9_CEDAR_ACCEPTANCE === '2' });
   await verifyP6ProvisioningGrants(context.primary);
   const boundary = createClerkBoundary({ ...config, authorizedParties: [origin] });
   const provider = new ClerkIdentityProvider(boundary.client);
   const evaluate = await openEdge(t, origin + '/app', true);
   const shell = `location.origin === ${JSON.stringify(origin)} && location.pathname === '/app' &&
-    document.body?.innerText.includes('You are signed in.') && window.Clerk?.session?.status === 'active'`;
+    window.Clerk?.session?.status === 'active'`;
   console.info(`Edge is ready for the approved ${context.isolated ? 'P9' : 'P6'} development account. Sign in within three minutes.`);
   await waitForBrowser(async () => await evaluate(shell) === true, manualSignInTimeout);
   const token = await evaluate(`(${shell}) ? window.Clerk.session.getToken({ skipCache: true }) : null`, 10_000);
   assert.ok(typeof token === 'string' && token.split('.').length === 3, 'Fresh Clerk session required');
   const header = 'Bearer ' + token;
   const identity = await boundary.authenticate({ authorization: header }, ['Authorization', header]);
-  assert.ok(identity.instanceId === config.instanceId && identity.subject === expectedSubject &&
-    (config.audience || !Object.hasOwn(JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()), 'aud')),
-  'Clerk identity or audience does not match the approved policy');
+  assert.ok(identity.instanceId === config.instanceId, 'Verified Clerk instance differs from the designated instance');
+  assert.ok(identity.subject === expectedSubject, 'Signed-in Clerk account differs from the designated account');
+  assert.ok(config.audience || !Object.hasOwn(JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()), 'aud'),
+    'Clerk audience does not match the approved policy');
   await provider.assertLive(identity);
   if (p9CedarReadiness) {
     await verifyCedarRecheckBrowser(t, context, evaluate, origin, identity);
@@ -399,6 +401,10 @@ test(p9CedarReadiness ? 'P9 Cedar Desk read-only browser readiness' : p9Diagnose
     assert.deepEqual(before, expected);
   }
   await context.verify();
+  if (offlineBind) {
+    console.info('Offline acceptance binding verified. One account and no workspace records.');
+    return;
+  }
   console.info('P6 binding verified. Accounts 1, ideas 0, conversations 0, messages 0.');
   console.info('Start the P6 API with the separately signed decision, then use Retry in Edge.');
   await waitForBrowser(async () => await evaluate(`(${shell}) && document.body.innerText.includes('You don’t have any ideas yet.')`) === true,

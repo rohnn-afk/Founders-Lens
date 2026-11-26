@@ -3,6 +3,7 @@
 import type { Pool, PoolClient } from 'pg';
 import type { ProviderResult } from './founder-provider.js';
 import { observedUsage, recordObservation } from './provider-accounting.js';
+import type { OfflineAssistantContent } from './generation-context.js';
 
 const claims = 2;
 export type Scope = {
@@ -219,7 +220,8 @@ export function generationRepository(pool: Pool, { singleInvocation = false, bin
         return result.rowCount === 1;
       });
     },
-    finish(scope: Scope, epoch: number, completion: { id: string; text: string } | null, clearanceExpiry: number) {
+    finish(scope: Scope, epoch: number,
+      completion: { id: string; text: string; assistantContent?: OfflineAssistantContent } | null, clearanceExpiry: number) {
       return locked(scope, async (tx, state) => {
         if (state.leaseEpoch !== epoch || !state.live || state.contextEpoch !== scope.contextEpoch) return false;
         const cancelled = state.status === 'CANCEL_REQUESTED';
@@ -235,9 +237,16 @@ export function generationRepository(pool: Pool, { singleInvocation = false, bin
           const { rows: [row] } = await tx.query<{ sequence: number }>(`UPDATE "Conversation"
             SET "nextSequence"="nextSequence"+1 WHERE id=$1 RETURNING "nextSequence"-1 AS sequence`, [scope.conversationId]);
           if (!row) throw new Error('Generation sequence unavailable');
-          await tx.query(`INSERT INTO "Message" (id,"ideaId","conversationId",sequence,role,content,"generationAttemptId")
-            VALUES ($1,$2,$3,$4,'ASSISTANT',$5,$6)`,
-          [completion.id,scope.ideaId,scope.conversationId,row.sequence,{ text:completion.text },scope.id]);
+          const fields = [completion.id, scope.ideaId, scope.conversationId, row.sequence,
+            { text: completion.text, ...(completion.assistantContent && { assistantContent: completion.assistantContent }) }, scope.id];
+          if (completion.assistantContent) {
+            await tx.query(`INSERT INTO "Message"
+              (id,"ideaId","conversationId",sequence,role,content,"generationAttemptId","contentSchemaVersion")
+              VALUES ($1,$2,$3,$4,'ASSISTANT',$5,$6,2)`, fields);
+          } else {
+            await tx.query(`INSERT INTO "Message" (id,"ideaId","conversationId",sequence,role,content,"generationAttemptId")
+              VALUES ($1,$2,$3,$4,'ASSISTANT',$5,$6)`, fields);
+          }
           // Replace selection only inside the successful result transaction.
           await tx.query(`UPDATE "GenerationAttempt" SET "selectedAt"=NULL
             WHERE "triggerMessageId"=$1 AND "conversationId"=$2 AND "selectedAt" IS NOT NULL`, [scope.triggerMessageId,scope.conversationId]);

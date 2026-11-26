@@ -2,7 +2,7 @@
 // or issue network requests on import. Callers must authorize each invocation.
 import { ApiError, FinishReason, GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { createHash } from 'node:crypto';
-import type { GenerationContext } from './generation-context.js';
+import type { GenerationContext, OfflineAssistantContent } from './generation-context.js';
 
 export const founderPromptVersion = 'founder-challenger-v1';
 export const founderInstructions = `You are Founder's Lens, a critical thinking partner for early-stage founders.
@@ -21,7 +21,8 @@ const geminiOrigin = 'https://generativelanguage.googleapis.com';
 
 export type FounderPrompt = { version: typeof founderPromptVersion; data: string };
 export type ProviderUsage = { inputTokens: number; outputTokens: number; totalTokens: number };
-export type ProviderResult = { text: string | null; usage: ProviderUsage | null; responseId: string | null };
+export type ProviderResult = { text: string | null; usage: ProviderUsage | null; responseId: string | null;
+  assistantContent?: OfflineAssistantContent };
 export interface FounderProvider {
   /** Execute one bounded request. A thrown failure conveys no proof of zero spend. */
   generate(prompt: FounderPrompt, signal: AbortSignal): Promise<ProviderResult>;
@@ -43,11 +44,20 @@ export function syntheticOnlyProvider(provider: FounderProvider, approvedTextSha
 }
 
 /** Keep the current turn intact and add only the most recent complete turns that fit. */
-export function founderPrompt(context: GenerationContext): FounderPrompt {
+export function founderPrompt(context: GenerationContext, approvedOfflineMemory = false): FounderPrompt {
+  let memory: readonly { text: string; version: number }[] = [];
   const encode = (recent: readonly { user: string; assistant?: string }[]) =>
-    JSON.stringify({ recent, current: context.current.text });
+    JSON.stringify({ recent, current: context.current.text, ...(memory.length && { approvedMemory: memory }) });
   const fits = (value: string) => Buffer.byteLength(founderInstructions) + Buffer.byteLength(value) <= inputBytes;
   if (context.current.truncated || !context.current.text || !fits(encode([]))) throw new Error('Founder prompt exceeds local input policy');
+  if (approvedOfflineMemory) {
+    for (const item of context.memory) {
+      if (item.truncated) continue;
+      const previous = memory;
+      memory = [...memory, { text: item.text, version: item.version }];
+      if (!fits(encode([]))) memory = previous;
+    }
+  }
   let recent: { user: string; assistant?: string }[] = [];
   for (const turn of context.previous.slice(-3).reverse()) {
     if (turn.user.truncated || turn.assistant?.truncated) break;
@@ -59,15 +69,38 @@ export function founderPrompt(context: GenerationContext): FounderPrompt {
 }
 
 /** An offline adapter for exercising the orchestration, independent of claim quality. */
-export function deterministicFounderProvider(): FounderProvider {
+export function deterministicFounderProvider({ contextual = false } = {}): FounderProvider {
   return {
     async generate(prompt, signal) {
       signal.throwIfAborted();
       validatePrompt(prompt);
-      return { text: 'Identify the assumption that would change your decision. Test it with a small segment and set a pass threshold before reviewing results.',
+      return { text: contextual ? offlineContextReply(prompt) :
+        'Identify the assumption that would change your decision. Test it with a small segment and set a pass threshold before reviewing results.',
         usage: null, responseId: null };
     }
   };
+}
+
+function offlineContextReply(prompt: FounderPrompt): string {
+  const parsed: unknown = JSON.parse(prompt.data);
+  if (!parsed || typeof parsed !== 'object' || !('current' in parsed) || typeof parsed.current !== 'string' ||
+    !('recent' in parsed) || !Array.isArray(parsed.recent) || parsed.recent.length > 3) {
+    throw new Error('Invalid offline context');
+  }
+  const excerpt = (text: string) => {
+    const characters = Array.from(text.replace(/\s+/g, ' ').trim());
+    return '“' + characters.slice(0, 160).join('') + (characters.length > 160 ? '…' : '') + '”';
+  };
+  const prior: unknown = parsed.recent.at(-1);
+  if (prior !== undefined) {
+    if (!prior || typeof prior !== 'object' || !('user' in prior) || typeof prior.user !== 'string') {
+      throw new Error('Invalid prior offline turn');
+    }
+    const priorAnswer = 'assistant' in prior && typeof prior.assistant === 'string' ? prior.assistant : undefined;
+    const baseline = priorAnswer ? ` The previous reply suggested ${excerpt(priorAnswer)}. Treat that as a starting point.` : '';
+    return `Earlier you wrote ${excerpt(prior.user)}. Your follow-up is ${excerpt(parsed.current)}.${baseline} Keep the original test as a baseline, change one condition, and compare the same outcome for both groups. Decide what difference would justify changing course before collecting results.`;
+  }
+  return `Start with ${excerpt(parsed.current)}. Pick one assumption whose failure would change your decision. Test it with a small group and record the observable result that would make you revise the idea.`;
 }
 
 export function validatePrompt(prompt: FounderPrompt) {

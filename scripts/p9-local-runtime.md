@@ -1,5 +1,161 @@
 ﻿# P9 local deterministic dispatcher and worker
 
+## Environment boundaries
+
+| Environment | Authentication and data | Generation |
+| --- | --- | --- |
+| Local offline acceptance | Designated Clerk Development account, dedicated loopback PostgreSQL primary and authority, authenticated local Redis | Deterministic worker with one pinned conversation and synthetic prompt |
+| Automated integration | Disposable PostgreSQL and Redis, controlled test principals and applied migrations | Deterministic provider and failure injection |
+| Hosted staging | Clerk account binding, restricted Neon roles, independent authority and release gates | Read-only workspace |
+| Production | Separate identities and infrastructure, reviewed deployment and capability approvals | Provider activation requires separate authorization |
+
+## Configuration ownership
+
+Application code consumes only the generic local target variables
+`FL_LOCAL_PRIMARY_PORT`, `FL_LOCAL_AUTHORITY_PORT`, and
+`FL_LOCAL_PRIMARY_DATABASE`. Their values are validated at API startup; absent
+values select the ordinary P6 or isolated P9 local defaults. Fixed acceptance
+ports, database names, Docker projects, prompt hashes, and provider-specific
+bindings belong to `tests/fixtures/` and the operator scripts. This keeps the
+historical P9 acceptance evidence reproducible without making Cedar or any
+other fixture a product or application concept.
+
+The historical provider acceptance target remains isolated and opt-in. Its
+legacy names and persisted evidence are retained only by the acceptance
+harness; routine development uses the offline local target and
+`FL_P9_LOCAL_DEVELOPMENT=1` when multi-turn deterministic development is
+explicitly selected. Hosted deployment and paid-provider configuration remain
+rejected by the local launchers.
+
+For repeatable offline development, reuse the same stores, Clerk binding and
+operator key paths. Run `node scripts/p9-offline-acceptance.mjs development <conversation-id>`
+for an active owned conversation. This mode accepts multiple turns without a
+prompt hash. It retains a bounded per-account quota, exact conversation
+authorization, live authority and the five-minute signed window. Start a new
+window with the same command. The mode rejects hosted configuration and paid
+providers before it opens its database or queue.
+
+The development adapter quotes brief excerpts from the current and previous
+authorized turns. A follow-up can include a suggested experiment in transcript
+version 2. That card is guidance and does not create or approve an experiment.
+The local development projection requires migration `0004_m06_selected_context`
+to include selected assistant replies. It never uses an answer from another
+conversation, a different context epoch or a superseded generation.
+Migration `0005_m06_approved_memory` adds an offline-only read of at most three
+active revisions tied to an accepted proposal, matching owner, and an
+available same-idea founder message. The approval writer must record
+`provenance.proposalId` on the revision. The attempt records only lineage IDs
+and versions. This slice has no founder-facing approval UI, does not send
+memory to external providers. The offline v2 transcript revalidates stored
+citations against current, same-idea, source-checked external evidence. It
+allows exact findings with matching limitations and HTTPS provenance. A
+provider cannot publish citations through this local slice. Research and
+source creation stay outside it.
+
+## Designated Clerk offline acceptance
+
+Build API, dispatcher and worker, then create the dedicated loopback stores
+once with `node scripts/p9-cedar-bootstrap.mjs --offline`. The command refuses
+existing resources. An interrupted run before coverage initialization can
+resume with `--offline --resume` against the same verified Docker project.
+
+Start the Clerk-enabled web at `http://127.0.0.1:3000`. Run
+`tests/clerk-session-browser.test.mjs --offline-bind-account` with the ignored
+Clerk development manifest and exact loopback authorized party. Sign in in the
+Edge window. The restricted provisioning role closes after binding.
+
+Set the existing `P6_OPERATOR_PRIVATE_KEY_FILE` and `P6_OPERATOR_PUBLIC_KEY_FILE`
+paths in the operator shell. With port 3001 clear, launch:
+
+```powershell
+node scripts/p9-offline-acceptance.mjs workspace
+```
+
+Create and edit a synthetic idea, then create an empty conversation. Stop the
+launcher and run:
+
+```powershell
+node scripts/p9-offline-acceptance.mjs generation
+```
+
+The launcher selects the sole owned empty conversation. If several qualify,
+pass the exact conversation ID from the browser URL after `generation`.
+Reload the conversation, submit the printed synthetic prompt exactly, and
+reload after completion to verify history. The operator keys and database
+admin credentials stay outside the API and background processes. Ctrl+C stops
+the launcher. Stop the three `fl-p9-offline-acceptance` project containers to
+retain state. A reset deletes only that project's volumes and its matching
+ignored manifests after verifying their identities and reviewing data retention.
+
+## Runtime configuration
+
+### Groq Free evaluation
+
+Before live inference, select the organization that owns the key in Groq
+Console. Confirm Free in Billing, then open Limits and record RPM, RPD, TPM
+and TPD for each enabled GPT-OSS model. If Limits shows separate input and
+output TPM, include both and use the smallest of the displayed per-minute
+token ceilings as the conservative combined cap. Record the lower limits
+in ignored `.env.groq-free.local` as `FL_GROQ_ORG_PLAN=free` and
+`FL_GROQ_ORG_RPM`, `FL_GROQ_ORG_RPD`, `FL_GROQ_ORG_TPM`, `FL_GROQ_ORG_TPD`.
+Use one stable SHA-256 organization identifier in `FL_GROQ_ORGANIZATION_SCOPE`
+across models and restarts. Keep the key only in the existing ignored worker
+manifest. Check Zero Data Retention under Data Controls in the same
+organization and record only its status. Keep evaluation inputs synthetic.
+
+Run `node scripts/evaluate-groq-free.mjs --dry-run` to list the checked-in
+synthetic cases without credentials. After plan verification, run
+`node scripts/evaluate-groq-free.mjs --live <case-id>` for one synthetic case.
+This lets you review each result and space requests within the rolling quota.
+The evaluator reports HTTP status and schema validity separately from manual
+quality review. The contextual case uses synthetic prior turns. Memory and
+citation evaluation remain pending.
+The existing loopback Redis must have AOF, synchronous persistence and no eviction
+for the quota ledger. No requests are sent while that check fails. The shared
+rolling ceilings are 10 requests and 6,000 tokens per minute, and 40 requests
+and 120,000 tokens per day, each clamped to the organization limits. One
+reservation is active at a time. Missing usage retains the original reserve.
+The evaluator stops at a denial or transport failure without retrying it.
+
+The default model is `openai/gpt-oss-20b` with low reasoning. Set
+`FL_GROQ_FREE_MODEL=openai/gpt-oss-120b` or
+`FL_GROQ_FREE_REASONING=medium` for comparison. The request uses the strict
+text, strategy and question schema, excludes reasoning, and disables streaming
+and tools. For authenticated synthetic workspace development, run
+`node scripts/p9-offline-acceptance.mjs groq-free <owned-conversation-id>`.
+The API and worker accept only the checked-in synthetic prompts for this mode.
+The worker forwards only allowlisted recent founder turns. It excludes prior
+assistant text, memory and evidence from external requests. Keep using the
+`development` mode for offline conversations and private context.
+
+### Historical paid-equivalent reference
+
+Start with the existing Groq `openai/gpt-oss-20b` adapter and the existing
+isolated, synthetic-only single-admission profile. Set its worker-only key
+through the ignored provider manifest. Use the existing split signed decisions,
+pinned synthetic account, conversation and prompt hash, and the
+`v1:groq-gpt-oss-20b` tariff. Keep research, tools and retrieval of real
+workspace data outside the trial.
+
+Use the twelve synthetic prompts in
+[`p9-founder-evaluation.json`](../tests/fixtures/p9-founder-evaluation.json).
+Score each response from 0 to 2 for intent understanding, usefulness,
+evidence and uncertainty, naturalness and brevity, respectful challenge, and
+memory or correction fidelity. Treat disclosure, invented evidence, and any
+attempt or settlement discrepancy as failures regardless of score. Record the
+model, prompt version, latency, measured usage and any unknown provider outcome.
+One accepted synthetic prompt is the initial approval unit. A twelve-case batch
+requires its own cap and isolated scopes.
+
+The [Groq model rate](https://console.groq.com/docs/model/openai/gpt-oss-20b)
+is $0.075 input and $0.30 output per million tokens. The application's
+conservative reservation is $0.001575 per admission and $0.0189 across twelve.
+The [Gemini 3.1 Flash-Lite rate](https://ai.google.dev/gemini-api/docs/pricing)
+is $0.25 input and $1.50 output per million tokens. The comparable conservative
+reservation is $0.006912 per admission and $0.082944 across twelve. These are
+reservation ceilings for the configured limits. Measured billing is separate.
+No paid run is enabled by this documentation.
+
 Run the launcher from the repository root after building the API, dispatcher,
 and worker. Feed it a dedicated ignored environment file. Keep the API process
 on its separate local P9 submit/status configuration.
@@ -56,6 +212,17 @@ the alternate primary/authority target pinning selected by
 Run the disposable proof with `node tests/m05-local-generation.test.mjs --live`.
 The standalone adapter in this command records a clearly labeled offline
 observation. No external model is used.
+
+## Local Clerk clock check
+
+The Express Clerk adapter verifies token timestamps with zero clock skew. If
+Clerk shows an active session but a fresh bearer receives HTTP 401, check the
+workstation's clock before changing authentication settings. On Windows, use
+`w32tm /stripchart /computer:time.windows.com /samples:3 /dataonly` and sync in
+**Settings → Time & language → Date & time** if needed. Reload the workspace
+after syncing. An expired signed local admission is a separate failure that
+returns HTTP 503 after token verification. Refresh it through the existing local
+operator procedure.
 
 ## Recovery proofs
 

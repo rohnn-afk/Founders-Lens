@@ -11,9 +11,11 @@ async function controller(name) {
   const { outputText } = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2024, module: ts.ModuleKind.ESNext } });
   let moduleText = outputText;
   if (name === 'local-conversation-api') {
-    const endpoints = await readFile(new URL('../apps/web/features/workspace/endpoints.ts', import.meta.url), 'utf8');
-    const compiled = ts.transpileModule(endpoints, { compilerOptions: { target: ts.ScriptTarget.ES2024, module: ts.ModuleKind.ESNext } });
-    moduleText = moduleText.replace("'./endpoints'", JSON.stringify('data:text/javascript;base64,' + Buffer.from(compiled.outputText).toString('base64')));
+    for (const dependency of ['endpoints', 'generation-events']) {
+      const input = await readFile(new URL('../apps/web/features/workspace/' + dependency + '.ts', import.meta.url), 'utf8');
+      const compiled = ts.transpileModule(input, { compilerOptions: { target: ts.ScriptTarget.ES2024, module: ts.ModuleKind.ESNext } });
+      moduleText = moduleText.replace("'./" + dependency + "'", JSON.stringify('data:text/javascript;base64,' + Buffer.from(compiled.outputText).toString('base64')));
+    }
   }
   return import('data:text/javascript;base64,' + Buffer.from(moduleText).toString('base64'));
 }

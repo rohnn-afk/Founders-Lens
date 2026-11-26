@@ -1,10 +1,88 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { founderInstructions, founderPromptVersion } from '../apps/worker/dist/founder-provider.js';
 import { groqFounderProvider } from '../apps/worker/dist/groq-provider.js';
+import { freeGroqPolicy } from '../apps/worker/dist/groq-free-policy.js';
+import { evaluateSyntheticCase } from '../scripts/evaluate-groq-free.mjs';
 
 const key = 'gsk_' + 'offline_synthetic_fixture';
 const prompt = { version: founderPromptVersion, data: '{"recent":[],"current":"Synthetic founder turn"}' };
+const freeEnv = { FL_P9_ISOLATED: '1', FL_GROQ_ORG_PLAN: 'free',
+  FL_GROQ_ORG_RPM: '30', FL_GROQ_ORG_RPD: '1000', FL_GROQ_ORG_TPM: '8000', FL_GROQ_ORG_TPD: '200000' };
+
+test('synthetic Groq evaluation sends prior turns and separates invalid output from quality', async () => {
+  const entry = { previous: ['The test has six shops. No deposits.'], prompt: 'What is a good signal?', lookFor: 'Use appointments.' };
+  const result = await evaluateSyntheticCase(entry, { async generate(input) {
+    assert.match(input.data, /six shops/);
+    assert.match(input.data, /good signal/);
+    return { text: null, usage: null };
+  } });
+  assert.equal(result.schemaValid, false);
+  assert.equal(result.quality, 'not-evaluated');
+});
+
+test('live Groq evaluation requires an explicit case before loading credentials', () => {
+  const result = spawnSync(process.execPath, ['scripts/evaluate-groq-free.mjs', '--live'], { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /requires one case ID/);
+  assert.equal(result.stdout, '');
+});
+
+test('Groq Free clamps limits and requires the isolated confirmed organization', () => {
+  assert.deepEqual(freeGroqPolicy(freeEnv).limits, { rpm: 10, rpd: 40, tpm: 6000, tpd: 120000 });
+  assert.equal(freeGroqPolicy({ ...freeEnv, FL_GROQ_ORG_RPD: '5' }).limits.rpd, 5);
+  assert.throws(() => freeGroqPolicy({ ...freeEnv, FL_GROQ_ORG_PLAN: undefined }));
+  assert.throws(() => freeGroqPolicy({ ...freeEnv, FL_DEPLOYMENT: 'staging' }));
+  assert.throws(() => freeGroqPolicy({ ...freeEnv, FL_GROQ_FREE_MODEL: 'unapproved' }));
+});
+
+test('Groq Free reserves before a strict request and settles usage even for rejected content', async () => {
+  const attempts = [];
+  const policy = freeGroqPolicy(freeEnv);
+  let mode = 'valid';
+  const provider = groqFounderProvider(key, async (_url, options) => {
+    attempts.push('post');
+    const body = JSON.parse(options.body);
+    assert.equal(body.response_format.json_schema.strict, true);
+    assert.equal(body.stream, false);
+    assert.equal(body.max_completion_tokens, 1200);
+    if (mode === 'limited') return new Response(null, { status: 429, headers: { 'Retry-After': '7' } });
+    const content = JSON.stringify({ text: 'Test a commitment.', strategy: 'CHALLENGE', question: 'What counts as a commitment?',
+      ...(mode === 'invalid' && { inventedSource: 'invalid' }) });
+    return Response.json({ id: 'chatcmpl-fixture',
+      choices: [{ finish_reason: 'stop', message: { role: 'assistant', content } }],
+      usage: { prompt_tokens: 80, completion_tokens: 50, total_tokens: 130 } });
+  }, undefined, { policy, quota: { async reserve() {
+    attempts.push('reserve');
+    return async (used, delay) => { attempts.push([used, delay]); };
+  } } });
+  const signal = new AbortController().signal;
+  const result = await provider.generate(prompt, signal);
+  assert.equal(result.assistantContent.primaryStrategy, 'CHALLENGE');
+  mode = 'invalid';
+  assert.equal((await provider.generate(prompt, signal)).text, null);
+  mode = 'limited';
+  await assert.rejects(provider.generate(prompt, signal));
+  assert.deepEqual(attempts, ['reserve', 'post', [130, 0], 'reserve', 'post', [130, 0],
+    'reserve', 'post', [undefined, 7000]]);
+  await assert.rejects(provider.generate({ ...prompt, data: 'x'.repeat(2000) }, signal), /context budget/);
+  assert.equal(attempts.length, 9);
+});
+
+test('Groq Free drops old turns before reserving and preserves the complete current question', async () => {
+  const current = 'What outcome would disprove the idea?';
+  let posted;
+  const provider = groqFounderProvider(key, async (_url, options) => {
+    posted = JSON.parse(JSON.parse(options.body).messages[1].content);
+    return Response.json({ choices: [{ finish_reason: 'stop', message: { role: 'assistant',
+      content: JSON.stringify({ text: 'Test it.', strategy: 'REFLECT', question: 'What will you measure?' }) } }],
+    usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 } });
+  }, undefined, { policy: freeGroqPolicy(freeEnv), quota: { async reserve() { return async () => {}; } } });
+  await provider.generate({ ...prompt, data: JSON.stringify({ current, recent: [{ user: 'a'.repeat(1700) },
+    { user: 'A more recent synthetic turn.' }] }) }, new AbortController().signal);
+  assert.deepEqual(posted, { current, recent: [{ user: 'A more recent synthetic turn.' }] });
+});
 
 test('Groq sends one bounded chat completion and preserves measured token counts', async t => {
   t.mock.method(globalThis, 'fetch', () => assert.fail('Ambient network disabled'));

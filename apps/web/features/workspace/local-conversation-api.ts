@@ -3,6 +3,7 @@
 import type { Acceptance, Conversation, Generation, Idea, IdeaEdit, Message, MessageApi, MessageBody, Page, Reply, SavedMessageApi, WorkspaceApi } from './contracts';
 
 import { workspaceEndpoints } from './endpoints';
+import { waitForTerminalEvent } from './generation-events';
 
 const { origin, api: endpoint } = workspaceEndpoints();
 const ideaPath = (id: string) => '/ideas/' + encodeURIComponent(id);
@@ -34,7 +35,22 @@ const conversation = (value: Conversation, ideaId?: string) => typeof value?.id 
   (value.createdAt === undefined || timestamp(value.createdAt));
 const message = (value: Message, id: string) => typeof value?.id === 'string' && value.conversationId === id &&
   Number.isSafeInteger(value.sequence) && value.sequence > 0 && ['USER', 'ASSISTANT'].includes(value.role) &&
-  typeof value.content === 'string' && timestamp(value.createdAt);
+  typeof value.content === 'string' && timestamp(value.createdAt) &&
+  (value.assistantContent === undefined || (value.role === 'ASSISTANT' && structuredAssistant(value.assistantContent)));
+function structuredAssistant(value: NonNullable<Message['assistantContent']>) {
+  const card = value?.card;
+  const text = (item: unknown, limit: number) => typeof item === 'string' && item.length > 0 && item.length <= limit;
+  return value?.schemaVersion === 1 && ['EXPLORE', 'CHALLENGE', 'INFORM', 'COMPARE', 'ACT', 'REFLECT'].includes(value.primaryStrategy) &&
+    Array.isArray(value.citationRefs) && value.citationRefs.length <= 20 &&
+    value.citationRefs.every(ref => ref && text(ref.claimText, 1000) &&
+      typeof ref.evidenceId === 'string' && /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i.test(ref.evidenceId) &&
+      (ref.qualification === undefined || text(ref.qualification, 1000))) &&
+    [value.proposalIds, value.actions].every(items => Array.isArray(items) && items.length === 0) &&
+    (value.nextQuestion === undefined || text(value.nextQuestion, 2000)) &&
+    (card === undefined || (card?.type === 'experiment' && text(card.hypothesis, 2000) && text(card.plan, 3000) &&
+      text(card.timebox, 200) && Array.isArray(card.successSignals) && card.successSignals.length >= 1 &&
+      card.successSignals.length <= 6 && card.successSignals.every(signal => text(signal, 1000))));
+}
 
 /** Construct session-scoped P8 and opt-in generation transports. */
 export function createLocalConversationApi(getToken: () => Promise<string | null>, makeKey = () => crypto.randomUUID()) {
@@ -121,7 +137,9 @@ export function createLocalConversationApi(getToken: () => Promise<string | null
     typeof value.generationId === 'string' && value.statusUrl === '/api/v1/generations/' + value.generationId &&
     value.eventsUrl === value.statusUrl + '/events';
   const messageApi: MessageApi = {
-    history: savedMessages.history,
+    history: (id, cursor, signal) => request<Page<Message>>(
+      conversationPath(id) + '/messages?assistantResponseVersion=2' + (cursor ? '&cursor=' + encodeURIComponent(cursor) : ''), signal,
+      value => page(value, item => message(item, id))),
     async submit(id, body, key, signal) {
       const reply = await request<Acceptance & { status: 'PENDING' }>(messagePath(id), signal,
         verify(value => validAcceptance(value) && value.status === 'PENDING'), { body, key, accepted: true });
@@ -131,14 +149,32 @@ export function createLocalConversationApi(getToken: () => Promise<string | null
     correlate: (id, submissionId, signal) =>
       request<Acceptance & { clientSubmissionId: string }>(conversationPath(id) + '/submissions/' +
         encodeURIComponent(submissionId), signal, verify(value => validAcceptance(value) && value.clientSubmissionId === submissionId)),
-    generation: { async status(id, signal) {
-      const reply = await request<Generation>('/generations/' + encodeURIComponent(id), signal, verify(value =>
-        value?.id === id && typeof value.conversationId === 'string' && typeof value.triggerMessageId === 'string' &&
-        typeof value.selected === 'boolean' && typeof value.createdAt === 'string' &&
-        ['PENDING', 'RUNNING', 'CANCEL_REQUESTED', 'COMPLETED', 'FAILED', 'CANCELLED'].includes(value.status)));
-      if ('data' in reply) return reply.status === 200 ? { status: 200, data: reply.data } : { status: 503 };
-      return reply;
-    } }
+    generation: {
+      async watchTerminal(id, signal) {
+        if (origin.startsWith('https://') || window.location.origin !== origin) return false;
+        const token = await getToken();
+        signal.throwIfAborted();
+        if (!token) return false;
+        const response = await fetch(endpoint + '/generations/' + encodeURIComponent(id) + '/events', {
+          headers: { Authorization: `Bearer ${token}`, Accept: 'text/event-stream' },
+          cache: 'no-store', credentials: 'omit', redirect: 'error',
+          signal: AbortSignal.any([signal, AbortSignal.timeout(65_000)])
+        });
+        if (response.status !== 200 || !response.headers.get('Content-Type')?.toLowerCase().startsWith('text/event-stream')) {
+          await response.body?.cancel();
+          return false;
+        }
+        return response.body ? waitForTerminalEvent(response.body, id) : false;
+      },
+      async status(id, signal) {
+        const reply = await request<Generation>('/generations/' + encodeURIComponent(id), signal, verify(value =>
+          value?.id === id && typeof value.conversationId === 'string' && typeof value.triggerMessageId === 'string' &&
+          typeof value.selected === 'boolean' && typeof value.createdAt === 'string' &&
+          ['PENDING', 'RUNNING', 'CANCEL_REQUESTED', 'COMPLETED', 'FAILED', 'CANCELLED'].includes(value.status)));
+        if ('data' in reply) return reply.status === 200 ? { status: 200, data: reply.data } : { status: 503 };
+        return reply;
+      }
+    }
   };
   return { api, savedMessages, messageApi,
     async editIdea(id: string, version: number, body: IdeaEdit, signal: AbortSignal): Promise<Reply<Idea>> {

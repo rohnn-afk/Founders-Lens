@@ -190,7 +190,7 @@ test('restricted T02 PostgreSQL and Redis generation lifecycle', { skip: !proces
       unit: 'synthetic_unit', quotaUnits: 2, receiptTtlMs: 60_000, deadlineMs: 120_000 }), authority);
     queue = new Queue('generation', { prefix, connection: createIORedisClient(redis) });
     queue.on('error', () => {});
-    consumer = generationConsumer(redisUrl, prefix, worker);
+    consumer = generationConsumer(redisUrl, prefix, worker, Number(redisUrl.port));
     await consumer.waitUntilReady();
 
     async function deliver(id) {

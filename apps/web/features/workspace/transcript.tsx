@@ -60,7 +60,23 @@ export function Transcript({ conversationId, page, pageIndex, archived }: {
         {page.items.map(item => <li key={item.id} className={styles['turn']} data-speaker={item.role === 'USER' ? 'founder' : 'assistant'}>
           <div className={styles['speaker']}>{item.role === 'USER' ? 'You' : 'Assistant'}</div>
           {item.role === 'USER' ? <p className={styles['founderText']}>{item.content}</p> :
-            <div className={styles['assistantText']}><AssistantText content={item.content} /></div>}
+            <div className={styles['assistantText']}>
+              <AssistantText content={item.content} />
+              {!!item.assistantContent?.citationRefs.length && <div>
+                <p><strong>Evidence references</strong></p>
+                <ul>{item.assistantContent.citationRefs.map((ref, index) => <li key={index}>
+                  {ref.claimText}{ref.qualification && <p>{ref.qualification}</p>}
+                </li>)}</ul>
+              </div>}
+              {item.assistantContent?.card && <div>
+                <p><strong>Suggested experiment</strong></p>
+                <p>{item.assistantContent.card.hypothesis}</p>
+                <p>{item.assistantContent.card.plan}</p>
+                <ul>{item.assistantContent.card.successSignals.map((signal, index) => <li key={index}>{signal}</li>)}</ul>
+                <p>{item.assistantContent.card.timebox}</p>
+              </div>}
+              {item.assistantContent?.nextQuestion && <p>{item.assistantContent.nextQuestion}</p>}
+            </div>}
         </li>)}
       </ol> : <div className={styles['empty']}>
         <p>No saved messages.</p>

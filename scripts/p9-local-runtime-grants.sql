@@ -5,7 +5,7 @@ BEGIN;
 DO $verify$
 BEGIN
   IF current_database() NOT IN ('founders_lens_p6_local','founders_lens_m05_e2e_test','founders_lens_p9_local',
-    'founders_lens_cedar_acceptance','founders_lens_cedar_recheck') THEN
+    'founders_lens_cedar_acceptance','founders_lens_cedar_recheck','founders_lens_offline_acceptance') THEN
     RAISE EXCEPTION 'Unexpected local generation target';
   END IF;
 END
@@ -67,11 +67,23 @@ GRANT SELECT ("contextEpoch","leaseEpoch","executionAttempts","leaseUntil","disp
 GRANT SELECT (id,"conversationId","ideaId",role),
   INSERT (id,"conversationId","ideaId",role,sequence,content,"generationAttemptId")
   ON public."Message" TO fl_p9_worker;
+DO $$ BEGIN
+  IF current_database() IN ('founders_lens_offline_acceptance', 'founders_lens_m05_e2e_test') THEN
+    GRANT INSERT ("contentSchemaVersion") ON public."Message" TO fl_p9_worker;
+  END IF;
+END $$;
 GRANT SELECT ("accountId","reservationId","reservationState","reservedUnits","measuredUnits",unit,"operationType"),
   UPDATE ("reservationState","measuredUnits") ON public."UsageLedger" TO fl_p9_worker;
 GRANT SELECT, INSERT ON public."GenerationProviderReceipt" TO fl_p9_worker;
 GRANT USAGE ON SCHEMA p9_context TO fl_p9_worker, fl_p9_context_verifier;
 GRANT EXECUTE ON FUNCTION p9_context.read_attempt(uuid,integer,integer) TO fl_p9_worker;
+DO $$ BEGIN
+  IF current_database() IN ('founders_lens_offline_acceptance', 'founders_lens_m05_e2e_test') THEN
+    GRANT EXECUTE ON FUNCTION p9_context.read_with_approved_memory(uuid,integer,integer) TO fl_p9_worker;
+    GRANT SELECT (id,"ideaId",origin,trust,finding,"sourceTitle","sourceLocator","retrievedAt",limitations)
+      ON public."EvidenceRecord" TO fl_p9_submit;
+  END IF;
+END $$;
 GRANT SELECT, INSERT, UPDATE ON p9_context.context_grant TO fl_p9_context_verifier;
 GRANT SELECT (id,"conversationId","triggerMessageId","orchestrationMetadata","deadlineAt",status,
   "leaseClaimant","leaseEpoch","contextEpoch","leaseUntil") ON public."GenerationAttempt" TO fl_p9_context_verifier;

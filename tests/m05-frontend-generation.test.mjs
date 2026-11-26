@@ -74,6 +74,35 @@ test('poll-only generation never queues cancellation or regeneration commands', 
   f.controller.stop();
 });
 
+test('a terminal stream hint triggers a canonical read and disconnect leaves polling available', async () => {
+  let calls = 0;
+  const live = Promise.withResolvers();
+  const f = fixture({
+    async status() { return reply(++calls === 1 ? 'RUNNING' : 'COMPLETED'); },
+    watchTerminal: () => live.promise
+  });
+  f.controller.observe('attempt');
+  await tick();
+  assert.equal(f.refreshes(), 0);
+  live.resolve(true);
+  await tick();
+  assert.equal(calls, 2);
+  assert.equal(f.refreshes(), 1);
+  f.controller.stop();
+
+  let fallbackReads = 0, streamSignal;
+  const fallback = fixture({
+    async status() { fallbackReads++; return reply('RUNNING'); },
+    async watchTerminal(_id, signal) { streamSignal = signal; return false; }
+  });
+  fallback.controller.observe('attempt');
+  await tick();
+  await fallback.advance(1000);
+  assert.equal(fallbackReads, 2);
+  assert.equal(streamSignal.aborted, false);
+  fallback.controller.stop();
+});
+
 test('bounded observation pauses without manufacturing failure and permits Check status', async () => {
   let calls = 0;
   const f = fixture({ async status() { calls++; return reply('RUNNING'); } });

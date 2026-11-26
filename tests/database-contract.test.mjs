@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
-import { connection, databases, main, migrationPath, reviewedMigration, root, settings, sha256 } from '../apps/api/scripts/database.mjs';
+import { connection, databases, localMigrationChecksumMatches, main, migrationPath, reviewedMigration, root, settings, sha256 } from '../apps/api/scripts/database.mjs';
 import { databaseConfig } from '../apps/api/dist/persistence/config.js';
 import { createDatabaseClient } from '../apps/api/dist/persistence/client.js';
 
@@ -66,6 +66,22 @@ test('Prisma 7 translation preserves the entire approved domain and additive gua
   assert.ok(sql.indexOf('CREATE TRIGGER') > sql.lastIndexOf('ADD CONSTRAINT', sql.indexOf('-- Approved SQL guards')));
   assert.match(sql, /experiment_plan_title_shape[\s\S]*?NOT VALID/);
   assert.match(schema, /provider\s*=\s*"prisma-client"/);
+});
+
+test('canonical migration bytes and historical local checksums have separate contracts', async () => {
+  const { steps } = await reviewedMigration();
+  const historical = [
+    ['0002_p9_context', 'e30c7f7003eb74fa715e3457d4ec220f08bc33f9b66287dab2d3979a1c212fff'],
+    ['0003_p9_provider_receipt', 'a0a3a093f734c1f55440cd5b5a74f386191bb1a6e5403a78d7248511ecf03058'],
+    ['0004_m06_selected_context', '7533b2e2afdabf85653f100fce9abb7cf24d9a81f885dc740cd51fc975770194']
+  ];
+  for (const [name, checksum] of historical) {
+    const step = steps.find(candidate => candidate.name === name);
+    assert.ok(step);
+    assert.notEqual(step.checksum, checksum);
+    assert.ok(localMigrationChecksumMatches(step, checksum));
+    assert.equal(localMigrationChecksumMatches(steps[0], checksum), false);
+  }
 });
 
 test('runtime configuration rejects missing, owner, remote and malformed connection settings', () => {
@@ -170,14 +186,18 @@ test('real PostgreSQL database foundation', { skip: !live, timeout: 90_000 }, as
   await t.test('both databases have the reviewed migrations, constraints, indexes, enums and triggers', async () => {
     const expectedMigrations = [
       ['0001_approved_baseline', checksum],
-      ...await Promise.all(['0002_p9_context', '0003_p9_provider_receipt'].map(async name => [
+      ...await Promise.all(['0002_p9_context', '0003_p9_provider_receipt', '0004_m06_selected_context',
+        '0005_m06_approved_memory'].map(async name => [
         name, sha256(await readFile(path.join(root, 'apps/api/prisma/migrations', name, 'migration.sql')))
       ]))
     ];
     for (const key of ['MIGRATION_DATABASE_URL', 'TEST_MIGRATION_DATABASE_URL']) {
       await transaction(values[key], async client => {
         const migrations = (await client.query('SELECT migration_name,checksum,finished_at,rolled_back_at FROM "_prisma_migrations" ORDER BY started_at')).rows;
-        assert.deepEqual(migrations.map(row => [row.migration_name, row.checksum]), expectedMigrations);
+        assert.deepEqual(migrations.map(row => row.migration_name), expectedMigrations.map(([name]) => name));
+        for (const [index, [name, checksum]] of expectedMigrations.entries()) {
+          assert.ok(localMigrationChecksumMatches({ name, checksum }, migrations[index].checksum));
+        }
         assert.ok(migrations.every(row => row.finished_at && row.rolled_back_at === null));
         const tables = (await client.query("SELECT tablename,tableowner FROM pg_tables WHERE schemaname='public'")).rows;
         assert.equal(tables.length, 26);

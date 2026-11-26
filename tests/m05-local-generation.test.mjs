@@ -10,6 +10,8 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import test from 'node:test';
 import { leasedContextReader } from '../apps/worker/dist/leased-context-reader.js';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -24,6 +26,8 @@ import { submissionRoutes } from '../apps/api/dist/submission/routes.js';
 import { createGenerationRepository } from '../apps/api/dist/generation/repository.js';
 import { createGenerationService } from '../apps/api/dist/generation/service.js';
 import { generationRoutes } from '../apps/api/dist/generation/routes.js';
+import { localConversationOperations } from '../apps/api/dist/workspace/local-conversations.js';
+import { localConversationRoutes } from '../apps/api/dist/workspace/routes.js';
 import { suppressionScopeKey } from '../apps/api/dist/security/suppression-authority.js';
 import { dispatcher } from '../apps/dispatcher/dist/dispatch.js';
 import { outboxRepository } from '../apps/dispatcher/dist/outbox-repository.js';
@@ -33,6 +37,7 @@ import { generationWorker } from '../apps/worker/dist/generation-worker.js';
 import { syntheticContextResponse } from '../apps/worker/dist/generation-context.js';
 import { deterministicFounderProvider, founderPrompt } from '../apps/worker/dist/founder-provider.js';
 import { groqFounderProvider } from '../apps/worker/dist/groq-provider.js';
+import { groqFreeQuota } from '../apps/worker/dist/groq-free-quota.js';
 import { generationConsumer } from '../apps/worker/dist/generation-consumer.js';
 import { createExecutionAuthorizer } from '../apps/api/dist/generation/execution-scope.js';
 import { createSuppressionLedger } from '../apps/api/dist/security/suppression-ledger.js';
@@ -83,7 +88,7 @@ async function unusedPort() {
   return port;
 }
 
-async function browserJourney({ account, idea, first, url, token, allowed, delivered, setFake, verifyUsage }) {
+async function browserJourney({ account, idea, url, token, allowed, delivered, setFake, verifyUsage }) {
   const temp = await realpath(tmpdir());
   const root = await mkdtemp(join(temp, 'fl-m05-browser-'));
   const children = [];
@@ -99,7 +104,7 @@ async function browserJourney({ account, idea, first, url, token, allowed, deliv
     const web = join(root, 'apps', 'web');
     await mkdir(web, { recursive: true });
     await cp('tsconfig.base.json', join(root, 'tsconfig.base.json'));
-    for (const entry of ['app', 'features', 'package.json', 'tsconfig.json', 'next.config.ts', 'next-env.d.ts']) {
+    for (const entry of ['app', 'features', 'package.json', 'tsconfig.json', 'next.config.ts', 'next-env.d.ts', 'app-mode.ts']) {
       await cp(join('apps', 'web', entry), join(web, entry), { recursive: true });
     }
     await symlink(join(process.cwd(), 'node_modules'), join(root, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
@@ -112,9 +117,10 @@ async function browserJourney({ account, idea, first, url, token, allowed, deliv
     });
     child(process.execPath, [next, 'start', '--hostname', '127.0.0.1', '--port', String(nextPort)], web);
     let loseSubmission = true, pauseStatus = false, archived = false, deny = false, dispatchFailure;
-    let nextGeneration;
-    const conversationPath = '/conversations/' + first;
+    let nextGeneration, first;
+    const observedStreams = new Set();
     const ideaPath = '/ideas/' + idea;
+    const assistantText = 'Identify the assumption that would change your decision.';
     const metadata = () => {
       const timestamp = new Date().toISOString();
       const status = archived ? 'ARCHIVED' : 'ACTIVE';
@@ -138,10 +144,26 @@ async function browserJourney({ account, idea, first, url, token, allowed, deliv
         }
         const path = target.pathname.slice('/__m05/api'.length);
         const method = req.method;
+        const event = /^\/generations\/([a-f0-9-]{36})\/events$/.exec(path);
+        if (event && method === 'GET' && !target.search && allowed.has(event[1])) {
+          const controller = new AbortController();
+          const closed = () => controller.abort();
+          res.once('close', closed);
+          try {
+            const reply = await fetch(url + path, { signal: controller.signal,
+              headers: { Authorization: 'Bearer ' + token, Accept: 'text/event-stream' } });
+            if (reply.ok) observedStreams.add(event[1]);
+            res.writeHead(reply.status, { 'Content-Type': reply.headers.get('Content-Type') ?? 'application/json' });
+            if (reply.body) await pipeline(Readable.fromWeb(reply.body), res);
+            else res.end();
+            return;
+          } finally { res.off('close', closed); }
+        }
+        const conversationPath = '/conversations/' + first;
         const { idea: fixtureIdea, conversation } = metadata();
         if (method === 'GET' && !target.search) {
-          if (path === ideaPath) return json(res, 200, fixtureIdea);
-          if (path === conversationPath) return json(res, 200, conversation);
+          if (archived && path === ideaPath) return json(res, 200, fixtureIdea);
+          if (archived && first && path === conversationPath) return json(res, 200, conversation);
         }
         const attempt = /^\/generations\/([a-f0-9-]{36})(\/cancel)?$/.exec(path);
         const generationRead = attempt && allowed.has(attempt[1]) && !attempt[2] && method === 'GET';
@@ -150,7 +172,10 @@ async function browserJourney({ account, idea, first, url, token, allowed, deliv
         const correlation = path.startsWith(conversationPath + '/submissions/') &&
           /^[a-f0-9-]{36}$/.test(path.slice((conversationPath + '/submissions/').length));
         const regeneration = path === conversationPath + '/regenerations' && method === 'POST';
-        if (!(generationRead || cancellation || (messages && ['GET', 'POST'].includes(method)) ||
+        const collection = path === ideaPath + '/conversations';
+        const create = collection && !first && method === 'POST';
+        const workspaceRead = method === 'GET' && (path === ideaPath || collection || (first && path === conversationPath));
+        if (!(workspaceRead || create || generationRead || cancellation || (messages && ['GET', 'POST'].includes(method)) ||
           (correlation && method === 'GET') || regeneration) ||
           [...target.searchParams.keys()].some(key => !messages || method !== 'GET' || key !== 'cursor')) return json(res, 404, {});
         if (deny) return json(res, 404, { error: { code: 'NOT_FOUND' } });
@@ -171,6 +196,13 @@ async function browserJourney({ account, idea, first, url, token, allowed, deliv
             ...(length && { 'Content-Type': 'application/json' }) },
           body: length ? Buffer.concat(chunks) : undefined, redirect: 'error' });
         const data = await reply.json();
+        if (create && reply.status === 201) {
+          assert.equal(data.ideaId, idea);
+          first = data.id;
+        }
+        if (collection && method === 'GET' && reply.status === 200) {
+          return json(res, 200, { ...data, canCreate: reply.headers.get('X-Workspace-Conversation-Creation') === 'enabled' });
+        }
         if (reply.status === 202 && ((messages && method === 'POST') || regeneration)) {
           nextGeneration = messages ? data.generationId : data.id;
           allowed.add(nextGeneration);
@@ -181,11 +213,13 @@ async function browserJourney({ account, idea, first, url, token, allowed, deliv
         }
         if (reply.headers.has('Retry-After')) res.setHeader('Retry-After', reply.headers.get('Retry-After'));
         return json(res, reply.status, data);
-      } catch { return json(res, 503, { error: { code: 'DEPENDENCY_UNAVAILABLE' } }); }
+      } catch {
+        if (res.headersSent || res.destroyed) return res.destroy();
+        return json(res, 503, { error: { code: 'DEPENDENCY_UNAVAILABLE' } });
+      }
     });
     const port = await loopback(proxy);
     const origin = 'http://127.0.0.1:' + port;
-    const route = '/app/ideas/' + idea + '/conversations/' + first;
     await until(async () => (await fetch('http://127.0.0.1:' + nextPort).catch(() => null))?.ok);
     child(edge, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
       '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=' + edgePort,
@@ -239,7 +273,10 @@ async function browserJourney({ account, idea, first, url, token, allowed, deliv
     await cdp('Page.bringToFront');
     await cdp('Emulation.setFocusEmulationEnabled', { enabled: true });
     await cdp('Emulation.setDeviceMetricsOverride', { width: 375, height: 720, deviceScaleFactor: 1, mobile: true });
-    await cdp('Page.navigate', { url: origin + route });
+    await cdp('Page.navigate', { url: origin + '/app/ideas/' + idea + '/think' });
+    await text('Synthetic idea');
+    await press('Create conversation');
+    await browserWait(() => first && evaluate('location.pathname.endsWith(' + JSON.stringify('/conversations/' + first) + ')'), 'created conversation');
     await text('No saved messages.');
     await evaluate(`(() => {
       const field = document.querySelector('textarea');
@@ -251,14 +288,25 @@ async function browserJourney({ account, idea, first, url, token, allowed, deliv
     pauseStatus = true;
     await press('Check Again');
     await text('Status observation paused.');
-    assert.equal(await evaluate('document.body.innerText.includes("Synthetic assistant")'), false);
+    assert.equal(await evaluate('document.body.innerText.includes(' + JSON.stringify(assistantText) + ')'), false);
     pauseStatus = false;
     await press('Check status');
     await text('Generation pending.');
     const accepted = nextGeneration;
+    await browserWait(() => observedStreams.has(accepted), 'browser SSE connection');
+    const eventUrl = url + '/generations/' + accepted + '/events';
+    const eventHeaders = { Authorization: 'Bearer ' + token, Accept: 'text/event-stream' };
+    const observe = () => fetch(eventUrl, { headers: eventHeaders, signal: AbortSignal.timeout(15_000) });
+    const live = await observe();
+    assert.equal(live.status, 200);
+    assert.match(live.headers.get('content-type'), /^text\/event-stream/);
     await delivered(accepted);
-    await text('Synthetic assistant');
-    await verifyUsage(accepted);
+    const frames = await live.text();
+    assert.match(frames, /event: generation\.status[^]*"status":"PENDING"[^]*event: generation\.completed/);
+    const reconnect = await observe();
+    assert.match(await reconnect.text(), /^event: generation\.completed/);
+    await text(assistantText);
+    await verifyUsage(accepted, first);
     assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
     let release, entered;
     const running = new Promise(resolve => { entered = resolve; });
@@ -267,23 +315,23 @@ async function browserJourney({ account, idea, first, url, token, allowed, deliv
     const replacement = await browserWait(() => nextGeneration !== accepted && nextGeneration, 'regeneration acceptance');
     void delivered(replacement).catch(error => { dispatchFailure = error; });
     await Promise.race([running, sleep(4000).then(() => { throw dispatchFailure ?? new Error('Replacement did not start'); })]);
-    assert.equal(await evaluate('document.body.innerText.includes("Synthetic assistant")'), true);
+    await text(assistantText);
     try {
       await press('Stop');
       await text('Cancellation requested.');
     } finally { release('Uncommitted replacement'); }
     await text('Generation cancelled.');
-    await text('Synthetic assistant');
+    await text(assistantText);
     assert.equal(await evaluate('document.body.innerText.includes("Uncommitted replacement")'), false);
     archived = true;
     await cdp('Page.reload');
     await text('Archived (read only)');
-    await text('Synthetic assistant');
+    await text(assistantText);
     assert.equal(await evaluate('Boolean(document.querySelector("textarea"))'), false);
     deny = true;
     await cdp('Page.reload');
     await text('This workspace item is unavailable.');
-    assert.equal(await evaluate('document.body.innerText.includes("Synthetic assistant")'), false);
+    assert.equal(await evaluate('document.body.innerText.includes(' + JSON.stringify(assistantText) + ')'), false);
   } finally {
     socket?.close();
     proxy?.closeAllConnections();
@@ -353,6 +401,8 @@ async function postgres(id, run, credentials) {
       if (!browserMode) {
         await admin.query((await readFile('apps/api/prisma/migrations/0002_p9_context/migration.sql')).toString());
         await admin.query((await readFile('apps/api/prisma/migrations/0003_p9_provider_receipt/migration.sql')).toString());
+        await admin.query((await readFile('apps/api/prisma/migrations/0004_m06_selected_context/migration.sql')).toString());
+        await admin.query((await readFile('apps/api/prisma/migrations/0005_m06_approved_memory/migration.sql')).toString());
         await admin.query(`CREATE ROLE fl_p9_context LOGIN NOINHERIT PASSWORD '${credentials.context}';
           CREATE ROLE fl_p9_context_verifier LOGIN NOINHERIT PASSWORD '${credentials.contextVerifier}';
           CREATE ROLE fl_p9_submit LOGIN NOINHERIT PASSWORD '${credentials.standaloneSubmit}';
@@ -368,6 +418,13 @@ async function postgres(id, run, credentials) {
           GRANT EXECUTE ON FUNCTION pg_catalog.pg_control_system() TO ${roles.api}`);
         await admin.query(`GRANT SELECT ("dispatchAuthorizedAt"), UPDATE ("leaseClaimant","deadlineAt")
           ON public."GenerationAttempt" TO ${roles.fixture}`);
+        await admin.query(`GRANT INSERT (provenance) ON public."MemoryRevision" TO ${roles.fixture};
+          GRANT INSERT (id,"ideaId","sourceMessageId","resultMemoryId",kind,candidate,status,"reviewedById","reviewedAt")
+            ON public."MemoryProposal" TO ${roles.fixture};
+          GRANT INSERT (id,"ideaId",origin,trust,finding,"sourceTitle","sourceLocator","retrievedAt",limitations)
+            ON public."EvidenceRecord" TO ${roles.fixture};
+          GRANT UPDATE (content) ON public."Message" TO ${roles.fixture};
+          GRANT EXECUTE ON FUNCTION p9_context.read_with_approved_memory(uuid,integer,integer) TO fl_p9_context`);
         await admin.query(`GRANT USAGE ON SCHEMA p9_context TO fl_p9_other_context;
           GRANT EXECUTE ON FUNCTION p9_context.read_attempt(uuid,integer,integer) TO fl_p9_other_context`);
       }
@@ -377,6 +434,12 @@ async function postgres(id, run, credentials) {
       throw error;
     }
     await admin.query(await readFile('tests/m05-local-generation-grants.sql', 'utf8'));
+    if (browserMode) await admin.query(`
+      GRANT SELECT (title,summary,version,"createdAt","updatedAt") ON "Idea" TO ${roles.api};
+      GRANT SELECT (title,"metadataVersion","proactiveResearch","createdAt","updatedAt"),
+        INSERT (id,"ideaId",title,status,"metadataVersion","proactiveResearch","nextSequence","createdAt","updatedAt")
+        ON "Conversation" TO ${roles.api};
+    `);
     if (!browserMode) await admin.query(await readFile('scripts/p9-local-runtime-grants.sql', 'utf8'));
     await admin.query(await readFile('tests/m05-t02-bootstrap.sql', 'utf8'));
     // Prove that the baseline and earlier test grants expose no context reader.
@@ -428,7 +491,7 @@ async function verify(pool, name, run) {
 }
 
 /** Exercise the new function through separate authenticated PostgreSQL logins. */
-async function verifyContextProjection(credentials, attempt, lease, epoch) {
+async function verifyContextProjection(credentials, attempt, lease, epoch, selectedOutput, approvedMemory) {
   const connect = (user, password) => new Pool({ host: '127.0.0.1', port: 55439, database, user, password, max: 1 });
   const reader = connect('fl_p9_context', credentials.context);
   const wrong = connect('fl_p9_other_context', credentials.context);
@@ -447,10 +510,18 @@ async function verifyContextProjection(credentials, attempt, lease, epoch) {
     assert.equal(await read(reader, attempt, lease, epoch + 1), null);
     const projection = await leasedContextReader(reader, async (id, claim, context) => {
       assert.deepEqual([id, claim, context], [attempt, lease, epoch]);
-    })({ id: attempt, contextEpoch: epoch }, { epoch: lease });
+    }, Boolean(approvedMemory))({ id: attempt, contextEpoch: epoch }, { epoch: lease });
     assert.ok(projection?.current.text);
-    assert.deepEqual(projection.memory, []);
+    assert.deepEqual(projection.memory.map(item => item.id), approvedMemory ? [approvedMemory] : []);
+    if (approvedMemory) {
+      const { rows: [stored] } = await issuer.query(`SELECT "orchestrationMetadata"->'memoryLineage' AS lineage
+        FROM public."GenerationAttempt" WHERE id=$1`, [attempt]);
+      assert.equal(stored.lineage.length, 1);
+      assert.deepEqual(Object.keys(stored.lineage[0]).sort(), ['memoryId', 'proposalId', 'revisionId', 'sourceMessageId', 'version']);
+      assert.equal(stored.lineage[0].memoryId, approvedMemory);
+    }
     assert.ok(projection.previous.length <= 3);
+    if (selectedOutput) assert.deepEqual(projection.previous.map(turn => turn.assistant?.id), [selectedOutput]);
     assert.equal(await read(reader), null);
     await issuer.query(`INSERT INTO p9_context.context_grant VALUES ($1,$2,$3,clock_timestamp()-interval '1 second')`,
       [attempt, lease, epoch]);
@@ -557,7 +628,10 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, submissionPris
   if (trustedAdmission) app.use('/api/v1', (req, res, next) => useTrusted ? trustedAdmission(req, res, next) : next());
   app.use('/api/v1', submissionRoutes(createSubmissionService(createSubmissionRepository(prisma), apiAuthority,
     { clock: () => new Date(), policy, cursorSecret: randomBytes(32) }), authenticate));
-  app.use('/api/v1', generationRoutes(createGenerationService(createGenerationRepository(prisma, policy), apiAuthority), authenticate));
+  app.use('/api/v1', generationRoutes(createGenerationService(createGenerationRepository(prisma, policy), apiAuthority), authenticate,
+    { events: true }));
+  if (browserMode) app.use('/api/v1', localConversationRoutes(localConversationOperations(prisma, apiAuthority, randomBytes(32),
+    { read: async () => Date.now() + 10_000, create: async () => Date.now() + 10_000 }), authenticate));
   const server = app.listen(0, '127.0.0.1');
   startServer(server);
   await once(server, 'listening');
@@ -593,10 +667,10 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, submissionPris
   }, id => allowed.has(id), undefined, Date.now, async (context, signal) => {
     executions++;
     lastContext = context;
-    if (!browserMode && executions === 1) return (await founderProvider.generate(founderPrompt(context), signal)).text;
+    if (executions === 1) return (await founderProvider.generate(founderPrompt(context), signal)).text;
     return fake ? fake() : syntheticContextResponse(context);
   });
-  const consumer = generationConsumer(redisUrl, prefix, worker, true);
+  const consumer = generationConsumer(redisUrl, prefix, worker, Number(redisUrl.port));
   startConsumer(consumer);
   await consumer.waitUntilReady();
 
@@ -604,7 +678,7 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, submissionPris
     const { id: eventId } = await outbox(id);
     allowed.add(id);
     const repository = outboxRepository(pools.dispatch, [eventId]);
-    const pump = dispatcher(repository, generationQueue(redisUrl, prefix, undefined, true),
+    const pump = dispatcher(repository, generationQueue(redisUrl, prefix, undefined, Number(redisUrl.port)),
       async (scope, query) => dispatchDenied ? null : evidence(scope, query), () => {});
     try { await pump.poll(); } finally { await pump.close(); }
     return eventId;
@@ -625,13 +699,13 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, submissionPris
   }
 
   if (browserMode) {
-    return browserJourney({ account, idea, first, url, token: fixtureToken, allowed, delivered,
+    return browserJourney({ account, idea, url, token: fixtureToken, allowed, delivered,
       setFake: next => { fake = next; },
-      async verifyUsage(id) {
+      async verifyUsage(id, conversationId) {
         const completed = await status(id);
         assert.ok(completed.selected && completed.outputMessageId);
         assert.deepEqual(await ledger(id), { reservationState: 'SETTLED', measuredUnits: '1.00000' });
-        assert.equal((await fixture.query('SELECT id FROM "Message" WHERE "conversationId"=$1', [first])).rowCount, 2);
+        assert.equal((await fixture.query('SELECT id FROM "Message" WHERE "conversationId"=$1', [conversationId])).rowCount, 2);
       } });
   }
 
@@ -877,6 +951,51 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, submissionPris
   assert.deepEqual(initialTranscript.map(item => item.role), ['USER', 'ASSISTANT']);
   assert.equal(initialTranscript[0].content, body.content);
   assert.match(initialTranscript[1].content, /Identify the assumption.*pass threshold/);
+  if (trusted) {
+    const structured = await request(convo(first) + '/messages?assistantResponseVersion=2', 200);
+    assert.deepEqual(structured.items[0], initialTranscript[0]);
+    assert.equal(initialTranscript[1].assistantContent, undefined);
+    assert.deepEqual(structured.items[1], { ...initialTranscript[1], assistantContent: {
+      schemaVersion: 1, primaryStrategy: 'CHALLENGE', nextQuestion: 'What result would disprove this assumption?',
+      citationRefs: [], proposalIds: [], actions: []
+    } });
+    const claimText = 'The fixture recorded three trials.', qualification = 'Synthetic sample only.';
+    const unrelatedIdea = randomUUID();
+    await fixture.query('INSERT INTO "Idea" (id,"ownerId",title,"updatedAt") VALUES ($1,$2,$3,now())',
+      [unrelatedIdea, account, 'Separate citation fixture']);
+    const seedEvidence = async (ideaId, trust) => {
+      const id = randomUUID();
+      await fixture.query(`INSERT INTO "EvidenceRecord"
+      (id,"ideaId",origin,trust,finding,"sourceTitle","sourceLocator","retrievedAt",limitations)
+      VALUES ($1,$2,'EXTERNAL_SOURCE',$3,$4,'Fixture source','https://example.invalid/evidence',now(),$5)`,
+      [id, ideaId, trust, claimText, qualification]);
+      return id;
+    };
+    const evidenceId = await seedEvidence(idea, 'SOURCE_CHECKED');
+    const unrelatedEvidence = await seedEvidence(unrelatedIdea, 'SOURCE_CHECKED');
+    const staleEvidence = await seedEvidence(idea, 'STALE');
+    const reply = structured.items[1];
+    const original = { text: reply.content, assistantContent: reply.assistantContent };
+    const setCitation = citationRefs => fixture.query('UPDATE "Message" SET content=$2 WHERE id=$1',
+      [reply.id, { ...original, assistantContent: { ...reply.assistantContent, citationRefs } }]);
+    const citedHistory = createSubmissionService(createSubmissionRepository(submissionPrisma, true),
+      trusted.ledger.authority, { clock: () => new Date(), cursorSecret: randomBytes(32) });
+    const citation = { evidenceId, claimText, qualification };
+    try {
+      await setCitation([citation]);
+      const accepted = await citedHistory.history(principal, first, { assistantResponseVersion: '2' });
+      assert.deepEqual(accepted.items.at(-1).assistantContent.citationRefs, [citation]);
+      for (const unsupported of [{ ...citation, claimText: 'The fixture proved market demand.' },
+        { ...citation, evidenceId: unrelatedEvidence }, { ...citation, evidenceId: staleEvidence },
+        { ...citation, qualification: undefined }]) {
+        await setCitation([unsupported]);
+        await assert.rejects(citedHistory.history(principal, first, { assistantResponseVersion: '2' }),
+          error => error.failure('fixture').body.error.code === 'PROJECTION_UNAVAILABLE');
+      }
+    } finally {
+      await fixture.query('UPDATE "Message" SET content=$2 WHERE id=$1', [reply.id, original]);
+    }
+  }
 
   fake = async () => 'Regenerated synthetic assistant';
   const regenKey = randomUUID();
@@ -890,18 +1009,22 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, submissionPris
   assert.equal((await status(id)).selected, false);
   assert.equal((await history(first)).items.at(-1).content, 'Regenerated synthetic assistant');
 
-  async function seedMemory(ideaId, message, state = 'ACTIVE', actor = account) {
+  async function seedMemory(ideaId, message, state = 'ACTIVE', actor = account, sourceMessage) {
     const memory = randomUUID(), content = { text: message };
+    const proposal = sourceMessage ? randomUUID() : undefined;
     await fixture.query(`INSERT INTO "ConfirmedMemory" (id,"ideaId",kind,"currentContent",status,"updatedAt")
       VALUES ($1,$2,'FACT',$3,$4,now())`, [memory, ideaId, content, state]);
-    await fixture.query(`INSERT INTO "MemoryRevision" (id,"memoryId",version,content,"actorId")
-      VALUES ($1,$2,1,$3,$4)`, [randomUUID(), memory, content, actor]);
+    if (proposal) await fixture.query(`INSERT INTO "MemoryProposal"
+      (id,"ideaId","sourceMessageId","resultMemoryId",kind,candidate,status,"reviewedById","reviewedAt")
+      VALUES ($1,$2,$3,$4,'FACT',$5,'ACCEPTED',$6,now())`, [proposal, ideaId, sourceMessage, memory, content, actor]);
+    await fixture.query(`INSERT INTO "MemoryRevision" (id,"memoryId",version,content,"actorId",provenance)
+      VALUES ($1,$2,1,$3,$4,$5)`, [randomUUID(), memory, content, actor, proposal ? { proposalId: proposal } : {}]);
     return memory;
   }
   const otherIdea = randomUUID();
   await fixture.query('INSERT INTO "Idea" (id,"ownerId",title,"updatedAt") VALUES ($1,$2,$3,now())',
     [otherIdea, account, 'Other synthetic idea']);
-  const reviewed = await seedMemory(idea, 'Reviewed channel is referrals');
+  const reviewed = await seedMemory(idea, 'Reviewed channel is referrals', 'ACTIVE', account, admitted.messageId);
   await seedMemory(otherIdea, 'Other idea confidential marker');
   const foreign = randomUUID(), foreignIdea = randomUUID();
   await fixture.query('INSERT INTO "UserAccount" (id,"clerkSubject","clerkInstanceId","subjectKey","updatedAt") VALUES ($1,$2,$3,$4,now())',
@@ -911,10 +1034,26 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, submissionPris
   await seedMemory(foreignIdea, 'Foreign account confidential marker', 'ACTIVE', foreign);
   await fixture.query(`INSERT INTO "MemoryProposal" (id,"ideaId",kind,candidate)
     VALUES ($1,$2,'FACT',$3)`, [randomUUID(), idea, { text: 'Pending confidential marker' }]);
-  fake = undefined;
+  let contextReady, finishFollowUp;
+  const followUpContext = new Promise(resolve => { contextReady = resolve; });
+  const followUpGate = new Promise(resolve => { finishFollowUp = resolve; });
+  fake = async () => {
+    contextReady();
+    await followUpGate;
+    return syntheticContextResponse(lastContext);
+  };
   const followUp = await submit(first, 202, randomUUID(),
     { clientSubmissionId: randomUUID(), content: correctionMessage });
   await delivered(followUp.generationId);
+  try {
+    await Promise.race([followUpContext, sleep(4000).then(() => { throw new Error('Follow-up did not enter the worker'); })]);
+    const active = await work.scope(followUp.generationId);
+    const { rows: [{ leaseEpoch }] } = await fixture.query('SELECT "leaseEpoch" FROM "GenerationAttempt" WHERE id=$1', [active.id]);
+    await verifyContextProjection(credentials, active.id, leaseEpoch, active.contextEpoch, replacement.outputMessageId, reviewed);
+  } finally {
+    finishFollowUp();
+    fake = undefined;
+  }
   await terminal(followUp.generationId, 'COMPLETED');
   assert.equal(lastContext.current.id, followUp.messageId);
   assert.equal(lastContext.current.text.length, 1200);
@@ -1116,6 +1255,22 @@ test('isolated HTTP submission through outbox, BullMQ and the fake generation wo
     await until(() => redis.ping().catch(() => false));
     assert.equal((await redis.info('keyspace')).trim(), '# Keyspace');
     assert.equal((await redis.client('LIST')).trim().split('\n').length, 1);
+    const connectQuotaClient = () => new Redis(redisUrl.href, { maxRetriesPerRequest: 0, connectTimeout: 1000 });
+    let quotaClient = connectQuotaClient();
+    try {
+      const organization = randomBytes(32).toString('hex');
+      const policy = { inputTokens: 1800, completionTokens: 1200,
+        limits: { rpm: 10, rpd: 40, tpm: 3000, tpd: 3000 } };
+      const attempts = await Promise.allSettled([redis, quotaClient].map(client => groqFreeQuota(client, organization, policy).reserve()));
+      const accepted = attempts.filter(attempt => attempt.status === 'fulfilled');
+      assert.equal(accepted.length, 1);
+      await accepted[0].value(); // Unknown usage keeps the full reservation.
+      quotaClient.disconnect();
+      quotaClient = connectQuotaClient();
+      // Simulate lease expiry without advancing the usage window.
+      await redis.del(`founders-lens:groq-free:{${organization}}:active`);
+      await assert.rejects(groqFreeQuota(quotaClient, organization, policy).reserve(), /quota is currently unavailable/);
+    } finally { quotaClient.disconnect(); }
     const liveBroker = (await redis.info('server')).match(/^run_id:(\w+)/m)?.[1];
     assert.ok(liveBroker);
     queue = new Queue('generation', { prefix, connection: createIORedisClient(redis) });

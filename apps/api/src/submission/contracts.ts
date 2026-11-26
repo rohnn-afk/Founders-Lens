@@ -51,6 +51,20 @@ export const messageDto = z.strictObject({
   role: z.enum(['USER', 'ASSISTANT']), content: z.string(), createdAt: z.iso.datetime()
 });
 export const storedMessageText = z.object({ text: z.string() });
+export const assistantCitation = z.strictObject({
+  claimText: z.string().min(1).max(1000), evidenceId: uuid, qualification: z.string().min(1).max(1000).optional()
+});
+export const assistantContent = z.strictObject({
+  schemaVersion: z.literal(1), primaryStrategy: z.enum(['EXPLORE', 'CHALLENGE', 'INFORM', 'COMPARE', 'ACT', 'REFLECT']),
+  citationRefs: z.array(assistantCitation).max(20), proposalIds: z.tuple([]), actions: z.tuple([]),
+  card: z.strictObject({ type: z.literal('experiment'), hypothesis: z.string().min(1).max(2000),
+    plan: z.string().min(1).max(3000), successSignals: z.array(z.string().min(1).max(1000)).min(1).max(6),
+    timebox: z.string().min(1).max(200) }).optional(),
+  nextQuestion: z.string().min(1).max(2000).optional()
+});
+export const structuredMessageDto = z.union([messageDto,
+  messageDto.extend({ role: z.literal('ASSISTANT'), assistantContent })]);
+export const storedStructuredMessage = storedMessageText.strict().extend({ assistantContent });
 
 // The signature binds the logical turn position to this owner, parent and
 // query. A cursor copied from another conversation cannot move this read.
@@ -86,6 +100,7 @@ const failures = {
   GENERATION_IN_PROGRESS: [409, 'A generation is already in progress.'],
   PAYLOAD_TOO_LARGE: [413, 'The request body is too large.'],
   UNSUPPORTED_MEDIA_TYPE: [415, 'The request must contain JSON.'],
+  NOT_ACCEPTABLE: [406, 'Accept must allow an event stream.'],
   QUOTA_EXCEEDED: [429, 'The submission quota is exhausted.'],
   NOT_FOUND: [404, 'The requested resource was not found.'],
   PROJECTION_UNAVAILABLE: [503, 'The workspace request could not be completed.']

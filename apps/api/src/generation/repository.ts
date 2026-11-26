@@ -128,9 +128,9 @@ export function createGenerationRepository(client: PrismaClient, policy: Policy)
           select: { id: true, ideaId: true, idea: { select: { id: true, ownerId: true, status: true } } } });
       } catch { throw unavailable(); }
     },
-    status(principal, scope, id, requireFresh) {
+    status(principal, scope, id, requireFresh, activeOnly = false) {
       return transaction(async tx => {
-        await lockScope(tx, principal, scope, false);
+        await lockScope(tx, principal, scope, activeOnly);
         requireFresh?.();
         return project(await attempt(tx, scope, id, false));
       });

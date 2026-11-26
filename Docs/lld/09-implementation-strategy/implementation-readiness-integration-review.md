@@ -54,6 +54,52 @@ flowchart TD
 
 This is an **overall sequencing outline**, not a claim that security begins at M10. The P5-AM01 fail-closed access boundary, authorization and no-paid-call policy must be present from the earliest applicable implementation tasks. The complete independent restore fault proof is M10 and remains a release blocker until actually executed.
 
+## Local implementation acceptance — 2026-11-26
+
+**P6 closed for the local authenticated workspace.** The designated Clerk
+account created and edited an idea, created a conversation, submitted a message,
+and reloaded its committed history. The local database and worker verified
+transactional submission, a published outbox event, BullMQ processing, and a
+selected assistant reply. The authenticated browser observed
+`generation.completed` for attempt `862ed3f9-f59d-4019-82ff-2630013998e9`
+and output message `1ca29a8a-abd5-46e2-8e0e-a4e1758e108f`. Disposable
+integration tests cover retry, duplicate submission, ownership denial, SSE
+reconnect, and worker recovery.
+
+**M06 is in progress.** The offline workspace has verified live SSE, bounded
+conversation context, and a persisted v2 assistant projection with a strategy
+and follow-up question. The local follow-up implementation adds contextual
+offline text and an optional experiment card. The designated browser confirmed
+the card survived reload. Attempt `be060c0e-8504-4948-a1eb-880fc67943d1`
+committed selected v2 output `ac5a48e4-cd0e-4d18-b24a-6201c190094b` with
+`REFLECT` strategy, one published event and one settled offline receipt.
+The local context reader includes
+only the selected earlier answer in the same conversation, idea and context
+epoch. Revised or removed memory closes the historical context window until
+lineage-aware revalidation is available. Version 1 remains text-only.
+The offline memory reader records bounded revision and approval provenance under
+the same one-use lease grant. The offline transcript validates stored
+references against same-idea source-checked evidence and exact support.
+The local synthetic Groq Free mode adds bounded context, structured response
+validation and shared Redis quotas. The twelve-case dry run and mocked provider
+checks passed. Live quality evaluation still requires confirmation of the key's
+organization plan, limits and data controls. Evidence creation, provider citation
+finalization and the founder-facing memory approval journey remain open.
+
+The stabilization and remediation runs verified all four builds, 286 default
+test passes and separate disposable PostgreSQL, Redis, authority and browser
+suites. The Redis quota test covers independent clients and retention after
+reconnect. Linux application and secret checks passed on PR #13 after the
+migration checksum and scanner corrections. Idea Management PR #11 merged to
+staging at `c40ace6601ce7b3c9b78497e27b0c10855f79595` after its exact runtime
+equivalence was approved. Conversation Management PR #12 also passed its
+required checks and merged to staging at
+`536a61a939b271decdf500228860d00a37300ba6`. PR #13 brings the accepted local
+offline journey and synthetic Groq evaluation tooling into the staging source
+tree. Deployment remains read-only. The exact staging image equivalence entries
+for this stack expire on 2026-12-25 at 12:32:47 UTC. Hosted workspace writes and
+live Groq evaluation retain separate activation requirements.
+
 ## 4. Milestone dependency and authority audit
 
 | Milestone | Dependency / founder result | Phase 7C task coverage | Mandatory proof emphasis | Gate / exception |
