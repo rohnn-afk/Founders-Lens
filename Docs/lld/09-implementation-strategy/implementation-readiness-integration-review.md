@@ -115,6 +115,18 @@ and persisted v2 messages. A separate disposable browser and worker run passed
 on this baseline. These checks do not record a new manual Clerk walkthrough or
 live Groq quality results.
 
+The subsequent local Groq browser run used the designated Clerk account and a
+synthetic-only, purpose-scoped allowance. Attempt
+`98a733dd-8624-4c43-a946-7d5959b0c912` completed after one worker execution,
+settled 853 provider tokens and selected v2 message
+`439ced41-3421-4d55-a4ba-3651c7f26f82`. The founder confirmed the same reply
+after reload. Disposable tests passed SSE disconnect, terminal reconnect and
+transcript reconciliation. The direct signed-in browser SSE reconnect check
+against that committed attempt remains pending. PR #14 consolidates the local
+corrections. Retain 20B low for ordinary synthetic evaluation and 120B low for
+targeted comparison. Hosted writes require the separately approved
+account-scoped procedure in the deployment guide.
+
 ## 4. Milestone dependency and authority audit
 
 | Milestone | Dependency / founder result | Phase 7C task coverage | Mandatory proof emphasis | Gate / exception |
