@@ -47,7 +47,7 @@ test('Groq Free reserves before a strict request and settles usage even for reje
     assert.equal(body.response_format.json_schema.strict, true);
     assert.equal(body.stream, false);
     assert.equal(body.max_completion_tokens, 1200);
-    assert.match(body.messages[0].content, /Preserve supplied facts, numbers and timeframes/);
+    assert.match(body.messages[0].content, /relevant supplied facts, numbers and timeframes/);
     assert.match(body.messages[0].content, /even when declining/i);
     if (mode === 'limited') return new Response(null, { status: 429, headers: { 'Retry-After': '7' } });
     const content = JSON.stringify({ text: 'Test a commitment.', strategy: 'CHALLENGE', question: 'What counts as a commitment?',

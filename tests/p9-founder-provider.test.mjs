@@ -230,7 +230,7 @@ test('metered Gemini replies can be billed even when no complete answer can be p
 
 test('the synthetic evaluation prompts are repeatable and ready for manual scoring', async () => {
   const cases = JSON.parse(await readFile(new URL('./fixtures/p9-founder-evaluation.json', import.meta.url), 'utf8'));
-  assert.equal(cases.length, 13);
+  assert.equal(cases.length, 15);
   assert.equal(new Set(cases.map(item => item.id)).size, cases.length);
   assert.match(founderInstructions, /Never invent findings/);
   const fake = deterministicFounderProvider();
