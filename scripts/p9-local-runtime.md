@@ -135,6 +135,11 @@ text, strategy and question schema, excludes reasoning, and disables streaming
 and tools. For authenticated synthetic workspace development, run
 `node scripts/p9-offline-acceptance.mjs groq-free <owned-conversation-id>`.
 The API and worker accept only the checked-in synthetic prompts for this mode.
+The browser profile allows one metered admission per designated local account
+under `groq_free_evaluation`. Previous offline admissions stay in the ordinary
+generation ledger. The same evaluation allowance applies after a restart and
+across conversations. The shared organization quota still applies to both
+the browser worker and standalone evaluator.
 The worker forwards only allowlisted recent founder turns. It excludes prior
 assistant text, memory and evidence from external requests. Keep using the
 `development` mode for offline conversations and private context.

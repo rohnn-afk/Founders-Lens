@@ -1194,6 +1194,40 @@ async function exercise({ pools, redisUrl, prefix, queue, prisma, submissionPris
   assert.equal(uncertainInvocations, 1);
   assert.equal((await ledger(unknown)).reservationState, 'RESERVED');
   assert.equal((await submit(first, 429)).error.code, 'QUOTA_EXCEEDED');
+
+  if (trusted) {
+    const evaluation = randomUUID();
+    await fixture.query('INSERT INTO "Conversation" (id,"ideaId","updatedAt") VALUES ($1,$2,now())', [evaluation, idea]);
+    const evaluationPolicy = localGenerationPolicy({ model: groqSettings.model, priceVersion: groqSettings.priceVersion,
+      maximumMicrosPerMillionTokens: groqSettings.maximumMicrosPerMillionTokens,
+      budgetMicros: groqSettings.budgetMicros, tokenBudget: groqSettings.tokenBudget,
+      requestsPerMinute: '1', maximumAdmissions: '1', accountId: account, conversationId: evaluation }, true, true).policy;
+    const evaluationService = createSubmissionService(createSubmissionRepository(submissionPrisma), trusted.ledger.authority, {
+      clock: () => new Date(), policy: evaluationPolicy, executionAdmission: trusted.decision('submit')
+    });
+    const accept = () => evaluationService.submit(principal, evaluation, randomUUID(),
+      { clientSubmissionId: randomUUID(), content: 'Synthetic evaluation only' });
+    const { generationId } = await accept();
+    const pool = new Pool({ connectionString: `postgresql://fl_p9_worker:${credentials.standaloneWorker}@127.0.0.1:55439/${database}` });
+    try {
+      const prior = await pool.query(`SELECT 1 FROM "UsageLedger" u JOIN "GenerationAttempt" g ON g.id=u."reservationId"
+        WHERE u."accountId"=$1 AND u."operationType"='generation' AND g."dispatchAuthorizedAt" IS NOT NULL LIMIT 1`, [account]);
+      assert.equal(prior.rowCount, 1);
+      const repo = generationRepository(pool, { singleInvocation: true, bindClaimant: true, metered: true,
+        operationType: evaluationPolicy.operationType, oneInvocationReservation: evaluationPolicy.reservationUnits });
+      const scope = await repo.scope(generationId);
+      const deadline = Date.now() + 4000;
+      const lease = await repo.claim(scope, false, deadline);
+      assert.ok(lease);
+      assert.equal(await repo.markInvocation(scope, lease.epoch, deadline), true);
+      assert.equal(await repo.markInvocation(scope, lease.epoch, deadline), false);
+      assert.equal(await repo.recordUsage(scope, lease.epoch, { text: 'Synthetic result', responseId: null,
+        usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 } }), true);
+      assert.equal(await repo.finish(scope, lease.epoch, { id: randomUUID(), text: 'Synthetic result' }, deadline), true);
+      assert.deepEqual(await ledger(generationId), { reservationState: 'SETTLED', measuredUnits: '150.00000' });
+      await assert.rejects(accept, { code: 'QUOTA_EXCEEDED' });
+    } finally { await pool.end(); }
+  }
 }
 
 test('isolated HTTP submission through outbox, BullMQ and the fake generation worker', {

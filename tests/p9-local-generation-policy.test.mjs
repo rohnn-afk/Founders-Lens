@@ -75,6 +75,14 @@ test('Groq uses a distinct reservation and reviewed tariff; invalid model select
     maximumMicrosPerMillionTokens: '300000', budgetMicros: '1575', tokenBudget: '5248' };
   assert.equal(localGenerationPolicy(groq).policy.reservationUnits, 5248);
   assert.equal(localGenerationPolicy(groq).policy.quotaUnits, 5248);
+  assert.equal(localGenerationPolicy(groq).policy.operationType, 'generation');
+  const contextualGroq = { ...groq };
+  delete contextualGroq.syntheticTextSha256;
+  const evaluation = localGenerationPolicy({ ...contextualGroq, maximumAdmissions: '1' }, true, true).policy;
+  assert.equal(evaluation.operationType, 'groq_free_evaluation');
+  assert.equal(evaluation.maximumAdmissions, 1);
+  assert.throws(() => localGenerationPolicy(groq, false, true));
+  assert.throws(() => localGenerationPolicy(config, true, true));
   for (const change of [{ budgetMicros: '1574' }, { tokenBudget: '4480' },
     { maximumMicrosPerMillionTokens: '299999' }, { priceVersion: config.priceVersion }]) {
     assert.throws(() => localGenerationPolicy({ ...groq, ...change }));

@@ -44,14 +44,14 @@ async function knownUsage(tx: PoolClient, scope: Scope) {
   return row?.receipt?.measuredUnits === 1 ? row.receipt : undefined;
 }
 
-async function settle(tx: PoolClient, scope: Scope, usage: 'SETTLED' | 'RELEASED' | 'UNKNOWN',
+async function settle(operationType: string, tx: PoolClient, scope: Scope, usage: 'SETTLED' | 'RELEASED' | 'UNKNOWN',
   measured = 1, metered = false) {
   // A crash after the invocation marker can leave usage uncertain. Keep the
   // reservation open in that case, so quota is not accidentally restored.
   const { rows: [reservation] } = await tx.query<{ reservationState: string; reservedUnits: string; measuredUnits: string }>(
     `SELECT "reservationState","reservedUnits","measuredUnits" FROM "UsageLedger"
       WHERE "accountId"=$1 AND "reservationId"=$2
-        AND (NOT $3::boolean OR ("operationType"='generation' AND unit='tokens')) FOR UPDATE`, [scope.accountId, scope.id, metered]);
+        AND (NOT $3::boolean OR ("operationType"=$4 AND unit='tokens')) FOR UPDATE`, [scope.accountId, scope.id, metered, operationType]);
   if (usage === 'SETTLED' && reservation?.reservationState === 'SETTLED' &&
     (metered || Number(reservation.reservedUnits) === 1) && Number(reservation.measuredUnits) === measured) return;
   if (!reservation || reservation.reservationState !== 'RESERVED' ||
@@ -67,9 +67,9 @@ async function settle(tx: PoolClient, scope: Scope, usage: 'SETTLED' | 'RELEASED
 }
 
 /** Use single invocation for a run that cannot safely repeat an external side effect. */
-export function generationRepository(pool: Pool, { singleInvocation = false, bindClaimant = false, metered = false,
+export function generationRepository(pool: Pool, { singleInvocation = false, bindClaimant = false, metered = false, operationType = 'generation',
   oneInvocationReservation }: { singleInvocation?: boolean; bindClaimant?: boolean; metered?: boolean;
-    oneInvocationReservation?: number } = {}) {
+    operationType?: 'generation' | 'groq_free_evaluation'; oneInvocationReservation?: number } = {}) {
   if (metered && (!singleInvocation || !bindClaimant)) throw new Error('Metering requires a single claimant invocation');
   if (oneInvocationReservation !== undefined && (!metered || !Number.isSafeInteger(oneInvocationReservation) ||
     oneInvocationReservation < 1)) throw new Error('Invalid single-invocation budget');
@@ -112,7 +112,7 @@ export function generationRepository(pool: Pool, { singleInvocation = false, bin
         if (!state.expired || state.live || !['PENDING', 'RUNNING', 'CANCEL_REQUESTED'].includes(state.status)) return;
         const receipt = await usageFor(tx, scope);
         if (receipt && !state.started) throw new Error('Inconsistent invocation receipt');
-        await settle(tx, scope, receipt ? 'SETTLED' : state.started ? 'UNKNOWN' : 'RELEASED', measuredUnits(receipt), true);
+        await settle(operationType, tx, scope, receipt ? 'SETTLED' : state.started ? 'UNKNOWN' : 'RELEASED', measuredUnits(receipt), true);
         await tx.query(`UPDATE public."GenerationAttempt" SET status='FAILED',"completedAt"=clock_timestamp(),
           "leaseEpoch"="leaseEpoch"+1,"leaseUntil"=NULL,"errorCode"=$2 WHERE id=$1`,
         [id, state.started && !receipt ? 'PROVIDER_OUTCOME_UNKNOWN' : 'GENERATION_EXHAUSTED']);
@@ -134,7 +134,7 @@ export function generationRepository(pool: Pool, { singleInvocation = false, bin
           const receipt = recover && ['FAILED', 'CANCELLED'].includes(state.status)
             ? await usageFor(tx, scope) : undefined;
           if (receipt && await clearanceCurrent(tx, clearanceExpiry)) {
-            await settle(tx, scope, 'SETTLED', measuredUnits(receipt), metered);
+            await settle(operationType, tx, scope, 'SETTLED', measuredUnits(receipt), metered);
             if (!await clearanceCurrent(tx, clearanceExpiry)) throw new Error('Generation clearance expired');
           }
           return;
@@ -147,7 +147,7 @@ export function generationRepository(pool: Pool, { singleInvocation = false, bin
         // recovery does not invoke again merely to reconstruct that response.
         if (receipt || (singleInvocation && state.started) || cancelled || !state.remainingMs || state.executionAttempts >= claims ||
           (state.status === 'RUNNING' && state.contextEpoch !== scope.contextEpoch)) {
-          await settle(tx, scope, receipt ? 'SETTLED' : state.started ? 'UNKNOWN' : 'RELEASED', measuredUnits(receipt), metered);
+          await settle(operationType, tx, scope, receipt ? 'SETTLED' : state.started ? 'UNKNOWN' : 'RELEASED', measuredUnits(receipt), metered);
           const result = await tx.query(`UPDATE "GenerationAttempt" SET status=$2::"GenerationStatus","completedAt"=clock_timestamp(),
             "leaseEpoch"="leaseEpoch"+1,"leaseUntil"=NULL,"errorCode"=$3 WHERE id=$1
             AND clock_timestamp()<to_timestamp($4::double precision/1000)`,
@@ -178,7 +178,7 @@ export function generationRepository(pool: Pool, { singleInvocation = false, bin
             WHERE id=$1 AND "leaseClaimant"=session_user::text AND "leaseEpoch"=$2
               AND "dispatchAuthorizedAt" IS NOT NULL AND "leaseUntil">clock_timestamp()`, [scope.id, epoch]);
           if (!claimant.rowCount || !observation?.usage || !await recordObservation(tx, scope.id, epoch, observation)) return false;
-          await settle(tx, scope, 'SETTLED', observation.usage.totalTokens, true);
+          await settle(operationType, tx, scope, 'SETTLED', observation.usage.totalTokens, true);
           return true;
         }
         const { rows: [row] } = await tx.query<{ recorded: boolean }>(
@@ -195,13 +195,15 @@ export function generationRepository(pool: Pool, { singleInvocation = false, bin
         if (oneInvocationReservation !== undefined) {
           const { rows: [budget] } = await tx.query<{ permitted: boolean }>(`SELECT EXISTS (
             SELECT 1 FROM public."UsageLedger" WHERE "reservationId"=$1 AND "accountId"=$2
-              AND unit='tokens' AND "operationType"='generation' AND "reservationState"='RESERVED'
+              AND unit='tokens' AND "operationType"=$4 AND "reservationState"='RESERVED'
               AND "reservedUnits"=$3 AND "measuredUnits"=0
           ) AND NOT EXISTS (
             SELECT 1 FROM public."GenerationAttempt" g JOIN public."Conversation" c ON c.id=g."conversationId"
             JOIN public."Idea" i ON i.id=c."ideaId"
             WHERE i."ownerId"=$2 AND g."dispatchAuthorizedAt" IS NOT NULL
-          ) AS permitted`, [scope.id, scope.accountId, oneInvocationReservation]);
+              AND ($4='generation' OR EXISTS (SELECT 1 FROM public."UsageLedger" u
+                WHERE u."reservationId"=g.id AND u."accountId"=$2 AND u."operationType"=$4 AND u.unit='tokens'))
+          ) AS permitted`, [scope.id, scope.accountId, oneInvocationReservation, operationType]);
           if (budget?.permitted !== true) return false;
         }
         const result = await tx.query(`UPDATE "GenerationAttempt" SET "dispatchAuthorizedAt"=clock_timestamp()
@@ -251,7 +253,7 @@ export function generationRepository(pool: Pool, { singleInvocation = false, bin
           await tx.query(`UPDATE "GenerationAttempt" SET "selectedAt"=NULL
             WHERE "triggerMessageId"=$1 AND "conversationId"=$2 AND "selectedAt" IS NOT NULL`, [scope.triggerMessageId,scope.conversationId]);
         }
-        await settle(tx, scope, receipt ? 'SETTLED' : state.started ? 'UNKNOWN' : 'RELEASED', measuredUnits(receipt), metered);
+        await settle(operationType, tx, scope, receipt ? 'SETTLED' : state.started ? 'UNKNOWN' : 'RELEASED', measuredUnits(receipt), metered);
         const status = cancelled ? 'CANCELLED' : completion ? 'COMPLETED' : 'FAILED';
         const result = await tx.query(`UPDATE "GenerationAttempt" SET status=$2::"GenerationStatus","completedAt"=clock_timestamp(),
           "selectedAt"=CASE WHEN $2::"GenerationStatus"='COMPLETED' THEN clock_timestamp() END,

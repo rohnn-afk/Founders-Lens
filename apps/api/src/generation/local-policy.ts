@@ -36,8 +36,11 @@ export function localGenerationModel(env: NodeJS.ProcessEnv) {
 /** Count released, settled and unresolved admission rows toward the invocation cap.
  * A dedicated synthetic account's budget stays consumed across runtime restarts.
  */
-export function localGenerationPolicy(input: unknown, contextualOffline = false) {
+export function localGenerationPolicy(input: unknown, contextualOffline = false, groqFree = false) {
   const options = contextualOffline ? config.omit({ syntheticTextSha256: true }).parse(input) : config.parse(input);
+  if (groqFree && (!contextualOffline || options.model !== 'openai/gpt-oss-20b')) {
+    throw new Error('Invalid Groq Free admission scope');
+  }
   const { reservation, maximumRateFloor } = modelBudgets[options.model];
   if (options.maximumMicrosPerMillionTokens < maximumRateFloor ||
     (options.model === 'openai/gpt-oss-20b' && options.priceVersion !== 'v1:groq-gpt-oss-20b')) {
@@ -49,7 +52,8 @@ export function localGenerationPolicy(input: unknown, contextualOffline = false)
   const quotaUnits = Number(equivalentTokens < BigInt(options.tokenBudget) ? equivalentTokens : BigInt(options.tokenBudget));
   if (quotaUnits < reservation || quotaUnits > 99_999_999_999) throw new Error('Invalid local generation budget');
   return {
-    policy: { unit: 'tokens', operationType: 'generation', quotaUnits, reservationUnits: reservation,
+    policy: { unit: 'tokens', operationType: groqFree ? 'groq_free_evaluation' as const : 'generation' as const,
+      quotaUnits, reservationUnits: reservation,
       requestsPerMinute: options.requestsPerMinute, maximumAdmissions: options.maximumAdmissions,
       currentTurnBytes: 1200, deadlineMs: 60_000, receiptTtlMs: 300_000 },
     /** Bind admission to the operator-approved exact synthetic text and owned conversation. */

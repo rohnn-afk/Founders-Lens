@@ -79,8 +79,8 @@ export async function startLocalGeneration(env, report = () => {}, { determinist
     maximumMicrosPerMillionTokens: required('FL_P9_MAX_MICROS_PER_MILLION_TOKENS'),
     budgetMicros: required('FL_P9_BUDGET_MICROS'), tokenBudget: required('FL_P9_ACCOUNT_TOKEN_BUDGET'),
     requestsPerMinute: required('FL_P9_REQUESTS_PER_MINUTE'), maximumAdmissions: required('FL_P9_MAX_ADMISSIONS'),
-    ...approved, syntheticTextSha256: textHash
-  }).policy : undefined;
+    ...approved, ...(!offlineDevelopment && { syntheticTextSha256: textHash })
+  }, offlineDevelopment, free).policy : undefined;
   const groqKey = groq || free ? parseEnv(await readFile(new URL('../.env.p9-groq-worker.local', import.meta.url), 'utf8')).GROQ_API_KEY : undefined;
   const fallback = textHash ? syntheticOnlyProvider(gemini ? geminiFounderProvider(env, undefined, report)
     : groq ? groqFounderProvider(groqKey, undefined, report) : deterministicProvider ?? deterministicFounderProvider(), textHash)
@@ -150,6 +150,7 @@ export async function startLocalGeneration(env, report = () => {}, { determinist
     limiter = freePolicy && await openGroqFreeQuota(redis, required('FL_GROQ_ORGANIZATION_SCOPE'), freePolicy);
     const provider = limiter ? groqFounderProvider(groqKey, undefined, report, { policy: freePolicy, quota: limiter.quota }) : fallback;
     const work = generationRepository(workerPool, { bindClaimant: true, singleInvocation: true, metered: true,
+      operationType: budget?.operationType ?? 'generation',
       ...(env.FL_P9_MAX_ADMISSIONS === '1' && {
         oneInvocationReservation: budget?.reservationUnits ?? generationReservationTokens
       }) });
@@ -213,11 +214,11 @@ export async function startLocalGeneration(env, report = () => {}, { determinist
             JOIN public."Conversation" c ON c.id=g."conversationId"
             JOIN public."Idea" i ON i.id=c."ideaId"
             JOIN public."UsageLedger" u ON u."reservationId"=g.id AND u."accountId"=i."ownerId"
-            WHERE c.id=$1 AND i."ownerId"=$2 AND u.unit='tokens' AND u."operationType"='generation'
+            WHERE c.id=$1 AND i."ownerId"=$2 AND u.unit='tokens' AND u."operationType"=$3
               AND (g."leaseUntil" IS NULL OR g."leaseUntil"<=clock_timestamp())
               AND (g.status='RUNNING' OR
                 (g.status IN ('PENDING','CANCEL_REQUESTED') AND g."deadlineAt"<=clock_timestamp()))
-            ORDER BY g."leaseUntil",g.id LIMIT 4`, [approved.conversationId, approved.accountId]);
+            ORDER BY g."leaseUntil",g.id LIMIT 4`, [approved.conversationId, approved.accountId, budget?.operationType ?? 'generation']);
           for (const row of rows) {
             if (abort.signal.aborted) break;
             if (row.expired) await work.expireMetered(row.id, approved);
