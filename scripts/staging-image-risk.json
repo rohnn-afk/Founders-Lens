@@ -31,6 +31,11 @@
       "sourceRevision": "cbd42897cfbdab9df09511f3bfb43d9da670ebd5",
       "sourceFingerprint": "0d4ddf732433507774ddc25300baac61799bbf620d5b806ad95c0e6214a4d003",
       "reason": "PR #13 adds isolated local generation and remediation without activating hosted writes or inference. The archived linux/amd64 image matches the approved runtime binaries and OpenSSL package version, with the same five reviewed high findings."
+    },
+    {
+      "sourceRevision": "f8fff88f1ffabd77d00ade81c25d9f0b572c115e",
+      "sourceFingerprint": "ae029d1b9d6e225eb9b6a4bda41458a893c656721f352ba3b1f72626f4afebcb",
+      "reason": "PR #14 scopes synthetic Groq admissions and recovery to the isolated local workflow. The staging composition, TLS and Clerk verifier, container inputs and lockfile are unchanged. The rebuilt linux/amd64 image matched the approved Node and OpenSSL hashes and package version, with the same five reviewed high findings and zero criticals."
     }
   ],
   "runtimeBinaryFingerprints": [
