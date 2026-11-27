@@ -311,7 +311,7 @@ export default function Page() {
   const appearance = 'document.querySelector("header select")';
   const storageKey = 'founders-lens.appearance';
   const mode = () => evaluate(appearance + '.value');
-  const appearanceShell = 'document.querySelector("[data-workspace-appearance]")';
+  const appearanceShell = 'document.querySelector("[data-workspace-shell]")';
   const background = () => evaluate('getComputedStyle(' + appearanceShell + ').backgroundColor');
   const osMode = value => command('Emulation.setEmulatedMedia', { features: [
     { name: 'prefers-reduced-motion', value: 'reduce' }, { name: 'prefers-color-scheme', value }
@@ -319,7 +319,7 @@ export default function Page() {
   const choose = async value => {
     await evaluate(appearance + '.value = ' + JSON.stringify(value));
     await evaluate(appearance + '.dispatchEvent(new Event("change",{bubbles:true}))');
-    await waitFor(() => evaluate(appearanceShell + '.dataset.workspaceAppearance === ' + JSON.stringify(value)), value);
+    await waitFor(() => evaluate('document.documentElement.dataset.workspaceAppearance === ' + JSON.stringify(value)), value);
   };
   async function reload() {
     await evaluate('window.workspaceReloadMarker = true');
@@ -396,6 +396,7 @@ export default function Page() {
   await text('Alpha idea');
   await osMode('light');
   await appearanceChecks();
+  assert.equal(await evaluate('Boolean(' + appearanceShell + '.querySelector(":scope > script"))'), false);
   const viewport = await evaluate('({ viewport: innerWidth, width: document.documentElement.clientWidth, content: document.documentElement.scrollWidth })');
   assert.equal(viewport.viewport, 320);
   assert.equal(await evaluate('Boolean(document.querySelector("header details summary")?.getClientRects().length)'), true);

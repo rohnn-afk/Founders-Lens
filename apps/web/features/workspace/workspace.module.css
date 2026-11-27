@@ -25,8 +25,8 @@
   overflow-wrap: anywhere;
 }
 
-.shell[data-workspace-appearance='light'] { color-scheme: light; }
-.shell[data-workspace-appearance='dark'] { color-scheme: dark; }
+:global(html[data-workspace-appearance='light']) .shell { color-scheme: light; }
+:global(html[data-workspace-appearance='dark']) .shell { color-scheme: dark; }
 
 .header {
   background: var(--workspace-header);
