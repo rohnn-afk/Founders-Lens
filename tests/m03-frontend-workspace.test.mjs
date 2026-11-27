@@ -44,6 +44,7 @@ test('owned ideas transport distinguishes empty, unauthorized, unavailable and m
   const responses = [
     Response.json(page([]), { headers }),
     new Response(null, { status: 401, headers }),
+    new Response(null, { status: 401, headers }),
     new Response(null, { status: 403, headers }),
     new Response(null, { status: 503, headers }),
     Response.json(page([{ id: 'bad', title: 'Malformed', status: 'ACTIVE' }]), { headers }),
@@ -70,11 +71,34 @@ test('owned ideas transport distinguishes empty, unauthorized, unavailable and m
   }
   await assert.rejects(client.listOwnedIdeas('a+b', signal), /Invalid workspace page/);
   await assert.rejects(client.listOwnedIdeas('a+b', signal), /Fixture network failure/);
-  assert.equal(fetch.mock.callCount(), 6, 'Reads wait for an explicit retry after a transport failure');
+  assert.equal(fetch.mock.callCount(), 7, 'Reads wait for an explicit retry after a transport failure');
   assert.deepEqual((await client.listOwnedIdeas('a+b', signal)).reply, ok(page([idea('archived', 'ARCHIVED')])));
   const expired = createLocalConversationApi(async () => null);
   assert.equal((await expired.listOwnedIdeas(null, signal)).reply.status, 401);
-  assert.equal(fetch.mock.callCount(), 7);
+  assert.equal(fetch.mock.callCount(), 8);
+});
+
+test('a local authenticated read can recover once with an uncached token without replaying a write', async t => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: { location: { origin: 'http://127.0.0.1:3000' } } });
+  t.after(() => { if (previous) Object.defineProperty(globalThis, 'window', previous); else delete globalThis.window; });
+  const tokens = [];
+  const client = createLocalConversationApi(async options => {
+    tokens.push(options?.skipCache === true);
+    return options?.skipCache ? 'fresh-fixture' : 'cached-fixture';
+  });
+  const fetch = t.mock.method(globalThis, 'fetch', async (_url, info) =>
+    info.headers.Authorization === 'Bearer fresh-fixture' ? Response.json(page([])) : new Response(null, { status: 401 }));
+  const signal = new AbortController().signal;
+  assert.deepEqual((await client.listOwnedIdeas(null, signal)).reply, ok(page([])));
+  assert.deepEqual(await client.editIdea('example', 1, { title: 'New title' }, signal), { status: 401 });
+  assert.deepEqual(tokens, [false, true, false]);
+  assert.equal(fetch.mock.callCount(), 3);
+  const unavailable = createLocalConversationApi(async options => {
+    if (options?.skipCache) throw new Error('Fixture token refresh unavailable');
+    return 'cached-fixture';
+  });
+  assert.equal((await unavailable.listOwnedIdeas(null, signal)).reply.status, 401);
 });
 
 test('idea editor sends the original version and surfaces a stale write without retrying', async t => {
