@@ -34,8 +34,9 @@ const p9SecondBind = process.argv.includes('--p9-bind-second-isolated');
 const p9CedarBind = process.argv.includes('--p9-bind-cedar-isolated');
 const p9CedarReadiness = process.argv.includes('--p9-cedar-readiness');
 const p9Diagnose = process.argv.includes('--p9-diagnose-harbor');
+const groqSseLive = process.argv.includes('--groq-sse-browser-live');
 const modes = [browserLive, reverificationLive, p6Bind, offlineBind, p6Sign, p7Sign, p7Prepare, ideaEditPrepare, ideaEditSign, workspaceCreateLive,
-  p8Prepare, p8Sign, p8Live, p9Sign, p9Bind, p9SecondBind, p9CedarBind, p9CedarReadiness, p9Diagnose];
+  p8Prepare, p8Sign, p8Live, p9Sign, p9Bind, p9SecondBind, p9CedarBind, p9CedarReadiness, p9Diagnose, groqSseLive];
 const interactiveMode = modes.some(Boolean);
 if (modes.filter(Boolean).length > 1) throw new Error('Select exactly one Clerk test mode.');
 
@@ -525,6 +526,60 @@ async function openEdge(t, url, interactive = false) {
     });
   };
 }
+
+test('designated Clerk browser reconnects to a committed Groq reply', {
+  skip: !groqSseLive, timeout: 240_000
+}, async t => {
+  const { CLERK_TEST_USER_ID: subject } = parseEnv(await readFile('.env.clerk-staging.local', 'utf8'));
+  assert.ok(/^user_[A-Za-z0-9_-]+$/.test(subject ?? ''), 'Designated Clerk subject required');
+  const origin = 'http://127.0.0.1:3000';
+  const idea = '696700c4-5c89-49b6-abd5-c4d63b659063';
+  const conversation = '754339a1-aaf8-4538-a817-d77768314039';
+  const generation = '98a733dd-8624-4c43-a946-7d5959b0c912';
+  const output = '439ced41-3421-4d55-a4ba-3651c7f26f82';
+  const path = `/app/ideas/${idea}/conversations/${conversation}`;
+  const evaluate = await openEdge(t, origin + '/app', true);
+  const identity = `location.origin === ${JSON.stringify(origin)} && window.Clerk?.session?.status === 'active' &&
+    window.Clerk?.user?.id === ${JSON.stringify(subject)}`;
+  console.info('Sign in in the isolated Edge window with the designated Clerk Development account.');
+  await waitForBrowser(async () => await evaluate(`(${identity}) && location.pathname === '/app'`) === true, manualSignInTimeout);
+  const omitted = await evaluate(`(async () => {
+    const token = await window.Clerk.session.getToken({ skipCache: true });
+    const response = await fetch('http://127.0.0.1:3001/api/v1/ideas', {
+      headers: { Authorization: 'Bearer ' + token }, signal: AbortSignal.timeout(8000)
+    });
+    return !(response.ok && (await response.json()).items.some(item => item.id === ${JSON.stringify(idea)}));
+  })()`, 12_000);
+  assert.equal(omitted, false, 'The signed-in ideas page must include the retained idea');
+  await evaluate(`location.assign(${JSON.stringify(path)})`);
+  const rendered = `(${identity}) && location.pathname === ${JSON.stringify(path)} &&
+    Boolean(document.querySelector('[aria-label="Conversation transcript"] [data-speaker="assistant"]'))`;
+  await waitForBrowser(async () => await evaluate(rendered) === true, 25_000, () => 'Committed reply did not render.');
+  const result = await evaluate(`(async () => {
+    const token = await window.Clerk.session.getToken({ skipCache: true });
+    const api = 'http://127.0.0.1:3001/api/v1';
+    const events = api + '/generations/${generation}/events';
+    const auth = { Authorization: 'Bearer ' + token };
+    const headers = { ...auth, Accept: 'text/event-stream' };
+    const stop = new AbortController();
+    const first = await fetch(events, { headers, signal: AbortSignal.any([stop.signal, AbortSignal.timeout(8000)]) });
+    stop.abort();
+    const second = await fetch(events, { headers, signal: AbortSignal.timeout(8000) });
+    const frame = (await second.text()).split('\\n\\n').find(item => item.startsWith('event: generation.completed\\n'));
+    const payload = frame ? JSON.parse(frame.split('\\ndata: ')[1]) : null;
+    const saved = await fetch(api + '/conversations/${conversation}/messages?assistantResponseVersion=2', {
+      headers: auth, signal: AbortSignal.timeout(8000)
+    });
+    const items = saved.ok ? (await saved.json()).items : [];
+    return { first: first.status, reconnect: second.status, transcript: saved.status,
+      completed: payload?.generationId === '${generation}' && payload.outputMessageId === '${output}' && payload.selected === true,
+      persisted: items.some(item => item.id === '${output}' && item.assistantContent?.schemaVersion === 1) };
+  })()`, 28_000);
+  assert.deepEqual(result, { first: 200, reconnect: 200, transcript: 200, completed: true, persisted: true });
+  await evaluate('window.flGroqReloadMarker = true; location.reload()');
+  await waitForBrowser(async () => await evaluate(`!window.flGroqReloadMarker && (${rendered})`) === true,
+    25_000, () => 'The committed reply did not return after browser reload.');
+});
 
 async function verifyInEdge(t, url, expression) {
   const evaluate = await openEdge(t, url);

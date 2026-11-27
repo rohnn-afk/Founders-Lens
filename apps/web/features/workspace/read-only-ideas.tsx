@@ -147,12 +147,12 @@ function IdeasForSession({ account, getToken }: { account: string; getToken: Ret
         setView({ kind: 'ready', ideas: [...previousPage.current, ...reply.data.items], cursor: reply.data.page.nextCursor,
           conversations });
         previousPage.current = [];
-      } catch {
+      } catch (error) {
         if (!controller.signal.aborted) {
           previousPage.current = [];
           setCanCreate(false);
           setCanEdit(false);
-          setView({ kind: 'error' });
+          setView({ kind: error instanceof TypeError ? 'unavailable' : 'error' });
         }
       }
     }
@@ -222,7 +222,9 @@ function IdeasForSession({ account, getToken }: { account: string; getToken: Ret
         </>}
         {view.kind === 'denied' && <p className={styles['feedback']} role="alert">This account cannot access the workspace.</p>}
         {(view.kind === 'unavailable' || view.kind === 'error') && <><p className={styles['feedback']} role="alert">
-          {view.kind === 'unavailable' ? 'Workspace data is unavailable.' : 'We could not load your ideas.'}
+          {view.kind === 'unavailable'
+            ? origin.startsWith('http://') ? 'The local workspace API is unavailable. Check the runtime and its signed window.' : 'Workspace data is unavailable.'
+            : 'We could not load your ideas.'}
         </p>
           <button type="button" onClick={() => load(null)}>Retry</button></>}
         {creation === 'blocked' && <p role="alert">You do not currently have access to save ideas.</p>}

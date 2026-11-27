@@ -54,6 +54,33 @@ source creation stay outside it.
 
 ## Designated Clerk offline acceptance
 
+For an existing isolated workspace on Windows, start the three retained stores
+from the repository root and start the web server in its own terminal.
+
+```powershell
+docker start fl-p9-offline-acceptance-primary-1 fl-p9-offline-acceptance-authority-1 fl-p9-offline-acceptance-redis-1
+npm.cmd run dev:web
+```
+
+In the operator terminal, use the existing local P6 key paths and invoke
+`node scripts/p9-offline-acceptance.mjs workspace` to browse and edit ideas.
+Use `groq-free <conversation-id>` in place of `workspace` only for the approved
+synthetic generation conversation. Wait for the API to listen and for
+`P9_LOCAL_READY` in generation mode. `curl.exe -f http://127.0.0.1:3001/openapi.json`
+checks the local route inventory, and
+`docker ps --filter label=com.docker.compose.project=fl-p9-offline-acceptance`
+checks the stores. An unauthenticated ideas probe returns 401
+while the API is available. An empty signed-in workspace instead returns 200
+with an empty list. On `P9_PERMISSION_EXPIRED`, rerun the same launcher to get a
+fresh signed window. Runtime shutdown leaves the ideas and replies in PostgreSQL.
+Stop the launcher and web server with Ctrl+C in their terminals. Stop the three
+stores with `docker stop` on those same names to keep their existing volumes.
+Port 3001 protects against starting a duplicate API and worker group.
+For the recorded Groq acceptance conversation, run
+`node tests/clerk-session-browser.test.mjs --groq-sse-browser-live` while its
+scoped launcher is running. Sign in in the isolated Edge window. The check
+compares the reconnect event and persisted reply without exporting a token.
+
 Build API, dispatcher and worker, then create the dedicated loopback stores
 once with `node scripts/p9-cedar-bootstrap.mjs --offline`. The command refuses
 existing resources. An interrupted run before coverage initialization can

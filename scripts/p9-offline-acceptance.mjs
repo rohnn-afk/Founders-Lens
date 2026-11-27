@@ -146,7 +146,10 @@ try {
   process.once('SIGTERM', stop);
   process.exitCode = await Promise.race(runs);
 } catch (error) {
-  console.error(error instanceof assert.AssertionError ? error.message : 'Offline acceptance stopped during local verification.');
+  console.error(error instanceof assert.AssertionError ? error.message :
+    error?.code === 'EADDRINUSE' ? 'Port 3001 is in use. Stop the current local workspace launcher before restarting.' :
+    error?.code === 'ENOENT' ? 'A required local manifest or operator key file is missing. Check the local runtime runbook.' :
+    'Offline acceptance stopped during local verification. Check the loopback stores and signed runtime setup.');
   process.exitCode = 1;
 } finally {
   children.forEach(child => child.kill());
