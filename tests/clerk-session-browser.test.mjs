@@ -543,18 +543,17 @@ test('designated Clerk browser reconnects to a committed Groq reply', {
     window.Clerk?.user?.id === ${JSON.stringify(subject)}`;
   console.info('Sign in in the isolated Edge window with the designated Clerk Development account.');
   await waitForBrowser(async () => await evaluate(`(${identity}) && location.pathname === '/app'`) === true, manualSignInTimeout);
-  const omitted = await evaluate(`(async () => {
+  const listing = await evaluate(`(async () => {
     const token = await window.Clerk.session.getToken({ skipCache: true });
     const response = await fetch('http://127.0.0.1:3001/api/v1/ideas', {
       headers: { Authorization: 'Bearer ' + token }, signal: AbortSignal.timeout(8000)
     });
-    return !(response.ok && (await response.json()).items.some(item => item.id === ${JSON.stringify(idea)}));
+    return { status: response.status, retained: response.ok &&
+      (await response.json()).items.some(item => item.id === ${JSON.stringify(idea)}) };
   })()`, 12_000);
-  assert.equal(omitted, false, 'The signed-in ideas page must include the retained idea');
-  await evaluate(`location.assign(${JSON.stringify(path)})`);
+  assert.deepEqual(listing, { status: 200, retained: true }, 'The signed-in ideas page must include the retained idea');
   const rendered = `(${identity}) && location.pathname === ${JSON.stringify(path)} &&
     Boolean(document.querySelector('[aria-label="Conversation transcript"] [data-speaker="assistant"]'))`;
-  await waitForBrowser(async () => await evaluate(rendered) === true, 25_000, () => 'Committed reply did not render.');
   const result = await evaluate(`(async () => {
     const token = await window.Clerk.session.getToken({ skipCache: true });
     const api = 'http://127.0.0.1:3001/api/v1';
@@ -576,6 +575,9 @@ test('designated Clerk browser reconnects to a committed Groq reply', {
       persisted: items.some(item => item.id === '${output}' && item.assistantContent?.schemaVersion === 1) };
   })()`, 28_000);
   assert.deepEqual(result, { first: 200, reconnect: 200, transcript: 200, completed: true, persisted: true });
+  t.diagnostic('Verified signed-in terminal reconnect and matching persisted response.');
+  await evaluate(`location.assign(${JSON.stringify(path)})`);
+  await waitForBrowser(async () => await evaluate(rendered) === true, 25_000, () => 'Committed reply did not render.');
   await evaluate('window.flGroqReloadMarker = true; location.reload()');
   await waitForBrowser(async () => await evaluate(`!window.flGroqReloadMarker && (${rendered})`) === true,
     25_000, () => 'The committed reply did not return after browser reload.');
