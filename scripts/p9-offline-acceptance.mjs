@@ -60,6 +60,8 @@ try {
   };
   if (development) Object.assign(settings, { FL_P9_LOCAL_DEVELOPMENT: '1', FL_P9_MAX_ADMISSIONS: '30',
     FL_P9_REQUESTS_PER_MINUTE: '6', FL_P9_BUDGET_MICROS: '207360', FL_P9_ACCOUNT_TOKEN_BUDGET: '138240' });
+  // The workspace phase admits signed idea editing without starting a generation processor.
+  if (phase === 'workspace') settings.FL_P9_LOCAL_DEVELOPMENT = '1';
   Object.assign(settings, freeSettings);
   const os = Object.fromEntries(['PATH', 'SystemRoot', 'TEMP', 'TMP'].filter(name => process.env[name])
     .map(name => [name, process.env[name]]));
@@ -122,7 +124,8 @@ try {
       if (response?.ok) {
         const { paths } = await response.json();
         const has = (method, match) => Object.entries(paths ?? {}).some(([path, value]) => match.test(path) && value[method]);
-        assert.ok(has('get', /\/ideas$/) && has('post', /\/ideas$/) && has('patch', /\/ideas\/\{[^}]+\}$/) &&
+        assert.ok(has('get', /\/ideas$/) && has('post', /\/ideas$/) &&
+          (phase === 'generation' || has('patch', /\/ideas\/\{[^}]+\}$/)) &&
           has('post', /\/ideas\/\{[^}]+\}\/conversations$/) &&
           (!processor || has('post', /\/conversations\/\{[^}]+\}\/messages$/) && has('get', /\/generations\/\{[^}]+\}\/events$/)),
         'Local API did not mount the required acceptance operations');
@@ -143,7 +146,10 @@ try {
   process.once('SIGTERM', stop);
   process.exitCode = await Promise.race(runs);
 } catch (error) {
-  console.error(error instanceof assert.AssertionError ? error.message : 'Offline acceptance stopped during local verification.');
+  console.error(error instanceof assert.AssertionError ? error.message :
+    error?.code === 'EADDRINUSE' ? 'Port 3001 is in use. Stop the current local workspace launcher before restarting.' :
+    error?.code === 'ENOENT' ? 'A required local manifest or operator key file is missing. Check the local runtime runbook.' :
+    'Offline acceptance stopped during local verification. Check the loopback stores and signed runtime setup.');
   process.exitCode = 1;
 } finally {
   children.forEach(child => child.kill());

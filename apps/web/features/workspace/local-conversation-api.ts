@@ -53,19 +53,42 @@ function structuredAssistant(value: NonNullable<Message['assistantContent']>) {
 }
 
 /** Construct session-scoped P8 and opt-in generation transports. */
-export function createLocalConversationApi(getToken: () => Promise<string | null>, makeKey = () => crypto.randomUUID()) {
+export function createLocalConversationApi(getToken: (options?: { skipCache?: boolean }) => Promise<string | null>,
+  makeKey = () => crypto.randomUUID()) {
+  async function authenticatedFetch(path: string, init: RequestInit & { headers: Record<string, string> },
+    signal: AbortSignal, retryRead: boolean) {
+    const send = async (fresh: boolean) => {
+      signal.throwIfAborted();
+      const token = await getToken(fresh ? { skipCache: true } : undefined);
+      signal.throwIfAborted();
+      if (!token) return null;
+      const headers = { ...init.headers, Authorization: `Bearer ${token}` };
+      return fetch(endpoint + path, { ...init, headers, signal, credentials: 'omit', redirect: 'error', cache: 'no-store' });
+    };
+    const response = await send(false);
+    if (retryRead && !origin.startsWith('https://') && response?.status === 401) {
+      await response.body?.cancel().catch(() => {});
+      try {
+        return await send(true) ?? response;
+      } catch {
+        signal.throwIfAborted();
+        // Keep the original authentication error if refresh cannot finish.
+        return response;
+      }
+    }
+    return response;
+  }
+
   async function request<T>(path: string, signal: AbortSignal, decode: (value: T) => T,
     command?: { body: unknown; key?: string; accepted?: boolean; version?: number }, headers?: (headers: Headers) => void): Promise<Reply<T>> {
     if (window.location.origin !== origin) return { status: 403 };
-    const token = await getToken();
-    signal.throwIfAborted();
-    if (!token) return { status: 401 };
     const editing = command?.version !== undefined;
-    const response = await fetch(endpoint + path, { method: editing ? 'PATCH' : command ? 'POST' : 'GET',
-      headers: { Authorization: `Bearer ${token}`, ...(command && { 'Content-Type': 'application/json' }),
+    const response = await authenticatedFetch(path, { method: editing ? 'PATCH' : command ? 'POST' : 'GET',
+      headers: { ...(command && { 'Content-Type': 'application/json' }),
         ...(editing && { 'If-Match': `"v${command.version}"` }),
         ...(command?.key && { 'Idempotency-Key': command.key }) }, ...(command && { body: JSON.stringify(command.body) }),
-      credentials: 'omit', redirect: 'error', cache: 'no-store', signal: AbortSignal.any([signal, AbortSignal.timeout(12_000)]) });
+    }, AbortSignal.any([signal, AbortSignal.timeout(12_000)]), !command);
+    if (!response) return { status: 401 };
     if (response.status === (command && !editing ? command.accepted ? 202 : 201 : 200)) {
       const data = decode(await response.json());
       if (signal.aborted) return { status: 503 };
@@ -152,14 +175,10 @@ export function createLocalConversationApi(getToken: () => Promise<string | null
     generation: {
       async watchTerminal(id, signal) {
         if (origin.startsWith('https://') || window.location.origin !== origin) return false;
-        const token = await getToken();
-        signal.throwIfAborted();
-        if (!token) return false;
-        const response = await fetch(endpoint + '/generations/' + encodeURIComponent(id) + '/events', {
-          headers: { Authorization: `Bearer ${token}`, Accept: 'text/event-stream' },
-          cache: 'no-store', credentials: 'omit', redirect: 'error',
-          signal: AbortSignal.any([signal, AbortSignal.timeout(65_000)])
-        });
+        const response = await authenticatedFetch('/generations/' + encodeURIComponent(id) + '/events', {
+          headers: { Accept: 'text/event-stream' }
+        }, AbortSignal.any([signal, AbortSignal.timeout(65_000)]), true);
+        if (!response) return false;
         if (response.status !== 200 || !response.headers.get('Content-Type')?.toLowerCase().startsWith('text/event-stream')) {
           await response.body?.cancel();
           return false;

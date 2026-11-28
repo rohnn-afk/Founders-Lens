@@ -100,6 +100,38 @@ tree. Deployment remains read-only. The exact staging image equivalence entries
 for this stack expire on 2026-12-25 at 12:32:47 UTC. Hosted workspace writes and
 live Groq evaluation retain separate activation requirements.
 
+The merged baseline is `62140461a4075a07f6dacb47ffb9d53ac352a361`.
+The evaluation harness now includes a thirteenth synthetic case for contextual
+follow-up. The initial quality pass and metrics are defined in the
+[local runtime runbook](../../../scripts/p9-local-runtime.md#groq-free-evaluation).
+Record live results only after the key's organization and quota have been
+verified. See the [deployment guide](../../../DEPLOYMENT.md#hosted-idea-write-readiness)
+for the separate staging write proposal.
+
+The local MVP readiness pass rechecked the two previously accepted attempts
+against the designated Clerk binding. Both remained completed and selected,
+with one execution attempt each, published outbox records, provider receipts
+and persisted v2 messages. A separate disposable browser and worker run passed
+on this baseline. These checks do not record a new manual Clerk walkthrough or
+live Groq quality results.
+
+The subsequent local Groq browser run used the designated Clerk account and a
+synthetic-only, purpose-scoped allowance. Attempt
+`98a733dd-8624-4c43-a946-7d5959b0c912` completed after one worker execution,
+settled 853 provider tokens and selected v2 message
+`439ced41-3421-4d55-a4ba-3651c7f26f82`. The founder confirmed the same reply
+after reload. Disposable tests passed SSE disconnect, terminal reconnect and
+transcript reconciliation. The designated Clerk browser check aborted its first
+SSE connection, reconnected and received `generation.completed` with the
+selected output ID above. The v2 transcript contained the same structured reply,
+and the workspace rendered it again after reload. The local worker was observed
+stopping at the signed-window deadline. The founder confirmed the original idea
+and conversation were visible again after restart of the verified local API.
+PR #14 consolidates the local
+corrections. Retain 20B low for ordinary synthetic evaluation and 120B low for
+targeted comparison. Hosted writes require the separately approved
+account-scoped procedure in the deployment guide.
+
 ## 4. Milestone dependency and authority audit
 
 | Milestone | Dependency / founder result | Phase 7C task coverage | Mandatory proof emphasis | Gate / exception |

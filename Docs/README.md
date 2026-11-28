@@ -10,6 +10,13 @@ Statuses: Draft (incomplete proposal), In Review (reviewable design, not signed 
 
 ## Canonical specifications
 
+For the deployed read surface, start with the [Workspace API](../apps/api/WORKSPACE-API.md)
+and the [staging release guide](../DEPLOYMENT.md). For local generation, follow
+the [runtime runbook](../scripts/p9-local-runtime.md) from the API submission
+through the dispatcher, worker and committed transcript. Use the
+[implementation roadmap](lld/09-implementation-strategy/implementation-readiness-integration-review.md)
+for verified acceptance and remaining gates.
+
 | Responsibility | Canonical source |
 |---|---|
 | Product goals and scope | [PRD](requirements/PRD.md) |

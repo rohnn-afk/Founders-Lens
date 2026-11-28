@@ -47,6 +47,8 @@ test('Groq Free reserves before a strict request and settles usage even for reje
     assert.equal(body.response_format.json_schema.strict, true);
     assert.equal(body.stream, false);
     assert.equal(body.max_completion_tokens, 1200);
+    assert.match(body.messages[0].content, /relevant supplied facts, numbers and timeframes/);
+    assert.match(body.messages[0].content, /even when declining/i);
     if (mode === 'limited') return new Response(null, { status: 429, headers: { 'Retry-After': '7' } });
     const content = JSON.stringify({ text: 'Test a commitment.', strategy: 'CHALLENGE', question: 'What counts as a commitment?',
       ...(mode === 'invalid' && { inventedSource: 'invalid' }) });
@@ -68,6 +70,18 @@ test('Groq Free reserves before a strict request and settles usage even for reje
     'reserve', 'post', [undefined, 7000]]);
   await assert.rejects(provider.generate({ ...prompt, data: 'x'.repeat(2000) }, signal), /context budget/);
   assert.equal(attempts.length, 9);
+});
+
+test('Groq Free identifies a structured-output rejection without exposing provider text', async () => {
+  const events = [], meters = [];
+  const provider = groqFounderProvider(key, async () => Response.json({ error: {
+    code: 'json_validate_failed', message: 'Synthetic diagnostic text', failed_generation: 'Not safe to report'
+  } }, { status: 400 }), event => events.push(event), { policy: freeGroqPolicy(freeEnv), quota: {
+    async reserve() { return async used => meters.push(used); }
+  } });
+  await assert.rejects(provider.generate(prompt, new AbortController().signal), /^Error: Groq invocation outcome is unavailable$/);
+  assert.deepEqual(events, ['GROQ_STRUCTURED_OUTPUT_REJECTED']);
+  assert.deepEqual(meters, [undefined]);
 });
 
 test('Groq Free drops old turns before reserving and preserves the complete current question', async () => {

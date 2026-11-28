@@ -54,6 +54,33 @@ source creation stay outside it.
 
 ## Designated Clerk offline acceptance
 
+For an existing isolated workspace on Windows, start the three retained stores
+from the repository root and start the web server in its own terminal.
+
+```powershell
+docker start fl-p9-offline-acceptance-primary-1 fl-p9-offline-acceptance-authority-1 fl-p9-offline-acceptance-redis-1
+npm.cmd run dev:web
+```
+
+In the operator terminal, use the existing local P6 key paths and invoke
+`node scripts/p9-offline-acceptance.mjs workspace` to browse and edit ideas.
+Use `groq-free <conversation-id>` in place of `workspace` only for the approved
+synthetic generation conversation. Wait for the API to listen and for
+`P9_LOCAL_READY` in generation mode. `curl.exe -f http://127.0.0.1:3001/openapi.json`
+checks the local route inventory, and
+`docker ps --filter label=com.docker.compose.project=fl-p9-offline-acceptance`
+checks the stores. An unauthenticated ideas probe returns 401
+while the API is available. An empty signed-in workspace instead returns 200
+with an empty list. On `P9_PERMISSION_EXPIRED`, rerun the same launcher to get a
+fresh signed window. Runtime shutdown leaves the ideas and replies in PostgreSQL.
+Stop the launcher and web server with Ctrl+C in their terminals. Stop the three
+stores with `docker stop` on those same names to keep their existing volumes.
+Port 3001 protects against starting a duplicate API and worker group.
+For the recorded Groq acceptance conversation, run
+`node tests/clerk-session-browser.test.mjs --groq-sse-browser-live` while its
+scoped launcher is running. Sign in in the isolated Edge window. The check
+compares the reconnect event and persisted reply without exporting a token.
+
 Build API, dispatcher and worker, then create the dedicated loopback stores
 once with `node scripts/p9-cedar-bootstrap.mjs --offline`. The command refuses
 existing resources. An interrupted run before coverage initialization can
@@ -117,6 +144,17 @@ and 120,000 tokens per day, each clamped to the organization limits. One
 reservation is active at a time. Missing usage retains the original reserve.
 The evaluator stops at a denial or transport failure without retrying it.
 
+For the initial quality pass, run `weak-demand`, `contextual-follow-up`,
+`small-experiment` and `invented-research` in that order. Use the default 20B
+model and low reasoning. Record HTTP status, schema validity, wall-clock
+latency, reported input and completion tokens, and quota denials. Compare the
+answer with the case's `lookFor` criteria and score each as met, partial or
+missed. Record any unsupported claims separately. Report reasoning tokens
+only if separately measured and verify any charges in the organization usage
+and billing views. Continue through the remaining cases one at a time within
+the shared quota. Use disposable Redis tests for quota denial and concurrency
+coverage so the evaluation does not spend provider capacity testing limits.
+
 The default model is `openai/gpt-oss-20b` with low reasoning. Set
 `FL_GROQ_FREE_MODEL=openai/gpt-oss-120b` or
 `FL_GROQ_FREE_REASONING=medium` for comparison. The request uses the strict
@@ -124,6 +162,11 @@ text, strategy and question schema, excludes reasoning, and disables streaming
 and tools. For authenticated synthetic workspace development, run
 `node scripts/p9-offline-acceptance.mjs groq-free <owned-conversation-id>`.
 The API and worker accept only the checked-in synthetic prompts for this mode.
+The browser profile allows one metered admission per designated local account
+under `groq_free_evaluation`. Previous offline admissions stay in the ordinary
+generation ledger. The same evaluation allowance applies after a restart and
+across conversations. The shared organization quota still applies to both
+the browser worker and standalone evaluator.
 The worker forwards only allowlisted recent founder turns. It excludes prior
 assistant text, memory and evidence from external requests. Keep using the
 `development` mode for offline conversations and private context.

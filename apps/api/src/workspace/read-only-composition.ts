@@ -242,7 +242,7 @@ export async function localReadOnlyWorkspace(env: NodeJS.ProcessEnv) {
           requestsPerMinute: required('FL_P9_REQUESTS_PER_MINUTE'), maximumAdmissions: required('FL_P9_MAX_ADMISSIONS'),
           accountId: required('FL_P9_SYNTHETIC_ACCOUNT'), conversationId: approvedConversation,
           ...(!offlineDevelopment && { syntheticTextSha256: required('FL_P9_SYNTHETIC_TEXT_SHA256') })
-        }, offlineDevelopment);
+        }, offlineDevelopment, freePrompts !== undefined);
         submissionClient = new PrismaClient({ adapter: new PrismaPg(target), log: [], errorFormat: 'minimal' });
         generation = createGenerationService(createGenerationRepository(submissionClient, policy),
           authority.authority, status.verifiedDeadline, approvedConversation);

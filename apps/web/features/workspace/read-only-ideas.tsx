@@ -59,11 +59,11 @@ export function LocalWorkspace({ children }: { children: ReactNode }) {
 }
 
 function LocalConversationSession({ account, sessionId, getToken, children }: {
-  account: string; sessionId: string; getToken: () => Promise<string | null>; children: ReactNode;
+  account: string; sessionId: string; getToken: ReturnType<typeof useAuth>['getToken']; children: ReactNode;
 }) {
   const tokenSource = useRef(getToken);
   useEffect(() => { tokenSource.current = getToken; }, [getToken]);
-  const adapters = useMemo(() => createLocalConversationApi(() => tokenSource.current()), []);
+  const adapters = useMemo(() => createLocalConversationApi(options => tokenSource.current(options)), []);
   const readOnly = origin.startsWith('https://');
   const pathname = usePathname();
   const conversationId = readOnly ? undefined : /\/conversations\/([a-f0-9-]+)$/.exec(pathname)?.[1];
@@ -96,7 +96,7 @@ function LocalConversationSession({ account, sessionId, getToken, children }: {
       { messageApi: adapters.messageApi, recoveryTtl: 300_000 })}>{children}</WorkspaceProvider>;
 }
 
-function IdeasForSession({ account, getToken }: { account: string; getToken: () => Promise<string | null> }) {
+function IdeasForSession({ account, getToken }: { account: string; getToken: ReturnType<typeof useAuth>['getToken'] }) {
   const [view, setView] = useState<View>({ kind: 'loading' });
   const [request, setRequest] = useState<{ cursor: string | null }>({ cursor: null });
   const previousPage = useRef<Idea[]>([]);
@@ -110,7 +110,7 @@ function IdeasForSession({ account, getToken }: { account: string; getToken: () 
   const [summary, setSummary] = useState('');
   const [creation, setCreation] = useState<'idle' | 'pending' | 'uncertain' | 'rejected' | 'blocked' | 'conflict'>('idle');
   const writeLifetime = useRef<AbortController | null>(null);
-  const transport = useMemo(() => createLocalConversationApi(() => latestToken.current()), []);
+  const transport = useMemo(() => createLocalConversationApi(options => latestToken.current(options)), []);
   const commands = useMemo(() => createIdeaCommandController(transport.api, scope => !scope.signal.aborted), [transport]);
   useEffect(() => {
     const lifetime = new AbortController();
@@ -147,12 +147,12 @@ function IdeasForSession({ account, getToken }: { account: string; getToken: () 
         setView({ kind: 'ready', ideas: [...previousPage.current, ...reply.data.items], cursor: reply.data.page.nextCursor,
           conversations });
         previousPage.current = [];
-      } catch {
+      } catch (error) {
         if (!controller.signal.aborted) {
           previousPage.current = [];
           setCanCreate(false);
           setCanEdit(false);
-          setView({ kind: 'error' });
+          setView({ kind: error instanceof TypeError ? 'unavailable' : 'error' });
         }
       }
     }
@@ -222,7 +222,9 @@ function IdeasForSession({ account, getToken }: { account: string; getToken: () 
         </>}
         {view.kind === 'denied' && <p className={styles['feedback']} role="alert">This account cannot access the workspace.</p>}
         {(view.kind === 'unavailable' || view.kind === 'error') && <><p className={styles['feedback']} role="alert">
-          {view.kind === 'unavailable' ? 'Workspace data is unavailable.' : 'We could not load your ideas.'}
+          {view.kind === 'unavailable'
+            ? origin.startsWith('http://') ? 'The local workspace API is unavailable. Check the runtime and its signed window.' : 'Workspace data is unavailable.'
+            : 'We could not load your ideas.'}
         </p>
           <button type="button" onClick={() => load(null)}>Retry</button></>}
         {creation === 'blocked' && <p role="alert">You do not currently have access to save ideas.</p>}
