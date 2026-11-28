@@ -121,8 +121,10 @@ synthetic-only, purpose-scoped allowance. Attempt
 settled 853 provider tokens and selected v2 message
 `439ced41-3421-4d55-a4ba-3651c7f26f82`. The founder confirmed the same reply
 after reload. Disposable tests passed SSE disconnect, terminal reconnect and
-transcript reconciliation. The direct signed-in browser SSE reconnect check
-against that committed attempt remains pending. The local worker was observed
+transcript reconciliation. The designated Clerk browser check aborted its first
+SSE connection, reconnected and received `generation.completed` with the
+selected output ID above. The v2 transcript contained the same structured reply,
+and the workspace rendered it again after reload. The local worker was observed
 stopping at the signed-window deadline. The founder confirmed the original idea
 and conversation were visible again after restart of the verified local API.
 PR #14 consolidates the local
